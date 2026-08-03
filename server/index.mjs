@@ -264,7 +264,14 @@ app.use(
     filter: (req, res) => req.path.endsWith('.ort') || compression.filter(req, res),
   }),
 );
-app.use(express.json());
+// Photo endpoints carry a base64 image — a few hundred kilobytes, against this
+// parser's 100kb default. It runs before any route's own parser, so without
+// this exemption a real photo is rejected here and the caller gets Express's
+// HTML error page instead of the endpoint's typed JSON. Those routes install
+// their own parser with a limit that fits.
+const IMAGE_ROUTES = new Set(['/api/vision/extract', '/api/labels/extract', '/api/meals/estimate']);
+const parseJson = express.json();
+app.use((req, res, next) => (IMAGE_ROUTES.has(req.path) ? next() : parseJson(req, res, next)));
 
 const AUTH_PASS = process.env.BASIC_AUTH_PASSWORD;
 
