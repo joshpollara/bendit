@@ -227,6 +227,37 @@ function MealSection({
   );
 }
 
+// Marking a day as finished changes nothing in the data — it's a line you
+// draw for yourself. The strip replaces the button so the day reads as closed.
+function DayDone({ date, done, left }: { date: string; done: boolean; left: number }) {
+  const bump = useUI((s) => s.bump);
+  const toggle = (next: boolean) => api.setDayDone(date, next).then(bump);
+
+  if (!done) {
+    return (
+      <button
+        type="button"
+        onClick={() => toggle(true)}
+        className="mx-4 mt-3 mb-4 block w-[calc(100%-2rem)] rounded-2xl border border-line bg-card py-3 text-sm font-semibold text-ink-secondary hover:bg-surface"
+      >
+        I'm done logging for today
+      </button>
+    );
+  }
+  return (
+    <div className="mx-4 mt-3 mb-4 flex items-center gap-2 rounded-2xl bg-good-soft px-4 py-3">
+      <CheckIcon className="h-4 w-4 shrink-0 text-good" />
+      <p className="flex-1 text-sm text-ink-secondary">
+        Logging closed for today
+        {left >= 0 ? ` — ${formatCalories(left)} calories under budget.` : '.'}
+      </p>
+      <button type="button" onClick={() => toggle(false)} className="text-xs font-medium text-accent">
+        Reopen
+      </button>
+    </div>
+  );
+}
+
 export default function Today({ profile }: { profile: Profile }) {
   const date = useUI((s) => s.date);
   const bump = useUI((s) => s.bump);
@@ -239,6 +270,7 @@ export default function Today({ profile }: { profile: Profile }) {
   const exerciseCalories = exercises.reduce((sum, e) => sum + e.caloriesBurned, 0);
   const { budget } = computeBudget(profile, date, day?.latestWeightKg);
   const yesterdayByMeal = day?.yesterdayMealCounts ?? {};
+  const left = remaining(budget, foodCalories, exerciseCalories);
 
   return (
     <div className="pt-[env(safe-area-inset-top)]">
@@ -302,6 +334,8 @@ export default function Today({ profile }: { profile: Profile }) {
           )}
         </div>
       </section>
+
+      {day && <DayDone date={date} done={day.done} left={left} />}
     </div>
   );
 }

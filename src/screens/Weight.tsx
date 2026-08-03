@@ -9,6 +9,7 @@ import { STRINGS } from '../lib/strings';
 import { useUI } from '../store/ui';
 import type { Profile } from '../types';
 import Sheet from '../components/Sheet';
+import ProgressPhotos from '../components/ProgressPhotos';
 import { PlusIcon, XIcon } from '../components/Icons';
 
 // recharts is heavy; split it out of the main bundle.
@@ -138,6 +139,8 @@ export default function Weight({ profile }: { profile: Profile }) {
           </Suspense>
         )}
       </section>
+
+      <ProgressPhotos />
 
       {entries.length > 0 && (
         <section className="mx-4 mt-3 mb-4 overflow-hidden rounded-2xl border border-line bg-card shadow-sm">

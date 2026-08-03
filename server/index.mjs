@@ -45,7 +45,20 @@ CREATE INDEX IF NOT EXISTS idx_ex_date ON exercise_log(date);
 CREATE TABLE IF NOT EXISTS weights (
   id TEXT PRIMARY KEY, date TEXT NOT NULL UNIQUE, weightKg REAL NOT NULL
 );
+-- One row per day the user declared logging finished. Purely a marker.
+CREATE TABLE IF NOT EXISTS day_done (
+  date TEXT PRIMARY KEY, completedAt TEXT NOT NULL
+);
+CREATE TABLE IF NOT EXISTS photos (
+  id TEXT PRIMARY KEY, date TEXT NOT NULL, createdAt TEXT NOT NULL
+);
+CREATE INDEX IF NOT EXISTS idx_photos_date ON photos(date);
 `);
+
+// Progress photos live next to the database — on Fly that's the persistent
+// volume, so they survive deploys like everything else.
+const PHOTOS_DIR = process.env.PHOTOS_PATH ?? path.join(path.dirname(DB_PATH), 'photos');
+fs.mkdirSync(PHOTOS_DIR, { recursive: true });
 
 // Migration: older databases have food_log without `label` and with a NOT NULL
 // foodId. SQLite can't relax NOT NULL in place, so rebuild the table once.
@@ -214,7 +227,8 @@ app.get('/api/day', (req, res) => {
       yesterdayMealCounts[row.meal] = row.c;
     }
   }
-  res.json({ entries, exercises, latestWeightKg: latest?.weightKg, yesterdayMealCounts });
+  const done = db.prepare('SELECT 1 FROM day_done WHERE date = ?').get(date) != null;
+  res.json({ entries, exercises, latestWeightKg: latest?.weightKg, yesterdayMealCounts, done });
 });
 
 // Browsing the whole database: every food, newest sources first, with how many
@@ -402,12 +416,74 @@ app.delete('/api/weights/:id', (req, res) => {
   res.json({ ok: true });
 });
 
+app.put('/api/day-done', (req, res) => {
+  const { date, done } = req.body ?? {};
+  if (!/^\d{4}-\d{2}-\d{2}$/.test(date ?? '')) return res.status(400).json({ error: 'bad date' });
+  if (done) {
+    db.prepare('INSERT OR REPLACE INTO day_done (date, completedAt) VALUES (?, ?)').run(
+      date,
+      new Date().toISOString(),
+    );
+  } else {
+    db.prepare('DELETE FROM day_done WHERE date = ?').run(date);
+  }
+  res.json({ date, done: !!done });
+});
+
+// ——— progress photos ———
+
+const photoPath = (id) => path.join(PHOTOS_DIR, `${id}.jpg`);
+
+app.get('/api/photos', (_req, res) => {
+  res.json(db.prepare('SELECT * FROM photos ORDER BY date, createdAt').all());
+});
+
+// Raw JPEG body; date in the query string. Client compresses before upload.
+app.post('/api/photos', express.raw({ type: 'image/jpeg', limit: '10mb' }), (req, res) => {
+  const { date } = req.query;
+  if (!/^\d{4}-\d{2}-\d{2}$/.test(date ?? '')) return res.status(400).json({ error: 'bad date' });
+  if (!Buffer.isBuffer(req.body) || req.body.length === 0) {
+    return res.status(400).json({ error: 'no image' });
+  }
+  const photo = { id: newId(), date, createdAt: new Date().toISOString() };
+  fs.writeFileSync(photoPath(photo.id), req.body);
+  db.prepare('INSERT INTO photos (id, date, createdAt) VALUES (@id, @date, @createdAt)').run(photo);
+  res.json(photo);
+});
+
+// The id must be one we issued — never a path fragment from the client.
+function knownPhoto(req, res) {
+  const row = db.prepare('SELECT * FROM photos WHERE id = ?').get(req.params.id);
+  if (!row) res.status(404).json({ error: 'not found' });
+  return row;
+}
+
+app.get('/api/photos/:id/image', (req, res) => {
+  const row = knownPhoto(req, res);
+  if (!row) return;
+  res.set('Cache-Control', 'private, max-age=31536000, immutable'); // content never changes
+  res.sendFile(photoPath(row.id));
+});
+
+app.delete('/api/photos/:id', (req, res) => {
+  const row = knownPhoto(req, res);
+  if (!row) return;
+  fs.rmSync(photoPath(row.id), { force: true });
+  db.prepare('DELETE FROM photos WHERE id = ?').run(row.id);
+  res.json({ ok: true });
+});
+
 app.delete('/api/all', (_req, res) => {
   db.transaction(() => {
     db.prepare('DELETE FROM profile').run();
     db.prepare('DELETE FROM food_log').run();
     db.prepare('DELETE FROM exercise_log').run();
     db.prepare('DELETE FROM weights').run();
+    db.prepare('DELETE FROM day_done').run();
+    for (const row of db.prepare('SELECT id FROM photos').all()) {
+      fs.rmSync(photoPath(row.id), { force: true });
+    }
+    db.prepare('DELETE FROM photos').run();
     db.prepare("DELETE FROM foods WHERE source != 'seed'").run();
   })();
   res.json({ ok: true });

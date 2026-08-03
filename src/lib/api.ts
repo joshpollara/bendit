@@ -26,6 +26,14 @@ export interface DayData {
   exercises: ExerciseEntry[];
   latestWeightKg?: number;
   yesterdayMealCounts: Partial<Record<Meal, number>>;
+  /** The user has declared logging finished for this day. */
+  done: boolean;
+}
+
+export interface ProgressPhoto {
+  id: string;
+  date: string;
+  createdAt: string;
 }
 
 async function j<T>(path: string, init?: RequestInit): Promise<T> {
@@ -71,6 +79,21 @@ export const api = {
   getWeights: () => j<WeightEntry[]>('/api/weights'),
   putWeight: (w: { date: string; weightKg: number }) => post('/api/weights', w, 'PUT'),
   deleteWeight: (id: string) => j<unknown>(`/api/weights/${id}`, { method: 'DELETE' }),
+
+  setDayDone: (date: string, done: boolean) => post('/api/day-done', { date, done }, 'PUT'),
+
+  listPhotos: () => j<ProgressPhoto[]>('/api/photos'),
+  uploadPhoto: async (date: string, image: Blob) => {
+    const res = await fetch(`/api/photos?date=${date}`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'image/jpeg' },
+      body: image,
+    });
+    if (!res.ok) throw new Error(`${res.status} ${res.statusText}`);
+    return res.json() as Promise<ProgressPhoto>;
+  },
+  photoUrl: (id: string) => `/api/photos/${encodeURIComponent(id)}/image`,
+  deletePhoto: (id: string) => j<unknown>(`/api/photos/${encodeURIComponent(id)}`, { method: 'DELETE' }),
 
   resetAll: () => j<unknown>('/api/all', { method: 'DELETE' }),
 };
