@@ -25,19 +25,6 @@ function defaultMeal(): Meal {
   return 'snacks';
 }
 
-function rankFoods(all: Food[], q: string): Food[] {
-  const matches = all.filter(
-    (f) => f.name.toLowerCase().includes(q) || f.brand?.toLowerCase().includes(q),
-  );
-  matches.sort((a, b) => {
-    const aPre = a.name.toLowerCase().startsWith(q) ? 0 : 1;
-    const bPre = b.name.toLowerCase().startsWith(q) ? 0 : 1;
-    if (aPre !== bPre) return aPre - bPre;
-    return a.name.length - b.name.length;
-  });
-  return matches.slice(0, 40);
-}
-
 function FoodRow({ food, onPick }: { food: Food; onPick: (f: Food) => void }) {
   return (
     <button
@@ -254,7 +241,9 @@ export default function AddFood() {
 
   const q = query.trim().toLowerCase();
 
-  const local = useData(async () => (q ? rankFoods(await api.searchFoods(q), q) : []), [q]);
+  // The server ranks these — full-text match, coverage, and source, none of
+  // which a substring filter here could reproduce. Take its order as given.
+  const local = useData(async () => (q ? api.searchFoods(q) : []), [q]);
   const localRef = useRef<Food[]>([]);
   localRef.current = local ?? [];
 

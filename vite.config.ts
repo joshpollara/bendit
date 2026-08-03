@@ -12,6 +12,9 @@ export default defineConfig({
   },
   test: {
     environment: 'node',
-    include: ['src/**/*.test.ts'],
+    // Server-side logic (food normalization, search, importers) is plain ESM
+    // under server/, tested with the same runner and style as the client libs.
+    include: ['src/**/*.test.ts', 'server/**/*.test.mjs'],
+    exclude: ['**/node_modules/**'],
   },
 });

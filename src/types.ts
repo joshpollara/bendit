@@ -45,7 +45,27 @@ export interface Food {
   protein?: number;
   carbs?: number;
   fat?: number; // grams, optional
-  source: 'seed' | 'openfoodfacts' | 'custom';
+  source: 'seed' | 'openfoodfacts' | 'usda' | 'custom';
+  /** Where the row came from in its source database, so a number can be traced. */
+  sourceId?: string | null;
+  /** Per-100g/ml canonical nutrition; what gram-based estimates are computed from. */
+  basis?: 'g' | 'ml';
+  kcal100?: number | null;
+  protein100?: number | null;
+  carbs100?: number | null;
+  fat100?: number | null;
+  fiber100?: number | null;
+  sugar100?: number | null;
+  satFat100?: number | null;
+  sodiumMg100?: number | null;
+}
+
+export interface FoodServing {
+  id: string;
+  foodId: string;
+  label: string;
+  grams: number;
+  isDefault: number;
 }
 
 export interface FoodLogEntry {

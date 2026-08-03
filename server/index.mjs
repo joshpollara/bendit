@@ -5,6 +5,8 @@ import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { ZipArchive } from 'archiver';
 import compression from 'compression';
+import { per100FromServing } from './lib/foodSchema.mjs';
+import { matchFood, searchFoods } from './lib/foodSearch.mjs';
 import webpush from 'web-push';
 import Database from 'better-sqlite3';
 import express from 'express';
@@ -82,6 +84,103 @@ function ensureColumns(table, columns) {
   for (const [name, type] of Object.entries(columns)) {
     if (!have.has(name)) db.exec(`ALTER TABLE ${table} ADD COLUMN ${name} ${type}`);
   }
+}
+
+// ——— canonical nutrition schema ———
+//
+// The original foods table stored one serving and its calories, which is what
+// the app logs against. Everything downstream of a photo needs the opposite:
+// nutrition per 100g, so an estimated portion in grams can be turned into
+// numbers. Both now live on the row — per-100g is the canonical form, the
+// per-serving fields stay as the logging surface and are derived from it.
+ensureColumns('foods', {
+  // Where the number came from, so any figure can be traced back.
+  sourceId: 'TEXT',
+  // 'g' for solids, 'ml' for liquids — per-100 values are per 100 of this.
+  basis: "TEXT NOT NULL DEFAULT 'g'",
+  kcal100: 'REAL',
+  protein100: 'REAL',
+  carbs100: 'REAL',
+  fat100: 'REAL',
+  fiber100: 'REAL',
+  sugar100: 'REAL',
+  satFat100: 'REAL',
+  sodiumMg100: 'REAL',
+  updatedAt: 'TEXT',
+});
+
+db.exec(`
+-- A food can have several ways of being eaten: "1 medium (182g)", "1 cup",
+-- "100 g". The photo path estimates grams; people think in the others.
+CREATE TABLE IF NOT EXISTS food_servings (
+  id TEXT PRIMARY KEY, foodId TEXT NOT NULL, label TEXT NOT NULL,
+  grams REAL NOT NULL, isDefault INTEGER NOT NULL DEFAULT 0
+);
+CREATE INDEX IF NOT EXISTS idx_servings_food ON food_servings(foodId);
+CREATE INDEX IF NOT EXISTS idx_foods_source ON foods(source, sourceId);
+
+-- Search index over the foods table. External-content FTS5: the index holds no
+-- copy of the data, just the terms, so it stays small on a 1GB volume.
+-- Porter stemming, not plain unicode61: the index would otherwise store
+-- "beans" while a query for "black beans" normalises to "bean", matching only
+-- rows containing the literal singular — which is how "black beans" found
+-- "black bean soup" instead of "Beans, black, cooked".
+CREATE VIRTUAL TABLE IF NOT EXISTS foods_fts USING fts5(
+  name, brand, content='foods', content_rowid='rowid', tokenize='porter unicode61'
+);
+`);
+
+// Whether the index has been populated can't be read from the index itself:
+// on an external-content table COUNT(*) counts the *content* table, so it
+// reports "full" while the index is empty — and the update trigger then tries
+// to delete terms that were never written, which SQLite reports as a malformed
+// image. A marker row records the build instead.
+db.exec('CREATE TABLE IF NOT EXISTS schema_meta (key TEXT PRIMARY KEY, value TEXT NOT NULL)');
+const FTS_VERSION = '2'; // bumped when the tokenizer changed
+const ftsBuilt = db.prepare("SELECT value FROM schema_meta WHERE key = 'foods_fts'").get()?.value;
+if (ftsBuilt !== FTS_VERSION) {
+  db.exec("INSERT INTO foods_fts(foods_fts) VALUES('rebuild')");
+  db.prepare("INSERT OR REPLACE INTO schema_meta (key, value) VALUES ('foods_fts', ?)").run(FTS_VERSION);
+}
+
+// Triggers go on after the rebuild, so nothing fires against a half-built index.
+db.exec(`
+CREATE TRIGGER IF NOT EXISTS foods_fts_insert AFTER INSERT ON foods BEGIN
+  INSERT INTO foods_fts(rowid, name, brand) VALUES (new.rowid, new.name, new.brand);
+END;
+CREATE TRIGGER IF NOT EXISTS foods_fts_delete AFTER DELETE ON foods BEGIN
+  INSERT INTO foods_fts(foods_fts, rowid, name, brand) VALUES('delete', old.rowid, old.name, old.brand);
+END;
+CREATE TRIGGER IF NOT EXISTS foods_fts_update AFTER UPDATE ON foods BEGIN
+  INSERT INTO foods_fts(foods_fts, rowid, name, brand) VALUES('delete', old.rowid, old.name, old.brand);
+  INSERT INTO foods_fts(rowid, name, brand) VALUES (new.rowid, new.name, new.brand);
+END;
+`);
+
+// Existing rows predate the canonical schema. Where a serving weight is known,
+// per-100g follows by division; where it isn't, the row stays per-serving only
+// and is excluded from gram-based estimation rather than guessed at.
+const needsBackfill = db
+  .prepare('SELECT * FROM foods WHERE kcal100 IS NULL AND servingGrams > 0')
+  .all();
+if (needsBackfill.length > 0) {
+  const update = db.prepare(
+    `UPDATE foods SET kcal100 = @kcal100, protein100 = @protein100, carbs100 = @carbs100,
+     fat100 = @fat100, sourceId = COALESCE(sourceId, @sourceId), updatedAt = @updatedAt WHERE id = @id`,
+  );
+  db.transaction(() => {
+    for (const row of needsBackfill) {
+      const per100 = per100FromServing(row);
+      if (!per100) continue;
+      update.run({
+        ...per100,
+        id: row.id,
+        sourceId: row.barcode ?? null,
+        updatedAt: new Date().toISOString(),
+      });
+    }
+  })();
+  console.log(`Backfilled per-100g nutrition for ${needsBackfill.length} foods`);
 }
 
 ensureColumns('profile', {
@@ -512,16 +611,34 @@ app.get('/api/foods', (req, res) => {
     return res.json(db.prepare('SELECT * FROM foods WHERE source = ? ORDER BY name').all(source));
   }
   if (!q) return res.json([]);
-  const like = `%${q}%`;
+  // Ranked full-text search. A LIKE scan can't tell "Chicken breast" from
+  // "Chicken breast flavoured crisps", and can't match a phrase against USDA's
+  // qualifiers-last naming at all.
+  res.json(searchFoods(db, q, { limit: 50 }));
+});
+
+// The lookup the meal-photo path will use: one answer or none, never a guess.
+app.get('/api/foods/match', (req, res) => {
+  const food = matchFood(db, req.query.q ?? '');
+  res.json(food ?? null);
+});
+
+// Serving options for a food, so portions can be offered in units people use.
+app.get('/api/foods/:id/servings', (req, res) => {
   res.json(
     db
-      .prepare('SELECT * FROM foods WHERE name LIKE ? OR brand LIKE ? LIMIT 100')
-      .all(like, like),
+      .prepare('SELECT * FROM food_servings WHERE foodId = ? ORDER BY isDefault DESC, grams DESC')
+      .all(req.params.id),
   );
 });
 
 app.get('/api/foods/barcode/:code', (req, res) => {
-  res.json(db.prepare('SELECT * FROM foods WHERE barcode = ?').get(req.params.code) ?? null);
+  // Local first: with the bulk import in place this answers without touching
+  // the network, which is the whole point of the barcode path.
+  const local = db
+    .prepare('SELECT * FROM foods WHERE barcode = ? ORDER BY (kcal100 IS NULL) LIMIT 1')
+    .get(req.params.code);
+  res.json(local ?? null);
 });
 
 app.post('/api/foods', (req, res) => {

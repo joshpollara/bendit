@@ -14,13 +14,15 @@ type Filter = 'all' | Food['source'];
 const FILTERS: { key: Filter; label: string }[] = [
   { key: 'all', label: 'All' },
   { key: 'custom', label: 'Mine' },
-  { key: 'openfoodfacts', label: 'Scanned' },
+  { key: 'openfoodfacts', label: 'Packaged' },
+  { key: 'usda', label: 'USDA' },
   { key: 'seed', label: 'Built-in' },
 ];
 
 const SOURCE_LABELS: Record<Food['source'], string> = {
   custom: 'Mine',
   openfoodfacts: 'Open Food Facts',
+  usda: 'USDA',
   seed: 'Built-in',
 };
 
@@ -120,7 +122,7 @@ export default function Foods() {
         />
       </div>
 
-      <div className="mx-4 mt-3 grid grid-cols-4 rounded-xl bg-card p-1 text-center text-xs font-semibold lg:mx-0">
+      <div className="mx-4 mt-3 grid grid-cols-5 rounded-xl bg-card p-1 text-center text-[11px] font-semibold lg:mx-0">
         {FILTERS.map((f) => (
           <button
             key={f.key}
@@ -173,6 +175,28 @@ export default function Foods() {
           Showing the first 500 — narrow it down with the filter above.
         </p>
       )}
+
+      <p className="mx-4 mt-4 text-xs leading-relaxed text-ink-muted lg:mx-0">
+        Product data from{' '}
+        <a
+          href="https://openfoodfacts.org"
+          target="_blank"
+          rel="noreferrer"
+          className="underline"
+        >
+          Open Food Facts
+        </a>
+        , used under the{' '}
+        <a
+          href="https://opendatacommons.org/licenses/odbl/1-0/"
+          target="_blank"
+          rel="noreferrer"
+          className="underline"
+        >
+          Open Database License
+        </a>
+        . Generic foods from USDA FoodData Central (public domain).
+      </p>
     </div>
   );
 }
