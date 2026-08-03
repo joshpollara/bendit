@@ -125,6 +125,22 @@ export const TrashIcon = (p: IconProps) => (
   </Svg>
 );
 
+export const PersonIcon = (p: IconProps) => (
+  <Svg {...p}>
+    <circle cx="12" cy="6" r="3" />
+    <path d="M12 9v6" />
+    <path d="M7 12.5c2-1.5 8-1.5 10 0" />
+    <path d="M12 15l-3 6M12 15l3 6" />
+  </Svg>
+);
+
+export const FlagIcon = (p: IconProps) => (
+  <Svg {...p}>
+    <path d="M6 21V4" />
+    <path d="M6 4h11l-2.5 4L17 12H6" />
+  </Svg>
+);
+
 export const ListIcon = (p: IconProps) => (
   <Svg {...p}>
     <path d="M4 7h16M4 12h16M4 17h16" />

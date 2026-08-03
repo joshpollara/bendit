@@ -83,14 +83,67 @@ function Viewer({
   );
 }
 
+// Two photos of the user's choosing, side by side, earlier on the left.
+function CompareView({ a, b, onClose }: { a: ProgressPhoto; b: ProgressPhoto; onClose: () => void }) {
+  const [left, right] = a.date <= b.date ? [a, b] : [b, a];
+  const days = Math.round(
+    (Date.parse(`${right.date}T00:00:00Z`) - Date.parse(`${left.date}T00:00:00Z`)) / 86_400_000,
+  );
+  return (
+    <div className="fixed inset-0 z-50 flex flex-col bg-black">
+      <div className="flex items-center justify-between p-3 pt-[max(env(safe-area-inset-top),0.75rem)]">
+        <span className="text-sm font-medium text-white">
+          {days > 0 ? `${days} days apart` : 'Same day'}
+        </span>
+        <button type="button" aria-label="Close comparison" onClick={onClose} className="rounded-full p-2 text-white">
+          <XIcon className="h-5 w-5" />
+        </button>
+      </div>
+      <div className="flex flex-1 gap-0.5">
+        {[left, right].map((p) => (
+          <figure key={p.id} className="relative min-w-0 flex-1">
+            <img
+              src={api.photoUrl(p.id)}
+              alt={`Progress photo from ${p.date}`}
+              className="h-full w-full object-cover"
+            />
+            <figcaption className="absolute bottom-0 inset-x-0 bg-black/50 py-1.5 text-center text-xs text-white">
+              {shortDate(p.date)}
+            </figcaption>
+          </figure>
+        ))}
+      </div>
+      <div className="pb-[max(env(safe-area-inset-bottom),0.5rem)]" />
+    </div>
+  );
+}
+
 export default function ProgressPhotos() {
   const bump = useUI((s) => s.bump);
   const photos = useData(() => api.listPhotos(), []) ?? [];
   const [viewing, setViewing] = useState<number | null>(null);
   const [camera, setCamera] = useState(false);
+  const [picking, setPicking] = useState(false);
+  const [picked, setPicked] = useState<string[]>([]);
   const [uploading, setUploading] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const input = useRef<HTMLInputElement>(null);
+
+  function togglePick(id: string) {
+    setPicked((prev) =>
+      prev.includes(id) ? prev.filter((p) => p !== id) : prev.length < 2 ? [...prev, id] : prev,
+    );
+  }
+
+  function stopPicking() {
+    setPicking(false);
+    setPicked([]);
+  }
+
+  const comparing =
+    picked.length === 2
+      ? { a: photos.find((p) => p.id === picked[0]), b: photos.find((p) => p.id === picked[1]) }
+      : null;
 
   async function addPhoto(photo: Blob) {
     setCamera(false);
@@ -116,8 +169,19 @@ export default function ProgressPhotos() {
 
   return (
     <section className="mx-4 mt-3 rounded-2xl border border-line bg-card p-4 shadow-sm">
-      <div className="mb-1 flex items-center justify-between">
-        <h2 className="font-semibold">Progress photos</h2>
+      <div className="mb-1 flex items-center justify-between gap-2">
+        <h2 className="flex-1 font-semibold">Progress photos</h2>
+        {photos.length >= 2 && (
+          <button
+            type="button"
+            onClick={() => (picking ? stopPicking() : setPicking(true))}
+            className={`rounded-full px-3 py-1.5 text-xs font-semibold ${
+              picking ? 'bg-accent text-white' : 'border border-line text-ink-secondary'
+            }`}
+          >
+            {picking ? 'Cancel' : 'Compare'}
+          </button>
+        )}
         <button
           type="button"
           disabled={uploading}
@@ -129,7 +193,9 @@ export default function ProgressPhotos() {
         </button>
       </div>
       <p className="mb-3 text-xs text-ink-muted">
-        Stored only on your own server. Tap one to browse through time.
+        {picking
+          ? `Pick two photos to compare${picked.length === 1 ? ' — one more' : ''}.`
+          : 'Stored only on your own server. Tap one to browse through time.'}
       </p>
       <input
         ref={input}
@@ -154,14 +220,19 @@ export default function ProgressPhotos() {
             <button
               key={p.id}
               type="button"
-              onClick={() => setViewing(i)}
+              aria-pressed={picking ? picked.includes(p.id) : undefined}
+              onClick={() => (picking ? togglePick(p.id) : setViewing(i))}
               className="shrink-0 text-center"
             >
               <img
                 src={api.photoUrl(p.id)}
                 alt={`Progress photo from ${p.date}`}
                 loading="lazy"
-                className="h-24 w-20 rounded-lg border border-line object-cover"
+                className={`h-24 w-20 rounded-lg border object-cover ${
+                  picking && picked.includes(p.id)
+                    ? 'border-2 border-accent'
+                    : 'border-line'
+                }`}
               />
               <span className="mt-1 block text-[11px] text-ink-muted">{shortDate(p.date)}</span>
             </button>
@@ -178,6 +249,10 @@ export default function ProgressPhotos() {
             input.current?.click();
           }}
         />
+      )}
+
+      {comparing?.a && comparing.b && (
+        <CompareView a={comparing.a} b={comparing.b} onClose={stopPicking} />
       )}
 
       {viewing != null && photos[viewing] && (

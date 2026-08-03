@@ -16,6 +16,7 @@ import {
   type Point,
 } from '../lib/report';
 import { MEAL_LABELS, type Profile } from '../types';
+import GoalTrack from '../components/GoalTrack';
 
 // recharts is heavy; keep it out of the main bundle.
 const TrendChart = lazy(() =>
@@ -232,6 +233,18 @@ export default function Reports({ profile }: { profile: Profile }) {
               )}
             </ul>
           </section>
+
+          {latestTrend != null && (
+            <section className={card}>
+              <h2 className="mb-1 font-semibold">Goal</h2>
+              <GoalTrack
+                startKg={profile.startWeightKg}
+                goalKg={profile.goalWeightKg}
+                currentKg={latestTrend}
+                units={profile.units}
+              />
+            </section>
+          )}
 
           <Suspense fallback={<div className={`${card} h-72`} />}>
             <section className={card}>
