@@ -205,6 +205,11 @@ if (needsBackfill.length > 0) {
   console.log(`Backfilled per-100g nutrition for ${needsBackfill.length} foods`);
 }
 
+// An entry from a photographed plate is an estimate; one from a barcode is a
+// lookup. The day's list says which, because presenting them alike would give
+// a guess the authority of a measurement.
+ensureColumns('food_log', { estimated: 'INTEGER NOT NULL DEFAULT 0' });
+
 ensureColumns('profile', {
   proteinTargetG: 'REAL',
   // 'formula' (Mifflin-St Jeor) or 'measured' (from logged intake vs weight trend)
@@ -528,6 +533,7 @@ app.get('/api/day', (req, res) => {
       servings: row.servings,
       caloriesCached: row.caloriesCached,
       label: row.label ?? undefined,
+      estimated: row.estimated === 1,
       food: rowFood(row),
     }));
   const exercises = db.prepare('SELECT * FROM exercise_log WHERE date = ?').all(date);
@@ -780,12 +786,13 @@ app.get('/api/recent-quick-adds', (_req, res) => {
 });
 
 app.post('/api/food-log', (req, res) => {
-  const e = { id: newId(), foodId: null, label: null, servings: 1, ...req.body };
+  const e = { id: newId(), foodId: null, label: null, servings: 1, estimated: 0, ...req.body };
+  e.estimated = e.estimated ? 1 : 0;
   // INSERT OR IGNORE, not INSERT: an entry queued offline may be sent twice if
   // the reply is lost on a flaky connection. The client generates the id, so a
   // repeat is the same row and lands as a no-op rather than a duplicate meal.
-  db.prepare(`INSERT OR IGNORE INTO food_log (id, date, meal, foodId, servings, caloriesCached, label)
-    VALUES (@id, @date, @meal, @foodId, @servings, @caloriesCached, @label)`).run(e);
+  db.prepare(`INSERT OR IGNORE INTO food_log (id, date, meal, foodId, servings, caloriesCached, label, estimated)
+    VALUES (@id, @date, @meal, @foodId, @servings, @caloriesCached, @label, @estimated)`).run(e);
   res.json(e);
 });
 

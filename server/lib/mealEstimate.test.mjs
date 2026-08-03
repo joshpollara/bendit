@@ -24,10 +24,18 @@ beforeAll(() => {
       servingLabel TEXT, servingGrams REAL,
       kcal100 REAL, protein100 REAL, carbs100 REAL, fat100 REAL
     );
+    CREATE TABLE food_servings (
+      id TEXT PRIMARY KEY, foodId TEXT NOT NULL, label TEXT NOT NULL,
+      grams REAL NOT NULL, isDefault INTEGER NOT NULL DEFAULT 0
+    );
     CREATE VIRTUAL TABLE foods_fts USING fts5(
       name, brand, content='foods', content_rowid='rowid', tokenize='porter unicode61'
     );
   `);
+  // A household portion for the rice, so the unit picker has something to offer.
+  db.prepare('INSERT INTO food_servings VALUES (?, ?, ?, ?, ?)').run(
+    'usda-2:0', 'usda-2', '1 cup (158g)', 158, 1,
+  );
   const insert = db.prepare(
     `INSERT INTO foods (id, source, name, servingLabel, servingGrams, kcal100, protein100, carbs100, fat100)
      VALUES (?, ?, ?, '100 g', 100, ?, ?, ?, ?)`,
@@ -95,6 +103,11 @@ describe('estimateMeal', () => {
   it('handles a photo with nothing in it', () => {
     expect(estimateMeal(db, []).total.calories).toBe(0);
     expect(estimateMeal(db).items).toEqual([]);
+  });
+
+  it('brings the household portions along, for correcting in cups not grams', () => {
+    const [rice] = estimateMeal(db, [item('white rice', 200)]).items;
+    expect(rice.food.servings).toEqual([{ label: '1 cup (158g)', grams: 158 }]);
   });
 
   it('expresses the estimate in servings, which is what the log counts', () => {

@@ -43,6 +43,13 @@ const sum = (values) => values.reduce((total, value) => total + (value ?? 0), 0)
  * `db` is passed in so this stays testable against a small in-memory database.
  */
 export function estimateMeal(db, items = []) {
+  // The household portions a food is sold and eaten in — "1 cup (195g)",
+  // "1 medium (118g)". Nobody corrects a portion in grams if they can correct
+  // it in cups, so these travel with the estimate.
+  const servingsFor = db.prepare(
+    'SELECT label, grams FROM food_servings WHERE foodId = ? ORDER BY isDefault DESC, grams',
+  );
+
   const estimated = items.map((item) => {
     const grams = Number(item?.grams);
     const name = String(item?.name ?? '').trim();
@@ -71,6 +78,7 @@ export function estimateMeal(db, items = []) {
         kcal100: food.kcal100,
         servingLabel: food.servingLabel,
         servingGrams: food.servingGrams ?? null,
+        servings: servingsFor.all(food.id),
       },
       // What the log stores: entries are counted in servings of a food, so the
       // estimated grams are expressed in those terms rather than in a second,

@@ -331,6 +331,9 @@ export default function AddFood() {
         foodId: item.food.id,
         servings: item.servings ?? item.grams / 100,
         caloriesCached: Math.round(item.nutrition.calories),
+        // Only the portions still carrying an error band are estimates; one the
+        // user typed or picked a unit for is as good as any other entry.
+        estimated: (item.error ?? 0) > 0,
       });
     }
     setEstimate(null);

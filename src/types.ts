@@ -76,6 +76,12 @@ export interface FoodLogEntry {
   servings: number; // multiplier on the food's serving
   caloriesCached: number; // denormalized for fast day totals
   label?: string; // name for entries with no food behind them
+  /**
+   * True when the amount was estimated from a photograph rather than measured
+   * or scanned. Shown in the day's list, because a guess presented like a
+   * lookup is a guess wearing a lookup's authority.
+   */
+  estimated?: boolean | number;
 }
 
 export interface ExerciseEntry {

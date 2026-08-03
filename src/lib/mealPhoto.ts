@@ -5,6 +5,7 @@
 // path: reading printed digits is something the phone can do, but recognising
 // a plate of food is not.
 
+import type { Food } from '../types';
 import { postToModel, resizeForModel, type VisionMeta } from './vision';
 
 export type ItemConfidence = 'high' | 'medium' | 'low';
@@ -12,6 +13,8 @@ export type ItemConfidence = 'high' | 'medium' | 'low';
 export type MealItem = {
   /** What the model called it — kept even when nothing matched. */
   name: string;
+  /** The model's words, once the matched food has its own name on screen. */
+  seenAs?: string;
   grams: number;
   confidence: ItemConfidence;
   food: {
@@ -22,6 +25,8 @@ export type MealItem = {
     kcal100: number | null;
     servingLabel: string;
     servingGrams: number | null;
+    /** Household portions: "1 cup (158g)", "1 medium (118g)". */
+    servings?: { label: string; grams: number }[];
   } | null;
   nutrition: { calories: number; protein: number | null; carbs: number | null; fat: number | null } | null;
   range: { low: number; high: number } | null;
@@ -44,11 +49,15 @@ export type MealEstimate = {
   meta: VisionMeta;
 };
 
-export const estimateMealFromPhoto = async (photo: Blob): Promise<MealEstimate> =>
-  postToModel<MealEstimate>('/api/meals/estimate', {
+export async function estimateMealFromPhoto(photo: Blob): Promise<MealEstimate> {
+  const estimate = await postToModel<MealEstimate>('/api/meals/estimate', {
     image: await resizeForModel(photo),
     mimeType: 'image/jpeg',
   });
+  // Remember the model's own words before the matched food's name takes over on
+  // screen, so a wrong match is visible as a wrong match.
+  return { ...estimate, items: estimate.items.map((item) => ({ ...item, seenAs: item.name })) };
+}
 
 /**
  * Recomputes an item after its grams are changed by hand. Scaling the numbers
@@ -78,6 +87,86 @@ export function rescaleItem(item: MealItem, grams: number): MealItem {
     range: { low: calories, high: calories },
     servings: item.food.servingGrams ? grams / item.food.servingGrams : grams / 100,
   };
+}
+
+/**
+ * A food chosen by hand becomes an item at the given weight. Its numbers come
+ * from the same per-100g figures the server would have used, so a corrected
+ * item is priced exactly like an estimated one — and carries no error band,
+ * because nothing about it was guessed.
+ */
+export function itemFromFood(food: Food, grams: number, seenAs?: string): MealItem {
+  const factor = grams / 100;
+  const per100 = (value: number | null | undefined) => (value == null ? null : value);
+  const scale = (value: number | null | undefined, dp = 1) =>
+    value == null ? null : Math.round(value * factor * 10 ** dp) / 10 ** dp;
+
+  // A food with no per-100g figures (an old custom entry) still has a serving,
+  // which is enough to price it.
+  const kcal100 =
+    food.kcal100 ?? (food.servingGrams ? (food.caloriesPerServing * 100) / food.servingGrams : null);
+
+  return {
+    name: food.name,
+    seenAs,
+    grams,
+    confidence: 'high',
+    error: 0,
+    food: {
+      id: food.id,
+      name: food.name,
+      brand: food.brand ?? null,
+      source: food.source,
+      kcal100,
+      servingLabel: food.servingLabel,
+      servingGrams: food.servingGrams ?? null,
+      servings: food.servingGrams
+        ? [{ label: food.servingLabel, grams: food.servingGrams }]
+        : [],
+    },
+    nutrition: {
+      calories: Math.round((kcal100 ?? 0) * factor),
+      protein: scale(per100(food.protein100)),
+      carbs: scale(per100(food.carbs100)),
+      fat: scale(per100(food.fat100)),
+    },
+    range: { low: Math.round((kcal100 ?? 0) * factor), high: Math.round((kcal100 ?? 0) * factor) },
+    servings: food.servingGrams ? grams / food.servingGrams : grams / 100,
+  };
+}
+
+/**
+ * The household amounts to offer beside the grams box, as whole and half
+ * portions of what the food is actually sold in. Capped at a handful: a row of
+ * twenty chips is not a choice, it's a search.
+ */
+export function unitOptions(item: MealItem): { label: string; grams: number }[] {
+  // Reference foods carry their portions in a table; the hand-curated ones just
+  // have the one printed on the row ("1 cup (158g)"). Either is worth offering
+  // — without the fallback the commonest matches got no units at all.
+  const own =
+    item.food?.servingGrams && item.food.servingLabel
+      ? [{ label: item.food.servingLabel, grams: item.food.servingGrams }]
+      : [];
+  const servings = item.food?.servings?.length ? item.food.servings : own;
+  const options: { label: string; grams: number }[] = [];
+
+  for (const serving of servings) {
+    if (!serving.grams || serving.grams <= 0) continue;
+    // A "portion" that is just a weight — "100 g", "25.0g" — is what the grams
+    // box already says, in the same units. Only named portions earn a chip.
+    if (/^[\d.,]+\s*(g|ml|gram|grams)$/i.test(serving.label.trim())) continue;
+    const noun = serving.label.replace(/\s*\([^)]*\)\s*$/, '').trim() || serving.label;
+    options.push({ label: noun, grams: serving.grams });
+    // Half of "1 cup" is "½ cup", not "½ 1 cup": the leading count is replaced,
+    // not prefixed. Anything else ("2 biscuits") keeps its own wording.
+    const half = /^1\s+(.+)$/.exec(noun);
+    if (half && options.length < 3) {
+      options.push({ label: `½ ${half[1]}`, grams: serving.grams / 2 });
+    }
+    if (options.length >= 4) break;
+  }
+  return options.slice(0, 4);
 }
 
 /** Recovers a per-100g figure from what the server sent for the original grams. */

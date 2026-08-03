@@ -28,6 +28,10 @@ import {
   XIcon,
 } from '../components/Icons';
 
+// A photo-estimated portion is a fraction of a serving — 1.6274… of a 100g
+// serving. Two decimals is as much as anyone reads.
+const round2 = (n: number) => Math.round(n * 100) / 100;
+
 function DateNav() {
   const { date, setDate } = useUI();
   return (
@@ -349,12 +353,23 @@ function MealSection({
                   >
                     <p className="truncate text-sm font-medium">
                       {e.food?.name ?? e.label ?? 'Deleted food'}
+                      {/* An amount judged from a photograph, not weighed or
+                          scanned. Marked because a guess shown like a lookup
+                          is a guess wearing a lookup's authority. */}
+                      {e.estimated ? (
+                        <span
+                          title="Estimated from a photo"
+                          className="ml-1.5 rounded-full bg-warn-soft px-1.5 py-0.5 align-middle text-[10px] font-medium text-warn-deep"
+                        >
+                          est.
+                        </span>
+                      ) : null}
                     </p>
                     <p className="truncate text-xs text-ink-muted">
                       {(e as { pending?: boolean }).pending
                         ? 'Waiting to sync'
                         : e.food
-                          ? `${e.servings} × ${e.food.servingLabel}${e.food.brand ? ` · ${e.food.brand}` : ''}`
+                          ? `${e.estimated ? '≈' : ''}${round2(e.servings)} × ${e.food.servingLabel}${e.food.brand ? ` · ${e.food.brand}` : ''}`
                           : 'Calories only'}
                     </p>
                   </button>
