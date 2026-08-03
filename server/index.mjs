@@ -1,7 +1,9 @@
 import crypto from 'node:crypto';
 import fs from 'node:fs';
+import os from 'node:os';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
+import { ZipArchive } from 'archiver';
 import compression from 'compression';
 import Database from 'better-sqlite3';
 import express from 'express';
@@ -183,6 +185,8 @@ app.use((req, res, next) => {
 // ——— helpers ———
 
 const newId = () => crypto.randomUUID();
+
+const isDate = (v) => typeof v === 'string' && /^\d{4}-\d{2}-\d{2}$/.test(v);
 
 /** Only the fields a client is allowed to change, and only those it sent. */
 function pick(body, keys) {
@@ -633,7 +637,7 @@ app.delete('/api/weights/:id', (req, res) => {
 
 app.put('/api/day-done', (req, res) => {
   const { date, done } = req.body ?? {};
-  if (!/^\d{4}-\d{2}-\d{2}$/.test(date ?? '')) return res.status(400).json({ error: 'bad date' });
+  if (!isDate(date)) return res.status(400).json({ error: 'bad date' });
   if (done) {
     db.prepare('INSERT OR REPLACE INTO day_done (date, completedAt) VALUES (?, ?)').run(
       date,
@@ -656,7 +660,7 @@ app.get('/api/photos', (_req, res) => {
 // Raw JPEG body; date in the query string. Client compresses before upload.
 app.post('/api/photos', express.raw({ type: 'image/jpeg', limit: '10mb' }), (req, res) => {
   const { date } = req.query;
-  if (!/^\d{4}-\d{2}-\d{2}$/.test(date ?? '')) return res.status(400).json({ error: 'bad date' });
+  if (!isDate(date)) return res.status(400).json({ error: 'bad date' });
   if (!Buffer.isBuffer(req.body) || req.body.length === 0) {
     return res.status(400).json({ error: 'no image' });
   }
@@ -686,6 +690,137 @@ app.delete('/api/photos/:id', (req, res) => {
   fs.rmSync(photoPath(row.id), { force: true });
   db.prepare('DELETE FROM photos WHERE id = ?').run(row.id);
   res.json({ ok: true });
+});
+
+// ——— body measurements ———
+
+app.get('/api/measurements', (_req, res) => {
+  res.json(db.prepare('SELECT * FROM measurements ORDER BY date, site').all());
+});
+
+app.put('/api/measurements', (req, res) => {
+  const { date, site, valueCm } = req.body ?? {};
+  if (!isDate(date) || !site || !Number.isFinite(Number(valueCm))) {
+    return res.status(400).json({ error: 'date, site and value required' });
+  }
+  const existing = db.prepare('SELECT id FROM measurements WHERE date = ? AND site = ?').get(date, site);
+  const id = existing?.id ?? newId();
+  db.prepare('INSERT OR REPLACE INTO measurements (id, date, site, valueCm) VALUES (?, ?, ?, ?)').run(
+    id,
+    date,
+    site,
+    Number(valueCm),
+  );
+  res.json({ id, date, site, valueCm: Number(valueCm) });
+});
+
+app.delete('/api/measurements/:id', (req, res) => {
+  db.prepare('DELETE FROM measurements WHERE id = ?').run(req.params.id);
+  res.json({ ok: true });
+});
+
+// ——— backup & export ———
+
+// RFC 4180: quote every field, double the quotes inside.
+const csv = (rows) =>
+  rows.map((row) => row.map((v) => `"${String(v ?? '').replace(/"/g, '""')}"`).join(',')).join('\r\n') + '\r\n';
+
+function sendCsv(res, filename, rows) {
+  res.set('Content-Type', 'text/csv; charset=utf-8');
+  res.set('Content-Disposition', `attachment; filename="${filename}"`);
+  res.send(csv(rows));
+}
+
+app.get('/api/export/food-log.csv', (_req, res) => {
+  const rows = db
+    .prepare(`SELECT l.date, l.meal, COALESCE(f.name, l.label, '') AS item, f.brand,
+                     l.servings, f.servingLabel, l.caloriesCached,
+                     f.protein, f.carbs, f.fat
+              FROM food_log l LEFT JOIN foods f ON f.id = l.foodId
+              ORDER BY l.date, l.meal, l.rowid`)
+    .all();
+  sendCsv(res, 'bendit-food-log.csv', [
+    ['date', 'meal', 'item', 'brand', 'servings', 'serving', 'calories', 'protein_g', 'carbs_g', 'fat_g'],
+    ...rows.map((r) => [
+      r.date,
+      r.meal,
+      r.item,
+      r.brand,
+      r.servings,
+      r.servingLabel,
+      Math.round(r.caloriesCached),
+      r.protein == null ? '' : +(r.protein * r.servings).toFixed(1),
+      r.carbs == null ? '' : +(r.carbs * r.servings).toFixed(1),
+      r.fat == null ? '' : +(r.fat * r.servings).toFixed(1),
+    ]),
+  ]);
+});
+
+app.get('/api/export/weights.csv', (_req, res) => {
+  const rows = db.prepare('SELECT date, weightKg FROM weights ORDER BY date').all();
+  sendCsv(res, 'bendit-weights.csv', [
+    ['date', 'weight_kg', 'weight_lb'],
+    ...rows.map((r) => [r.date, r.weightKg, +(r.weightKg / 0.45359237).toFixed(2)]),
+  ]);
+});
+
+app.get('/api/export/exercise.csv', (_req, res) => {
+  const rows = db.prepare('SELECT date, name, minutes, caloriesBurned FROM exercise_log ORDER BY date').all();
+  sendCsv(res, 'bendit-exercise.csv', [
+    ['date', 'activity', 'minutes', 'calories_burned'],
+    ...rows.map((r) => [r.date, r.name, r.minutes, Math.round(r.caloriesBurned)]),
+  ]);
+});
+
+app.get('/api/export/measurements.csv', (_req, res) => {
+  const rows = db.prepare('SELECT date, site, valueCm FROM measurements ORDER BY date, site').all();
+  sendCsv(res, 'bendit-measurements.csv', [
+    ['date', 'site', 'cm', 'inches'],
+    ...rows.map((r) => [r.date, r.site, r.valueCm, +(r.valueCm / 2.54).toFixed(2)]),
+  ]);
+});
+
+// Everything, in one file: a consistent copy of the database plus the photos.
+// db.backup() rather than reading the file directly — with WAL on, a plain copy
+// can catch a write half-finished.
+app.get('/api/backup', async (req, res) => {
+  const stamp = new Date().toISOString().slice(0, 10);
+  const tmp = path.join(os.tmpdir(), `bendit-backup-${Date.now()}.db`);
+  try {
+    await db.backup(tmp);
+  } catch (err) {
+    console.error('backup failed:', err?.message ?? err);
+    return res.status(500).json({ error: 'Could not copy the database.' });
+  }
+
+  res.set('Content-Type', 'application/zip');
+  res.set('Content-Disposition', `attachment; filename="bendit-backup-${stamp}.zip"`);
+
+  const archive = new ZipArchive({ zlib: { level: 9 } });
+  const cleanup = () => fs.rmSync(tmp, { force: true });
+  archive.on('error', (err) => {
+    console.error('backup archive failed:', err?.message ?? err);
+    cleanup();
+    res.destroy();
+  });
+  archive.on('close', cleanup);
+  req.on('close', cleanup);
+
+  archive.pipe(res);
+  archive.file(tmp, { name: 'bendit.db' });
+  for (const row of db.prepare('SELECT id, date FROM photos ORDER BY date').all()) {
+    const file = photoPath(row.id);
+    if (fs.existsSync(file)) archive.file(file, { name: `photos/${row.date}-${row.id}.jpg` });
+  }
+  archive.append(
+    `Bend It! backup — ${new Date().toISOString()}\n\n` +
+      `bendit.db   SQLite database (open with any SQLite tool)\n` +
+      `photos/     progress photos, named by date\n\n` +
+      `To restore: stop the app, put bendit.db where SQLITE_PATH points,\n` +
+      `and the photos into the "photos" folder beside it.\n`,
+    { name: 'README.txt' },
+  );
+  await archive.finalize();
 });
 
 app.delete('/api/all', (_req, res) => {

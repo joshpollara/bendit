@@ -8,6 +8,7 @@
     "start": "node index.mjs"
   },
   "dependencies": {
+    "archiver": "^8.0.0",
     "better-sqlite3": "^11.8.1",
     "compression": "^1.8.1",
     "express": "^4.21.2"

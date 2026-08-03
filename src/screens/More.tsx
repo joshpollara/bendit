@@ -228,6 +228,38 @@ export default function More({ profile }: { profile: Profile }) {
       </section>
 
       <section className={card}>
+        <h2 className="mb-1 font-semibold">Your data</h2>
+        <p className="mb-3 text-xs text-ink-muted">
+          Everything lives on your own server. Keep a copy somewhere else — a backup holds the
+          database and every progress photo, and opens with any SQLite tool.
+        </p>
+        <a
+          href="/api/backup"
+          download
+          className="block w-full rounded-xl bg-accent py-2.5 text-center text-sm font-semibold text-white"
+        >
+          Download backup (.zip)
+        </a>
+        <div className="mt-2 grid grid-cols-2 gap-2">
+          {[
+            { href: '/api/export/food-log.csv', label: 'Food log CSV' },
+            { href: '/api/export/weights.csv', label: 'Weights CSV' },
+            { href: '/api/export/exercise.csv', label: 'Exercise CSV' },
+            { href: '/api/export/measurements.csv', label: 'Measurements CSV' },
+          ].map((f) => (
+            <a
+              key={f.href}
+              href={f.href}
+              download
+              className="rounded-xl border border-line py-2 text-center text-xs font-semibold text-accent"
+            >
+              {f.label}
+            </a>
+          ))}
+        </div>
+      </section>
+
+      <section className={card}>
         <h2 className="mb-1 font-semibold">Food database</h2>
         <p className="mb-3 text-xs text-ink-muted">
           Browse every food the app knows about, and delete the ones you created or scanned.
