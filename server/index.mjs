@@ -146,7 +146,6 @@ app.use(
 app.use(express.json());
 
 const AUTH_PASS = process.env.BASIC_AUTH_PASSWORD;
-const AUTH_USER = process.env.BASIC_AUTH_USER || 'bendit';
 
 const sha = (s) => crypto.createHash('sha256').update(s).digest();
 const safeEqual = (a, b) => crypto.timingSafeEqual(sha(a), sha(b));
@@ -205,13 +204,17 @@ function passwordMatches(password) {
   return typeof password === 'string' && !!AUTH_PASS && safeEqual(password, AUTH_PASS);
 }
 
-// Still supported, so curl, scripts and backup downloads keep working unchanged.
-function hasValidBasicAuth(req) {
-  const [scheme, cred] = (req.headers.authorization ?? '').split(' ');
-  if (!AUTH_PASS || scheme !== 'Basic' || !cred) return false;
-  const decoded = Buffer.from(cred, 'base64').toString();
-  const i = decoded.indexOf(':');
-  return i > 0 && safeEqual(decoded.slice(0, i), AUTH_USER) && safeEqual(decoded.slice(i + 1), AUTH_PASS);
+/**
+ * For scripts: `Authorization: Bearer <password>`.
+ *
+ * Deliberately not HTTP Basic. Browsers cache Basic credentials for an origin
+ * and re-send them on every request, which silently un-did signing out — the
+ * cookie was cleared and the cached header immediately signed you back in.
+ * Nothing makes a browser send a Bearer header on its own.
+ */
+function hasValidBearer(req) {
+  const [scheme, token] = (req.headers.authorization ?? '').split(' ');
+  return scheme === 'Bearer' && passwordMatches(token);
 }
 
 // One password, so brute force is the only attack worth blunting.
@@ -225,7 +228,7 @@ function tooManyAttempts() {
 const isSecure = (req) => req.secure || req.headers['x-forwarded-proto'] === 'https';
 
 app.get('/api/session', (req, res) => {
-  res.json({ authed: hasValidSession(req) || hasValidBasicAuth(req), configured: !!AUTH_PASS });
+  res.json({ authed: hasValidSession(req) || hasValidBearer(req), configured: !!AUTH_PASS });
 });
 
 app.post('/api/login', (req, res) => {
@@ -254,7 +257,7 @@ app.post('/api/logout', (_req, res) => {
 // Deliberately no WWW-Authenticate header on failure: that header is what makes
 // the browser throw its own login box up on every cold start of the app.
 app.use('/api', (req, res, next) => {
-  if (hasValidSession(req) || hasValidBasicAuth(req)) return next();
+  if (hasValidSession(req) || hasValidBearer(req)) return next();
   res.status(401).json({ error: 'Not signed in.' });
 });
 
