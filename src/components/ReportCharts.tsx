@@ -15,15 +15,12 @@ import type { TooltipProps } from 'recharts';
 import { shortDate } from '../lib/dates';
 import { formatCalories, kgToLb } from '../lib/units';
 import type { Units } from '../types';
+import { useChartColors } from '../lib/chartColors';
 
-// Theme tokens from index.css. TREND/GRID/MUTED were validated against the card
-// surface; the muted gray on the raw weigh-ins is deliberate — they read as
-// background noise under the trend line, and mark type plus the legend carry
-// the distinction, not color alone.
-const TREND = '#2a70a0';
-const RAW = '#8a939c';
-const GRID = '#e7e5e0';
-const MUTED = '#8a939c';
+// Colors come from the app's CSS tokens so the charts follow the theme. The
+// muted gray on the raw weigh-ins is deliberate — they read as background noise
+// under the trend line, and mark type plus the legend carry the distinction,
+// not color alone.
 
 const tooltipBox = 'rounded-lg border border-line bg-card px-3 py-2 text-xs shadow-md';
 
@@ -68,6 +65,10 @@ export function TrendChart({
   goalKg: number;
   units: Units;
 }) {
+  // RAW and MUTED are the same token on purpose: the scale dots are meant to
+  // sit back with the axis furniture, under the trend line.
+  const { accent: TREND, grid: GRID, muted: MUTED } = useChartColors();
+  const RAW = MUTED;
   const unit = units === 'imperial' ? 'lb' : 'kg';
   const toDisplay = (kg: number) => (units === 'imperial' ? kgToLb(kg) : kg);
   const goal = +toDisplay(goalKg).toFixed(1);
@@ -198,6 +199,8 @@ function CalorieTooltip({ active, payload, budget }: TooltipProps<number, string
 // Daily net calories against the budget line, with the weighted average showing
 // where intake actually sits once single days stop dominating.
 export function CalorieChart({ data, budget }: { data: CaloriePoint[]; budget: number }) {
+  const { accent: TREND, grid: GRID, muted: MUTED } = useChartColors();
+  const RAW = MUTED;
   return (
     <>
       <ResponsiveContainer width="100%" height={220}>
@@ -252,6 +255,7 @@ export function CalorieChart({ data, budget }: { data: CaloriePoint[]; budget: n
 // Average calories per meal — magnitude across four fixed categories, so one
 // hue and horizontal bars, sorted by the meal order of the day.
 export function MealChart({ data }: { data: { meal: string; average: number }[] }) {
+  const { accent: TREND, muted: MUTED } = useChartColors();
   return (
     <ResponsiveContainer width="100%" height={160}>
       <BarChart data={data} layout="vertical" margin={{ top: 4, right: 48, bottom: 4, left: 0 }}>

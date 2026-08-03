@@ -12,11 +12,9 @@ import type { TooltipProps } from 'recharts';
 import { shortDate } from '../lib/dates';
 import { kgToLb } from '../lib/units';
 import type { Units, WeightEntry } from '../types';
+import { useChartColors } from '../lib/chartColors';
 
-// Colors mirror the validated theme tokens in index.css.
-const ACCENT = '#2a70a0';
-const GRID = '#e7e5e0';
-const MUTED = '#8a939c';
+// Colors come from the app's CSS tokens, so the chart follows the theme.
 
 interface Point {
   date: string;
@@ -45,6 +43,7 @@ export default function WeightChart({
   goalKg: number;
   units: Units;
 }) {
+  const { accent: ACCENT, grid: GRID, muted: MUTED, card: CARD } = useChartColors();
   const toDisplay = (kg: number) => (units === 'imperial' ? kgToLb(kg) : kg);
   const unit = units === 'imperial' ? 'lb' : 'kg';
 
@@ -93,7 +92,7 @@ export default function WeightChart({
           stroke={ACCENT}
           strokeWidth={2}
           dot={{ r: 3, fill: ACCENT, strokeWidth: 0 }}
-          activeDot={{ r: 5, fill: ACCENT, stroke: '#ffffff', strokeWidth: 2 }}
+          activeDot={{ r: 5, fill: ACCENT, stroke: CARD, strokeWidth: 2 }}
           isAnimationActive={false}
         />
       </LineChart>

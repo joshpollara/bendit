@@ -3,6 +3,7 @@ import { Link } from 'react-router-dom';
 import { api } from '../lib/api';
 import { useData } from '../lib/useData';
 import { useUI } from '../store/ui';
+import { useTheme, type ThemeMode } from '../store/theme';
 import { computeBudget, suggestedProteinG } from '../lib/budget';
 import { todayStr } from '../lib/dates';
 import { cmToFtIn, ftInToCm, formatCalories, kgToLb, lbToKg } from '../lib/units';
@@ -28,6 +29,7 @@ const label = 'flex flex-col gap-1 text-sm text-ink-secondary';
 
 export default function More({ profile }: { profile: Profile }) {
   const bump = useUI((s) => s.bump);
+  const { mode, setMode } = useTheme();
   const weights = useData(() => api.getWeights(), []);
   const latestKg = weights?.[weights.length - 1]?.weightKg;
 
@@ -249,6 +251,24 @@ export default function More({ profile }: { profile: Profile }) {
           >
             {saved ? 'Saved ✓' : 'Save changes'}
           </button>
+        </div>
+      </section>
+
+      <section className={card}>
+        <h2 className="mb-2 font-semibold">Appearance</h2>
+        <div className="grid grid-cols-3 gap-2 rounded-xl bg-surface p-1 text-center text-xs font-semibold">
+          {(['system', 'light', 'dark'] as ThemeMode[]).map((m) => (
+            <button
+              key={m}
+              type="button"
+              onClick={() => setMode(m)}
+              className={`rounded-lg py-2 capitalize ${
+                mode === m ? 'bg-accent text-white' : 'text-ink-secondary'
+              }`}
+            >
+              {m}
+            </button>
+          ))}
         </div>
       </section>
 

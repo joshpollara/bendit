@@ -25,6 +25,52 @@
   --font-sans: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, 'Helvetica Neue', Arial, sans-serif;
 }
 
+/*
+ * Dark theme. The same token names, restated — components never branch on
+ * theme, they just read the token. Not an inversion: the accent is lifted so
+ * it still reads on a dark ground, and the greys keep a slight blue bias so
+ * the surface looks chosen rather than defaulted.
+ */
+@layer base {
+  @media (prefers-color-scheme: dark) {
+    :root:not([data-theme='light']) {
+      --color-surface: #16191c;
+      --color-card: #1e2226;
+      --color-ink: #e8eaec;
+      --color-ink-secondary: #a4adb5;
+      --color-ink-muted: #79838c;
+      --color-line: #2e3439;
+      --color-accent: #5b9cc8;
+      --color-accent-deep: #8dbcd9;
+      --color-accent-soft: #223540;
+      --color-amber: #d19a4a;
+      --color-good: #5aa87d;
+      --color-good-soft: #21322a;
+      --color-over: #d4695c;
+      --color-over-soft: #35211f;
+      color-scheme: dark;
+    }
+  }
+
+  :root[data-theme='dark'] {
+    --color-surface: #16191c;
+    --color-card: #1e2226;
+    --color-ink: #e8eaec;
+    --color-ink-secondary: #a4adb5;
+    --color-ink-muted: #79838c;
+    --color-line: #2e3439;
+    --color-accent: #5b9cc8;
+    --color-accent-deep: #8dbcd9;
+    --color-accent-soft: #223540;
+    --color-amber: #d19a4a;
+    --color-good: #5aa87d;
+    --color-good-soft: #21322a;
+    --color-over: #d4695c;
+    --color-over-soft: #35211f;
+    color-scheme: dark;
+  }
+}
+
 html {
   background: var(--color-surface);
 }
