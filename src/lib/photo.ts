@@ -5,7 +5,7 @@
 const MAX_EDGE = 1280;
 const QUALITY = 0.82;
 
-export function compressPhoto(file: File): Promise<Blob> {
+export function compressPhoto(file: Blob): Promise<Blob> {
   return new Promise((resolve, reject) => {
     const url = URL.createObjectURL(file);
     const img = new Image();

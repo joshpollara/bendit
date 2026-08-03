@@ -5,6 +5,7 @@ import { compressPhoto } from '../lib/photo';
 import { shortDate, todayStr } from '../lib/dates';
 import { useUI } from '../store/ui';
 import { CameraIcon, ChevronLeftIcon, ChevronRightIcon, TrashIcon, XIcon } from './Icons';
+import CameraCapture from './CameraCapture';
 
 // Progress photos: one strip of dated thumbnails, and a viewer that flips
 // through time. Photos live on the app's own server behind its login —
@@ -86,15 +87,17 @@ export default function ProgressPhotos() {
   const bump = useUI((s) => s.bump);
   const photos = useData(() => api.listPhotos(), []) ?? [];
   const [viewing, setViewing] = useState<number | null>(null);
+  const [camera, setCamera] = useState(false);
   const [uploading, setUploading] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const input = useRef<HTMLInputElement>(null);
 
-  async function addPhoto(file: File) {
+  async function addPhoto(photo: Blob) {
+    setCamera(false);
     setUploading(true);
     setError(null);
     try {
-      const blob = await compressPhoto(file);
+      const blob = await compressPhoto(photo);
       await api.uploadPhoto(todayStr(), blob);
       bump();
     } catch (e) {
@@ -118,7 +121,7 @@ export default function ProgressPhotos() {
         <button
           type="button"
           disabled={uploading}
-          onClick={() => input.current?.click()}
+          onClick={() => setCamera(true)}
           className="flex items-center gap-1.5 rounded-full border border-accent px-3 py-1.5 text-xs font-semibold text-accent disabled:opacity-50"
         >
           <CameraIcon className="h-4 w-4" />
@@ -132,7 +135,6 @@ export default function ProgressPhotos() {
         ref={input}
         type="file"
         accept="image/*"
-        capture="user"
         className="hidden"
         onChange={(e) => {
           const file = e.target.files?.[0];
@@ -165,6 +167,17 @@ export default function ProgressPhotos() {
             </button>
           ))}
         </div>
+      )}
+
+      {camera && (
+        <CameraCapture
+          onCapture={addPhoto}
+          onClose={() => setCamera(false)}
+          onPickFile={() => {
+            setCamera(false);
+            input.current?.click();
+          }}
+        />
       )}
 
       {viewing != null && photos[viewing] && (
