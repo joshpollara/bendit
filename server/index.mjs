@@ -5,6 +5,7 @@ import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { ZipArchive } from 'archiver';
 import compression from 'compression';
+import webpush from 'web-push';
 import Database from 'better-sqlite3';
 import express from 'express';
 
@@ -840,6 +841,119 @@ app.delete('/api/measurements/:id', (req, res) => {
   db.prepare('DELETE FROM measurements WHERE id = ?').run(req.params.id);
   res.json({ ok: true });
 });
+
+// ——— evening reminder ———
+//
+// A push at your chosen hour, only when the day is still empty and unclosed.
+// Needs a VAPID key pair (fly secrets set VAPID_PUBLIC_KEY=... VAPID_PRIVATE_KEY=...);
+// without one the feature reports itself unavailable instead of half-working.
+
+const VAPID_PUBLIC = process.env.VAPID_PUBLIC_KEY;
+const VAPID_PRIVATE = process.env.VAPID_PRIVATE_KEY;
+const pushReady = !!(VAPID_PUBLIC && VAPID_PRIVATE);
+if (pushReady) {
+  webpush.setVapidDetails(
+    process.env.VAPID_SUBJECT || 'mailto:nobody@example.com',
+    VAPID_PUBLIC,
+    VAPID_PRIVATE,
+  );
+} else {
+  console.log('Push reminders disabled: set VAPID_PUBLIC_KEY and VAPID_PRIVATE_KEY to enable.');
+}
+
+app.get('/api/push/config', (_req, res) => {
+  res.json({
+    enabled: pushReady,
+    publicKey: VAPID_PUBLIC ?? null,
+    subscriptions: db.prepare('SELECT COUNT(*) AS c FROM push_subscriptions').get().c,
+  });
+});
+
+app.post('/api/push/subscribe', (req, res) => {
+  const { endpoint, keys } = req.body ?? {};
+  if (!endpoint || !keys?.p256dh || !keys?.auth) {
+    return res.status(400).json({ error: 'incomplete subscription' });
+  }
+  db.prepare(
+    `INSERT OR REPLACE INTO push_subscriptions (endpoint, p256dh, auth, createdAt)
+     VALUES (?, ?, ?, ?)`,
+  ).run(endpoint, keys.p256dh, keys.auth, new Date().toISOString());
+  res.json({ ok: true });
+});
+
+app.post('/api/push/unsubscribe', (req, res) => {
+  if (req.body?.endpoint) {
+    db.prepare('DELETE FROM push_subscriptions WHERE endpoint = ?').run(req.body.endpoint);
+  }
+  res.json({ ok: true });
+});
+
+app.post('/api/push/test', async (req, res) => {
+  const sent = await sendReminder('Bend It!', 'Reminders are working.');
+  res.json({ sent });
+});
+
+async function sendReminder(title, body) {
+  if (!pushReady) return 0;
+  const subs = db.prepare('SELECT * FROM push_subscriptions').all();
+  let sent = 0;
+  for (const sub of subs) {
+    try {
+      await webpush.sendNotification(
+        { endpoint: sub.endpoint, keys: { p256dh: sub.p256dh, auth: sub.auth } },
+        JSON.stringify({ title, body }),
+      );
+      sent++;
+    } catch (err) {
+      // 404/410 mean the browser threw the subscription away; stop trying.
+      if (err?.statusCode === 404 || err?.statusCode === 410) {
+        db.prepare('DELETE FROM push_subscriptions WHERE endpoint = ?').run(sub.endpoint);
+      } else {
+        console.error('push failed:', err?.statusCode ?? '', err?.message ?? err);
+      }
+    }
+  }
+  return sent;
+}
+
+/** The user's own wall-clock date and hour, wherever they are. */
+function localNow(timezone, at = new Date()) {
+  const zone = timezone || 'UTC';
+  const parts = new Intl.DateTimeFormat('en-CA', {
+    timeZone: zone,
+    year: 'numeric',
+    month: '2-digit',
+    day: '2-digit',
+    hour: '2-digit',
+    hour12: false,
+  }).formatToParts(at);
+  const get = (type) => parts.find((p) => p.type === type)?.value ?? '';
+  return { date: `${get('year')}-${get('month')}-${get('day')}`, hour: Number(get('hour')) % 24 };
+}
+
+/** True when the day deserves a nudge: nothing logged and not marked done. */
+function dayNeedsNudge(date) {
+  const logged = db.prepare('SELECT 1 FROM food_log WHERE date = ? LIMIT 1').get(date);
+  const done = db.prepare('SELECT 1 FROM day_done WHERE date = ?').get(date);
+  return !logged && !done;
+}
+
+let lastReminderDate = null;
+
+async function reminderTick() {
+  if (!pushReady) return;
+  const profile = db.prepare('SELECT * FROM profile WHERE id = ?').get(PROFILE_ID);
+  if (!profile || profile.reminderHour == null) return;
+  const { date, hour } = localNow(profile.timezone);
+  if (hour !== profile.reminderHour || lastReminderDate === date) return;
+  if (!dayNeedsNudge(date)) return;
+  lastReminderDate = date;
+  await sendReminder("Today isn't logged", 'A minute now beats guessing tomorrow.');
+}
+
+// Every five minutes: cheap, and fine-grained enough for an hourly trigger.
+if (pushReady) setInterval(() => void reminderTick(), 5 * 60_000).unref();
+
 
 // ——— backup & export ———
 

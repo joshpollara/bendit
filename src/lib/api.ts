@@ -162,6 +162,12 @@ export const api = {
 
   setDayDone: (date: string, done: boolean) => post('/api/day-done', { date, done }, 'PUT'),
 
+  pushConfig: () =>
+    j<{ enabled: boolean; publicKey: string | null; subscriptions: number }>('/api/push/config'),
+  pushSubscribe: (subscription: unknown) => post('/api/push/subscribe', subscription),
+  pushUnsubscribe: (endpoint: string) => post('/api/push/unsubscribe', { endpoint }),
+  pushTest: () => post('/api/push/test', {}),
+
   listPhotos: () => j<ProgressPhoto[]>('/api/photos'),
   uploadPhoto: async (date: string, image: Blob) => {
     const res = await fetch(`/api/photos?date=${date}`, {

@@ -4,6 +4,7 @@ import { api } from '../lib/api';
 import { useData } from '../lib/useData';
 import { useUI } from '../store/ui';
 import { useTheme, type ThemeMode } from '../store/theme';
+import ReminderSetting from '../components/ReminderSetting';
 import { computeBudget, suggestedProteinG } from '../lib/budget';
 import { todayStr } from '../lib/dates';
 import { cmToFtIn, ftInToCm, formatCalories, kgToLb, lbToKg } from '../lib/units';
@@ -252,6 +253,10 @@ export default function More({ profile }: { profile: Profile }) {
             {saved ? 'Saved ✓' : 'Save changes'}
           </button>
         </div>
+      </section>
+
+      <section className={card}>
+        <ReminderSetting profile={profile} />
       </section>
 
       <section className={card}>
