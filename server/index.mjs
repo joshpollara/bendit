@@ -289,6 +289,39 @@ app.get('/api/day', (req, res) => {
 
 // Browsing the whole database: every food, newest sources first, with how many
 // log entries reference each one so deletes are an informed choice.
+// The Monday-to-Sunday week containing `date`, for the week-so-far line.
+app.get('/api/week', (req, res) => {
+  const { date } = req.query;
+  if (!isDate(date)) return res.status(400).json({ error: 'bad date' });
+  const monday = new Date(`${date}T00:00:00Z`);
+  monday.setUTCDate(monday.getUTCDate() - ((monday.getUTCDay() + 6) % 7));
+  const from = monday.toISOString().slice(0, 10);
+  const sunday = new Date(monday);
+  sunday.setUTCDate(sunday.getUTCDate() + 6);
+  const to = sunday.toISOString().slice(0, 10);
+
+  const days = new Map();
+  const day = (d) => {
+    if (!days.has(d)) days.set(d, { date: d, food: 0, exercise: 0, entries: 0 });
+    return days.get(d);
+  };
+  for (const row of db
+    .prepare(`SELECT date, SUM(caloriesCached) AS food, COUNT(*) AS n FROM food_log
+              WHERE date BETWEEN ? AND ? GROUP BY date`)
+    .all(from, to)) {
+    const d = day(row.date);
+    d.food = row.food;
+    d.entries = row.n;
+  }
+  for (const row of db
+    .prepare(`SELECT date, SUM(caloriesBurned) AS burned FROM exercise_log
+              WHERE date BETWEEN ? AND ? GROUP BY date`)
+    .all(from, to)) {
+    day(row.date).exercise = row.burned;
+  }
+  res.json({ from, to, days: [...days.values()].sort((a, b) => a.date.localeCompare(b.date)) });
+});
+
 app.get('/api/foods/browse', (req, res) => {
   const { q, source } = req.query;
   const where = [];
@@ -383,6 +416,10 @@ app.get('/api/report', (req, res) => {
   res.json({
     from,
     to,
+    done: db
+      .prepare('SELECT date FROM day_done WHERE date BETWEEN ? AND ? ORDER BY date')
+      .all(from, to)
+      .map((r) => r.date),
     days: [...byDate.values()].sort((a, b) => a.date.localeCompare(b.date)),
     weights: db
       .prepare('SELECT date, weightKg FROM weights WHERE date BETWEEN ? AND ? ORDER BY date')

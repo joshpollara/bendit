@@ -18,6 +18,7 @@ import {
 import { MEAL_LABELS, type Profile } from '../types';
 import GoalTrack from '../components/GoalTrack';
 import ExpenditureCard from '../components/ExpenditureCard';
+import LoggingCalendar from '../components/LoggingCalendar';
 import { measureExpenditure } from '../lib/expenditure';
 import BodyFigure from '../components/BodyFigure';
 
@@ -340,6 +341,15 @@ export default function Reports({ profile }: { profile: Profile }) {
               </section>
             )}
           </Suspense>
+
+          {days.length > 0 && (
+            <LoggingCalendar
+              days={days}
+              done={report.done ?? []}
+              today={todayStr()}
+              className={card}
+            />
+          )}
 
           {weeks.length > 0 && (
             <section className="mx-4 mt-3 overflow-hidden rounded-2xl border border-line bg-card shadow-sm">

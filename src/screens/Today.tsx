@@ -118,6 +118,45 @@ function BudgetSummary({
   );
 }
 
+// A week's budget, spent so far. People eat in weeks, not days: a big Friday
+// is fine if the week holds. Only shown once the week is under way.
+function WeekLine({ date, dailyBudget, measured }: { date: string; dailyBudget: number; measured: boolean }) {
+  const week = useData(() => api.getWeek(date), [date]);
+  if (!week) return null;
+
+  const elapsed = week.days.filter((d) => d.date <= date).length;
+  const used = week.days
+    .filter((d) => d.date <= date)
+    .reduce((sum, d) => sum + d.food - (measured ? 0 : d.exercise), 0);
+  if (used === 0) return null;
+
+  const weekBudget = dailyBudget * 7;
+  const left = weekBudget - used;
+  const pace = elapsed > 0 ? Math.round(used / elapsed) : 0;
+
+  return (
+    <section className="mx-4 mt-3 rounded-2xl border border-line bg-card px-4 py-3 shadow-sm">
+      <div className="flex items-baseline justify-between text-sm">
+        <h2 className="font-semibold">This week</h2>
+        <span className="tabular-nums text-ink-secondary">
+          {formatCalories(used)} of {formatCalories(weekBudget)}
+        </span>
+      </div>
+      <div className="mt-2 h-2 overflow-hidden rounded-full bg-line" role="presentation">
+        <div
+          className={`h-full rounded-full ${left < 0 ? 'bg-over' : 'bg-accent'}`}
+          style={{ width: `${Math.min(100, (used / weekBudget) * 100)}%` }}
+        />
+      </div>
+      <p className="mt-2 text-xs text-ink-muted">
+        {left >= 0
+          ? `${formatCalories(left)} left for the rest of the week · averaging ${formatCalories(pace)} a day`
+          : `${formatCalories(-left)} over for the week so far · averaging ${formatCalories(pace)} a day`}
+      </p>
+    </section>
+  );
+}
+
 // Macros come from the foods behind the entries; quick adds contribute
 // calories only, so the totals are a floor, not a claim of completeness.
 function MacroRow({
@@ -369,6 +408,7 @@ export default function Today({ profile }: { profile: Profile }) {
         exercise={exerciseCalories}
         measured={measured}
       />
+      <WeekLine date={date} dailyBudget={budget} measured={measured} />
       <MacroRow entries={joined} proteinTargetG={profile.proteinTargetG} />
 
       {MEALS.map((meal) => (

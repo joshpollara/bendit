@@ -28,6 +28,14 @@ export interface ReportData {
   to: string | null;
   days: DayTotals[];
   weights: { date: string; weightKg: number }[];
+  /** Dates the user marked as finished logging. */
+  done?: string[];
+}
+
+export interface WeekData {
+  from: string;
+  to: string;
+  days: { date: string; food: number; exercise: number; entries: number }[];
 }
 
 export interface DayData {
@@ -121,6 +129,8 @@ export const api = {
 
   getReport: (from?: string) =>
     j<ReportData>(`/api/report${from ? `?from=${from}` : ''}`),
+
+  getWeek: (date: string) => j<WeekData>(`/api/week?date=${date}`),
 
   getWeights: () => j<WeightEntry[]>('/api/weights'),
   putWeight: (w: { date: string; weightKg: number }) => post('/api/weights', w, 'PUT'),
