@@ -9,6 +9,7 @@ import { STRINGS } from '../lib/strings';
 import { useUI } from '../store/ui';
 import { MEALS, MEAL_LABELS, type Food, type Meal } from '../types';
 import ServingSheet from '../components/ServingSheet';
+import FoodForm from '../components/FoodForm';
 import { BarcodeIcon, ChevronLeftIcon, SearchIcon } from '../components/Icons';
 
 // zxing is heavy; only load it when the user actually opens the scanner.
@@ -55,85 +56,6 @@ function FoodRow({ food, onPick }: { food: Food; onPick: (f: Food) => void }) {
         {formatCalories(food.caloriesPerServing)}
       </span>
     </button>
-  );
-}
-
-function CreateFoodForm({
-  prefillBarcode,
-  onCreated,
-}: {
-  prefillBarcode?: string;
-  onCreated: (food: Food) => void;
-}) {
-  const [name, setName] = useState('');
-  const [brand, setBrand] = useState('');
-  const [servingLabel, setServingLabel] = useState('1 serving');
-  const [calories, setCalories] = useState('');
-  const [protein, setProtein] = useState('');
-  const [carbs, setCarbs] = useState('');
-  const [fat, setFat] = useState('');
-
-  const num = (v: string) => (v.trim() === '' ? undefined : Number(v));
-  const valid = name.trim() !== '' && Number.isFinite(Number(calories)) && Number(calories) >= 0;
-
-  async function save() {
-    const food: Food = {
-      id: `custom-${crypto.randomUUID()}`,
-      name: name.trim(),
-      brand: brand.trim() || undefined,
-      barcode: prefillBarcode,
-      servingLabel: servingLabel.trim() || '1 serving',
-      caloriesPerServing: Math.round(Number(calories)),
-      protein: num(protein),
-      carbs: num(carbs),
-      fat: num(fat),
-      source: 'custom',
-    };
-    await api.saveFoods(food);
-    onCreated(food);
-  }
-
-  const field = 'w-full rounded-xl border border-line bg-card px-3 py-2.5 text-sm';
-
-  return (
-    <div className="flex flex-col gap-3 px-4 py-4">
-      {prefillBarcode && (
-        <p className="rounded-xl bg-accent-soft px-3 py-2 text-xs text-accent-deep">
-          Creating a food for barcode {prefillBarcode}
-        </p>
-      )}
-      <input className={field} placeholder="Food name" value={name} onChange={(e) => setName(e.target.value)} />
-      <input className={field} placeholder="Brand (optional)" value={brand} onChange={(e) => setBrand(e.target.value)} />
-      <div className="flex gap-3">
-        <input
-          className={field}
-          placeholder="Serving (e.g. 1 cup)"
-          value={servingLabel}
-          onChange={(e) => setServingLabel(e.target.value)}
-        />
-        <input
-          className={field}
-          type="number"
-          inputMode="numeric"
-          placeholder="Calories"
-          value={calories}
-          onChange={(e) => setCalories(e.target.value)}
-        />
-      </div>
-      <div className="flex gap-3">
-        <input className={field} type="number" inputMode="decimal" placeholder="Protein g" value={protein} onChange={(e) => setProtein(e.target.value)} />
-        <input className={field} type="number" inputMode="decimal" placeholder="Carbs g" value={carbs} onChange={(e) => setCarbs(e.target.value)} />
-        <input className={field} type="number" inputMode="decimal" placeholder="Fat g" value={fat} onChange={(e) => setFat(e.target.value)} />
-      </div>
-      <button
-        type="button"
-        disabled={!valid}
-        onClick={save}
-        className="rounded-xl bg-accent py-3 font-semibold text-white disabled:opacity-40"
-      >
-        Save Food
-      </button>
-    </div>
   );
 }
 
@@ -281,7 +203,9 @@ export default function AddFood() {
         setSelected(food);
       } else {
         setPendingBarcode(code);
-        setBanner(`Barcode ${code} isn't in Open Food Facts yet. Create it as a custom food?`);
+        setBanner(
+          `Barcode ${code} isn't in any database yet. Photograph the nutrition label below and it'll be saved with this barcode.`,
+        );
         setTab('create');
       }
     } catch {
@@ -447,14 +371,16 @@ export default function AddFood() {
           ))}
 
         {tab === 'create' && (
-          <CreateFoodForm
-            prefillBarcode={pendingBarcode}
-            onCreated={(food) => {
-              setBanner(null);
-              setPendingBarcode(undefined);
-              setSelected(food);
-            }}
-          />
+          <div className="px-4 py-4">
+            <FoodForm
+              prefillBarcode={pendingBarcode}
+              onSaved={(food) => {
+                setBanner(null);
+                setPendingBarcode(undefined);
+                setSelected(food);
+              }}
+            />
+          </div>
         )}
       </div>
 

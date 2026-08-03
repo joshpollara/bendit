@@ -17,9 +17,14 @@ export default function ServingSheet({
 }) {
   const [servings, setServings] = useState(1);
   const [meal, setMeal] = useState<Meal>(initialMeal);
+  // Foods whose serving weight is known can be logged by weight instead —
+  // essential for anything sold with a per-100g label.
+  const gramsPerServing = food.servingGrams;
+  const [byWeight, setByWeight] = useState(false);
 
   const step = (delta: number) => setServings((s) => Math.max(0.25, Math.round((s + delta) * 4) / 4));
   const calories = Math.round(food.caloriesPerServing * servings);
+  const grams = gramsPerServing ? Math.round(servings * gramsPerServing) : undefined;
 
   const macro = (label: string, grams?: number) =>
     grams == null ? null : (
@@ -38,6 +43,45 @@ export default function ServingSheet({
         </p>
       </div>
 
+      {gramsPerServing && (
+        <div className="mt-3 grid grid-cols-2 gap-2 rounded-xl bg-surface p-1 text-center text-xs font-semibold">
+          <button
+            type="button"
+            onClick={() => setByWeight(false)}
+            className={`rounded-lg py-2 ${!byWeight ? 'bg-accent text-white' : 'text-ink-secondary'}`}
+          >
+            Servings
+          </button>
+          <button
+            type="button"
+            onClick={() => setByWeight(true)}
+            className={`rounded-lg py-2 ${byWeight ? 'bg-accent text-white' : 'text-ink-secondary'}`}
+          >
+            Grams
+          </button>
+        </div>
+      )}
+
+      {byWeight && gramsPerServing ? (
+        <div className="my-4 flex flex-col items-center gap-1">
+          <input
+            type="number"
+            inputMode="decimal"
+            min={1}
+            step={1}
+            value={grams ?? ''}
+            onChange={(e) => {
+              const g = Number(e.target.value);
+              if (Number.isFinite(g) && g > 0) setServings(g / gramsPerServing);
+            }}
+            className="w-32 rounded-xl border border-line bg-surface py-2 text-center text-2xl font-semibold tabular-nums"
+            aria-label="Grams"
+          />
+          <span className="mt-1 text-xs text-ink-muted">
+            grams · {gramsPerServing} g per {food.servingLabel}
+          </span>
+        </div>
+      ) : (
       <div className="my-4 flex items-center justify-center gap-4">
         <button
           type="button"
@@ -72,10 +116,13 @@ export default function ServingSheet({
           +
         </button>
       </div>
+      )}
 
       <div className="mb-4 text-center">
         <p className="text-3xl font-bold tabular-nums">{formatCalories(calories)}</p>
-        <p className="text-xs uppercase tracking-wide text-ink-muted">calories</p>
+        <p className="text-xs uppercase tracking-wide text-ink-muted">
+          calories{!byWeight && grams != null ? ` · ${grams} g` : ''}
+        </p>
         <p className="mt-1 flex justify-center gap-3 text-xs text-ink-muted">
           {macro('P', food.protein)}
           {macro('C', food.carbs)}

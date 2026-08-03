@@ -6,6 +6,8 @@ import { formatCalories } from '../lib/units';
 import { useUI } from '../store/ui';
 import type { Food } from '../types';
 import { ChevronLeftIcon, SearchIcon, TrashIcon } from '../components/Icons';
+import Sheet from '../components/Sheet';
+import FoodForm from '../components/FoodForm';
 
 type Filter = 'all' | Food['source'];
 
@@ -22,17 +24,30 @@ const SOURCE_LABELS: Record<Food['source'], string> = {
   seed: 'Built-in',
 };
 
-function FoodRow({ food, onDelete }: { food: BrowsedFood; onDelete: (f: BrowsedFood) => void }) {
+function FoodRow({
+  food,
+  onEdit,
+  onDelete,
+}: {
+  food: BrowsedFood;
+  onEdit: (f: BrowsedFood) => void;
+  onDelete: (f: BrowsedFood) => void;
+}) {
+  const editable = food.source !== 'seed';
   return (
     <li className="flex items-center gap-3 border-b border-line px-4 py-2.5 last:border-b-0">
-      <div className="min-w-0 flex-1">
+      <button
+        type="button"
+        disabled={!editable}
+        onClick={() => onEdit(food)}
+        className="min-w-0 flex-1 text-left disabled:cursor-default">
         <p className="truncate text-sm font-medium">{food.name}</p>
         <p className="truncate text-xs text-ink-muted">
           {food.brand ? `${food.brand} · ` : ''}
           {food.servingLabel} · {SOURCE_LABELS[food.source]}
           {food.usageCount > 0 ? ` · logged ${food.usageCount}×` : ''}
         </p>
-      </div>
+      </button>
       <span className="text-sm font-medium tabular-nums text-ink-secondary">
         {formatCalories(food.caloriesPerServing)}
       </span>
@@ -57,6 +72,7 @@ export default function Foods() {
   const bump = useUI((s) => s.bump);
   const [query, setQuery] = useState('');
   const [filter, setFilter] = useState<Filter>('all');
+  const [editing, setEditing] = useState<BrowsedFood | null>(null);
 
   const q = query.trim();
   const foods = useData(
@@ -118,7 +134,8 @@ export default function Foods() {
       </div>
 
       <p className="mx-4 mt-3 text-xs text-ink-muted">
-        Built-in foods can't be deleted. Deleting a food leaves your logged entries untouched.
+        Tap a food you added to edit it. Built-in foods can't be changed or deleted, and deleting a
+        food leaves your logged entries untouched.
       </p>
 
       <div className="mx-4 mt-2 overflow-hidden rounded-2xl border border-line bg-card shadow-sm">
@@ -129,11 +146,25 @@ export default function Foods() {
         ) : (
           <ul>
             {foods.map((f) => (
-              <FoodRow key={f.id} food={f} onDelete={remove} />
+              <FoodRow key={f.id} food={f} onEdit={setEditing} onDelete={remove} />
             ))}
           </ul>
         )}
       </div>
+
+      {editing && (
+        <Sheet onClose={() => setEditing(null)}>
+          <h2 className="mb-3 text-lg font-semibold">Edit food</h2>
+          <FoodForm
+            initial={editing}
+            submitLabel="Save changes"
+            onSaved={() => {
+              setEditing(null);
+              bump();
+            }}
+          />
+        </Sheet>
+      )}
 
       {foods && foods.length === 500 && (
         <p className="mx-4 mt-2 text-xs text-ink-muted">
