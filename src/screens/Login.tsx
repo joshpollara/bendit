@@ -1,22 +1,27 @@
 import { useState } from 'react';
 import { api } from '../lib/api';
+import { useData } from '../lib/useData';
 import { STRINGS } from '../lib/strings';
 
 // Signing in inside the app, rather than through the browser's own dialog.
 // The session lasts a year, so on a phone this should be a once-a-year screen.
 
 export default function Login({ onSignedIn }: { onSignedIn: () => void }) {
+  // A server with no accounts yet can't be signed into, and saying so beats
+  // letting someone guess at a password that doesn't exist.
+  const session = useData(() => api.session(), []);
+  const [username, setUsername] = useState('');
   const [password, setPassword] = useState('');
   const [error, setError] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
 
   async function submit(e: React.FormEvent) {
     e.preventDefault();
-    if (!password) return;
+    if (!username || !password) return;
     setBusy(true);
     setError(null);
     try {
-      await api.login(password);
+      await api.login(username, password);
       onSignedIn();
     } catch (err) {
       setError(err instanceof Error ? err.message : 'Could not sign in.');
@@ -31,10 +36,27 @@ export default function Login({ onSignedIn }: { onSignedIn: () => void }) {
       </h1>
       <p className="text-center text-sm text-ink-muted">{STRINGS.splash}</p>
 
+      {session?.configured === false && (
+        <p className="w-full rounded-xl bg-over-soft px-3 py-2.5 text-center text-sm text-over">
+          No accounts exist on this server yet. Add one on the machine it runs on:
+          <code className="mt-1 block text-xs">bendit-user add yourname</code>
+        </p>
+      )}
+
       <form onSubmit={submit} className="flex w-full flex-col gap-3">
         <input
-          type="password"
+          type="text"
           autoFocus
+          autoCapitalize="none"
+          autoCorrect="off"
+          autoComplete="username"
+          placeholder="Username"
+          value={username}
+          onChange={(e) => setUsername(e.target.value)}
+          className="w-full rounded-xl border border-line bg-card px-4 py-3 text-center text-base"
+        />
+        <input
+          type="password"
           autoComplete="current-password"
           placeholder="Password"
           value={password}
@@ -46,7 +68,7 @@ export default function Login({ onSignedIn }: { onSignedIn: () => void }) {
         )}
         <button
           type="submit"
-          disabled={busy || !password}
+          disabled={busy || !username || !password}
           className="w-full rounded-xl bg-accent py-3.5 font-semibold text-white disabled:opacity-40"
         >
           {busy ? 'Signing in…' : 'Sign in'}

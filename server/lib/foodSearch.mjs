@@ -191,13 +191,23 @@ export function rankRows(rows, query) {
  * Searches the foods table. `db` is a better-sqlite3 handle; kept as a
  * parameter so this stays testable against an in-memory database.
  */
-export function searchFoods(db, query, { limit = 25, requireNutrition = false, sources } = {}) {
+export function searchFoods(
+  db,
+  query,
+  { limit = 25, requireNutrition = false, sources, ownerId } = {},
+) {
   const plan = buildMatchPlan(query);
   let filter = requireNutrition ? 'AND f.kcal100 IS NOT NULL' : '';
   const extra = [];
   if (sources?.length) {
     filter += ` AND f.source IN (${sources.map(() => '?').join(', ')})`;
     extra.push(...sources);
+  }
+  // Shared reference data, plus this user's own foods. Another user's private
+  // food is not a search result, however well it matches.
+  if (ownerId !== undefined) {
+    filter += ' AND (f.ownerId IS NULL OR f.ownerId = ?)';
+    extra.push(ownerId);
   }
 
   for (const match of plan) {

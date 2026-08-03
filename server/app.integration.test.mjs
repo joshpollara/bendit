@@ -5,7 +5,9 @@ import net from 'node:net';
 import os from 'node:os';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
+import Database from 'better-sqlite3';
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
+import { createUser, createUsersTable } from './lib/users.mjs';
 
 // The whole server, started the way it starts in production, with a stand-in
 // for the model.
@@ -88,12 +90,18 @@ beforeAll(async () => {
   dbPath = path.join(fs.mkdtempSync(path.join(os.tmpdir(), 'bendit-test-')), 'test.db');
   base = `http://127.0.0.1:${appPort}`;
 
+  // An account to call as: photo endpoints are behind the same guard as
+  // everything else.
+  const seed = new Database(dbPath);
+  createUsersTable(seed);
+  createUser(seed, 'tester', 'test-password');
+  seed.close();
+
   server = spawn('node', [path.join(here, 'index.mjs')], {
     env: {
       ...process.env,
       PORT: String(appPort),
       SQLITE_PATH: dbPath,
-      BASIC_AUTH_PASSWORD: 'test-password',
       GEMINI_API_KEY: 'test-key',
       VISION_ENDPOINT: `http://127.0.0.1:${stubPort}/models`,
       VISION_DAILY_LIMIT: '4',
@@ -124,7 +132,7 @@ const post = async (path, body, { auth = true } = {}) => {
     method: 'POST',
     headers: {
       'content-type': 'application/json',
-      ...(auth ? { authorization: 'Bearer test-password' } : {}),
+      ...(auth ? { authorization: 'Bearer tester:test-password' } : {}),
     },
     body: JSON.stringify(body),
   });
@@ -178,7 +186,6 @@ describe('the assembled server', () => {
   });
 
   it('recorded every call, with what it cost', async () => {
-    const { default: Database } = await import('better-sqlite3');
     const db = new Database(dbPath, { readonly: true });
     const rows = db.prepare('SELECT task, status, model, totalTokens FROM vision_requests').all();
     db.close();

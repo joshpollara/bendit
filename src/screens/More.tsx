@@ -32,6 +32,7 @@ export default function More({ profile }: { profile: Profile }) {
   const bump = useUI((s) => s.bump);
   const { mode, setMode } = useTheme();
   const weights = useData(() => api.getWeights(), []);
+  const session = useData(() => api.session(), []);
   const latestKg = weights?.[weights.length - 1]?.weightKg;
 
   const [units, setUnits] = useState<Units>(profile.units);
@@ -327,8 +328,14 @@ export default function More({ profile }: { profile: Profile }) {
       <section className={card}>
         <h2 className="mb-1 font-semibold">This device</h2>
         <p className="mb-3 text-xs text-ink-muted">
-          You're signed in on this device for a year at a time. Signing out means entering the
-          password again next time.
+          {session?.username ? (
+            <>
+              Signed in as <strong className="text-ink">{session.username}</strong>. Your log,
+              weights and photos are yours alone — other accounts on this server can't see them.{' '}
+            </>
+          ) : null}
+          You're signed in on this device for a year at a time. Signing out means entering your
+          username and password again next time.
         </p>
         <button
           type="button"

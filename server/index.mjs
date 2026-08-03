@@ -8,6 +8,13 @@ import compression from 'compression';
 import { barcodeVariants } from './lib/barcode.mjs';
 import { per100FromServing } from './lib/foodSchema.mjs';
 import { matchFood, searchFoods } from './lib/foodSearch.mjs';
+import {
+  authenticate,
+  countUsers,
+  createUsersTable,
+  findUser,
+  USER_TABLES,
+} from './lib/users.mjs';
 import { createVisionProvider } from './lib/vision.mjs';
 import {
   createLabelExtractHandler,
@@ -22,7 +29,6 @@ import express from 'express';
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const DB_PATH = process.env.SQLITE_PATH ?? path.join(__dirname, 'dev.db');
 const PORT = Number(process.env.PORT ?? 8080);
-const PROFILE_ID = 'me';
 
 // ——— database ———
 
@@ -84,6 +90,8 @@ CREATE TABLE IF NOT EXISTS push_subscriptions (
   endpoint TEXT PRIMARY KEY, p256dh TEXT NOT NULL, auth TEXT NOT NULL, createdAt TEXT NOT NULL
 );
 `);
+
+createUsersTable(db);
 
 // Columns added after the first release. SQLite only supports ADD COLUMN, which
 // is all these need — every one is nullable or defaulted.
@@ -210,6 +218,67 @@ if (needsBackfill.length > 0) {
 // a guess the authority of a measurement.
 ensureColumns('food_log', { estimated: 'INTEGER NOT NULL DEFAULT 0' });
 
+// Three tables were unique on a date alone, which is right for one person and
+// wrong for several: your weigh-in on Tuesday would collide with mine. SQLite
+// can't alter a constraint, so the table is rebuilt with the user in the key.
+function widenKey(table, hasOldKey, create, columns) {
+  const sql = db.prepare("SELECT sql FROM sqlite_master WHERE type='table' AND name=?").get(table)?.sql;
+  if (!sql || !hasOldKey(sql)) return;
+  db.exec(`
+    BEGIN;
+    ALTER TABLE ${table} RENAME TO ${table}_old;
+    ${create}
+    INSERT INTO ${table} (${columns}) SELECT ${columns} FROM ${table}_old;
+    DROP TABLE ${table}_old;
+    COMMIT;
+  `);
+  console.log(`Rebuilt ${table} so it is per-user`);
+}
+
+// ——— whose data is this ———
+//
+// Every personal table carries the user it belongs to, and every query that
+// reads one filters by it. Rows written before there were accounts have no
+// owner and are visible to nobody — there is no sensible person to give them
+// to, and guessing would hand one user another's history.
+for (const table of USER_TABLES) ensureColumns(table, { userId: 'TEXT' });
+
+widenKey(
+  'weights',
+  (sql) => /date TEXT NOT NULL UNIQUE/.test(sql),
+  `CREATE TABLE weights (
+     id TEXT PRIMARY KEY, date TEXT NOT NULL, weightKg REAL NOT NULL, userId TEXT,
+     UNIQUE(date, userId)
+   );`,
+  'id, date, weightKg, userId',
+);
+widenKey(
+  'day_done',
+  (sql) => /date TEXT PRIMARY KEY/.test(sql),
+  `CREATE TABLE day_done (
+     date TEXT NOT NULL, completedAt TEXT NOT NULL, userId TEXT,
+     PRIMARY KEY (date, userId)
+   );`,
+  'date, completedAt, userId',
+);
+widenKey(
+  'measurements',
+  (sql) => /UNIQUE\(date, site\)/.test(sql),
+  `CREATE TABLE measurements (
+     id TEXT PRIMARY KEY, date TEXT NOT NULL, site TEXT NOT NULL, valueCm REAL NOT NULL,
+     userId TEXT, UNIQUE(date, site, userId)
+   );`,
+  'id, date, site, valueCm, userId',
+);
+// Foods are shared reference data except where someone made one: a food you
+// typed in is yours, but a food with a barcode belongs to the barcode, so the
+// next person to scan that packet finds it.
+ensureColumns('foods', { ownerId: 'TEXT' });
+db.exec('CREATE INDEX IF NOT EXISTS idx_foods_owner ON foods(ownerId)');
+for (const table of USER_TABLES) {
+  db.exec(`CREATE INDEX IF NOT EXISTS idx_${table}_user ON ${table}(userId)`);
+}
+
 ensureColumns('profile', {
   proteinTargetG: 'REAL',
   // 'formula' (Mifflin-St Jeor) or 'measured' (from logged intake vs weight trend)
@@ -292,27 +361,43 @@ const IMAGE_ROUTES = new Set(['/api/vision/extract', '/api/labels/extract', '/ap
 const parseJson = express.json();
 app.use((req, res, next) => (IMAGE_ROUTES.has(req.path) ? next() : parseJson(req, res, next)));
 
-const AUTH_PASS = process.env.BASIC_AUTH_PASSWORD;
-
 const sha = (s) => crypto.createHash('sha256').update(s).digest();
-const safeEqual = (a, b) => crypto.timingSafeEqual(sha(a), sha(b));
 
-// A session is a signed expiry, nothing more — there's one user, so there's no
-// session state worth storing. The signing key is derived from the password, so
-// changing the password signs every device out, which is the behaviour you want.
+// A session is a signed "who, until when" — there is still no session state
+// worth storing, but now it has to say which account it is for.
+//
+// The signing key is a secret generated once and kept in the database, rather
+// than derived from a password as it was when there was only one. That means
+// changing a password no longer signs out every device by accident of the
+// implementation; sessions carry the password's own version instead, below.
 const SESSION_COOKIE = 'bendit_session';
 const SESSION_DAYS = 365;
-const sessionKey = sha(`bendit-session:${AUTH_PASS ?? ''}`);
 
-const signature = (expiry) =>
-  crypto.createHmac('sha256', sessionKey).update(String(expiry)).digest('base64url');
+function sessionSecret() {
+  const existing = db.prepare("SELECT value FROM schema_meta WHERE key = 'session_secret'").get();
+  if (existing) return existing.value;
+  const secret = crypto.randomBytes(32).toString('hex');
+  db.prepare("INSERT INTO schema_meta (key, value) VALUES ('session_secret', ?)").run(secret);
+  return secret;
+}
+const sessionKey = sha(`bendit-session:${sessionSecret()}`);
 
-function issueSession(res, secure) {
+/**
+ * A token is bound to the password that was current when it was issued, so
+ * changing a password signs that user's other devices out — and only theirs.
+ */
+const passwordStamp = (hash) => sha(hash).toString('base64url').slice(0, 12);
+
+const signature = (payload) =>
+  crypto.createHmac('sha256', sessionKey).update(payload).digest('base64url');
+
+function issueSession(res, user, secure) {
   const expiry = Date.now() + SESSION_DAYS * 86_400_000;
+  const payload = `${user.id}.${expiry}.${passwordStamp(user.passwordHash)}`;
   res.setHeader(
     'Set-Cookie',
     [
-      `${SESSION_COOKIE}=${expiry}.${signature(expiry)}`,
+      `${SESSION_COOKIE}=${payload}.${signature(payload)}`,
       'Path=/',
       'HttpOnly',
       'SameSite=Lax',
@@ -334,62 +419,85 @@ function readCookie(req, name) {
   return null;
 }
 
-function hasValidSession(req) {
-  if (!AUTH_PASS) return false;
+/** The user this request is for, or null. */
+function userFromSession(req) {
   const value = readCookie(req, SESSION_COOKIE);
-  if (!value) return false;
-  const [rawExpiry, mac] = value.split('.');
-  const expiry = Number(rawExpiry);
-  if (!Number.isFinite(expiry) || expiry < Date.now() || !mac) return false;
-  const expected = signature(expiry);
-  return (
-    mac.length === expected.length && crypto.timingSafeEqual(Buffer.from(mac), Buffer.from(expected))
-  );
-}
+  if (!value) return null;
+  const [userId, rawExpiry, stamp, mac] = value.split('.');
+  if (!userId || !stamp || !mac) return null;
 
-function passwordMatches(password) {
-  return typeof password === 'string' && !!AUTH_PASS && safeEqual(password, AUTH_PASS);
+  const expiry = Number(rawExpiry);
+  if (!Number.isFinite(expiry) || expiry < Date.now()) return null;
+
+  const expected = signature(`${userId}.${rawExpiry}.${stamp}`);
+  if (mac.length !== expected.length) return null;
+  if (!crypto.timingSafeEqual(Buffer.from(mac), Buffer.from(expected))) return null;
+
+  const user = db.prepare('SELECT * FROM users WHERE id = ?').get(userId);
+  // A deleted account, or a password changed since: the signature is still
+  // good, but it is no longer a session anyone should be holding.
+  if (!user || passwordStamp(user.passwordHash) !== stamp) return null;
+  return { id: user.id, username: user.username };
 }
 
 /**
- * For scripts: `Authorization: Bearer <password>`.
+ * For scripts: `Authorization: Bearer <username>:<password>`.
  *
  * Deliberately not HTTP Basic. Browsers cache Basic credentials for an origin
  * and re-send them on every request, which silently un-did signing out — the
  * cookie was cleared and the cached header immediately signed you back in.
  * Nothing makes a browser send a Bearer header on its own.
  */
-function hasValidBearer(req) {
+function userFromBearer(req) {
   const [scheme, token] = (req.headers.authorization ?? '').split(' ');
-  return scheme === 'Bearer' && passwordMatches(token);
+  if (scheme !== 'Bearer' || !token) return null;
+  const separator = token.indexOf(':');
+  if (separator === -1) return null;
+  return authenticate(db, token.slice(0, separator), token.slice(separator + 1));
 }
 
-// One password, so brute force is the only attack worth blunting.
-const loginAttempts = [];
-function tooManyAttempts() {
+// Rate limiting is per username, so one person fat-fingering their password
+// can't lock everyone else out — which a single shared counter would do.
+const loginAttempts = new Map();
+function tooManyAttempts(username) {
   const cutoff = Date.now() - 60_000;
-  while (loginAttempts.length && loginAttempts[0] < cutoff) loginAttempts.shift();
-  return loginAttempts.length >= 10;
+  const attempts = (loginAttempts.get(username) ?? []).filter((at) => at > cutoff);
+  loginAttempts.set(username, attempts);
+  return attempts.length >= 10;
 }
 
 const isSecure = (req) => req.secure || req.headers['x-forwarded-proto'] === 'https';
 
 app.get('/api/session', (req, res) => {
-  res.json({ authed: hasValidSession(req) || hasValidBearer(req), configured: !!AUTH_PASS });
+  const user = userFromSession(req) ?? userFromBearer(req);
+  res.json({
+    authed: !!user,
+    username: user?.username ?? null,
+    // False until somebody has been added with the users tool, which is what
+    // the sign-in screen needs to know to explain itself.
+    configured: countUsers(db) > 0,
+  });
 });
 
 app.post('/api/login', (req, res) => {
-  if (!AUTH_PASS) return res.status(503).json({ error: 'No password is configured on the server.' });
-  if (tooManyAttempts()) {
+  const username = String(req.body?.username ?? '').trim().toLowerCase();
+  if (countUsers(db) === 0) {
+    return res.status(503).json({ error: 'No accounts exist yet on this server.' });
+  }
+  if (tooManyAttempts(username)) {
     return res.status(429).json({ error: 'Too many attempts. Wait a minute and try again.' });
   }
-  if (!passwordMatches(req.body?.password)) {
-    loginAttempts.push(Date.now()); // only failures count toward the limit
-    return res.status(401).json({ error: "That password doesn't match." });
+  const user = authenticate(db, username, req.body?.password);
+  if (!user) {
+    // Only failures count toward the limit.
+    loginAttempts.set(username, [...(loginAttempts.get(username) ?? []), Date.now()]);
+    // One message for both halves: which of the two was wrong is not something
+    // to tell someone guessing.
+    return res.status(401).json({ error: "That username and password don't match." });
   }
-  loginAttempts.length = 0; // a correct password clears the slate
-  issueSession(res, isSecure(req));
-  res.json({ ok: true });
+  loginAttempts.delete(username); // a correct password clears the slate
+  issueSession(res, findUser(db, username), isSecure(req));
+  res.json({ ok: true, username: user.username });
 });
 
 app.post('/api/logout', (_req, res) => {
@@ -404,8 +512,13 @@ app.post('/api/logout', (_req, res) => {
 // Deliberately no WWW-Authenticate header on failure: that header is what makes
 // the browser throw its own login box up on every cold start of the app.
 app.use('/api', (req, res, next) => {
-  if (hasValidSession(req) || hasValidBearer(req)) return next();
-  res.status(401).json({ error: 'Not signed in.' });
+  const user = userFromSession(req) ?? userFromBearer(req);
+  if (!user) return res.status(401).json({ error: 'Not signed in.' });
+  // Everything downstream reads this rather than trusting anything in the
+  // request body. A client cannot ask for someone else's data by naming them.
+  req.userId = user.id;
+  req.username = user.username;
+  next();
 });
 
 // ——— helpers ———
@@ -447,10 +560,10 @@ function rowFood(row) {
 const upsertFood = db.prepare(`INSERT OR REPLACE INTO foods
   (id, name, brand, barcode, servingLabel, servingGrams, caloriesPerServing, protein, carbs, fat,
    source, sourceId, basis, kcal100, protein100, carbs100, fat100, fiber100, sugar100, satFat100,
-   sodiumMg100, updatedAt)
+   sodiumMg100, updatedAt, ownerId)
   VALUES (@id, @name, @brand, @barcode, @servingLabel, @servingGrams, @caloriesPerServing, @protein,
    @carbs, @fat, @source, @sourceId, @basis, @kcal100, @protein100, @carbs100, @fat100, @fiber100,
-   @sugar100, @satFat100, @sodiumMg100, @updatedAt)`);
+   @sugar100, @satFat100, @sodiumMg100, @updatedAt, @ownerId)`);
 
 const clearServings = db.prepare('DELETE FROM food_servings WHERE foodId = ?');
 const insertServing = db.prepare(
@@ -487,6 +600,8 @@ function saveFood(f) {
     sugar100: null,
     satFat100: null,
     sodiumMg100: null,
+    // Null means shared: the reference data, and anything with a barcode.
+    ownerId: null,
     ...f,
     // Derived values fill gaps; they never overwrite what the caller sent.
     ...derived,
@@ -512,8 +627,8 @@ function saveFood(f) {
 
 // ——— API ———
 
-app.get('/api/profile', (_req, res) => {
-  res.json(db.prepare('SELECT * FROM profile WHERE id = ?').get(PROFILE_ID) ?? null);
+app.get('/api/profile', (req, res) => {
+  res.json(db.prepare('SELECT * FROM profile WHERE userId = ?').get(req.userId) ?? null);
 });
 
 app.put('/api/profile', (req, res) => {
@@ -524,21 +639,23 @@ app.put('/api/profile', (req, res) => {
     reminderHour: null,
     timezone: null,
     ...req.body,
-    id: PROFILE_ID,
+    id: req.userId,
+    userId: req.userId,
   };
   db.prepare(`INSERT OR REPLACE INTO profile
     (id, sex, birthDate, heightCm, startWeightKg, goalWeightKg, activityLevel, weeklyRateKg, units, createdAt,
-     proteinTargetG, budgetSource, measuredTdee, reminderHour, timezone)
+     proteinTargetG, budgetSource, measuredTdee, reminderHour, timezone, userId)
     VALUES (@id, @sex, @birthDate, @heightCm, @startWeightKg, @goalWeightKg, @activityLevel, @weeklyRateKg, @units, @createdAt,
-     @proteinTargetG, @budgetSource, @measuredTdee, @reminderHour, @timezone)`).run(p);
+     @proteinTargetG, @budgetSource, @measuredTdee, @reminderHour, @timezone, @userId)`).run(p);
   res.json(p);
 });
 
 app.get('/api/day', (req, res) => {
   const { date, yesterday } = req.query;
   const entries = db
-    .prepare(`SELECT l.*, ${foodColumns} FROM food_log l LEFT JOIN foods f ON f.id = l.foodId WHERE l.date = ?`)
-    .all(date)
+    .prepare(`SELECT l.*, ${foodColumns} FROM food_log l LEFT JOIN foods f ON f.id = l.foodId
+       WHERE l.date = ? AND l.userId = ?`)
+    .all(date, req.userId)
     .map((row) => ({
       id: row.id,
       date: row.date,
@@ -550,17 +667,22 @@ app.get('/api/day', (req, res) => {
       estimated: row.estimated === 1,
       food: rowFood(row),
     }));
-  const exercises = db.prepare('SELECT * FROM exercise_log WHERE date = ?').all(date);
-  const latest = db.prepare('SELECT weightKg FROM weights ORDER BY date DESC LIMIT 1').get();
+  const exercises = db
+    .prepare('SELECT * FROM exercise_log WHERE date = ? AND userId = ?')
+    .all(date, req.userId);
+  const latest = db
+    .prepare('SELECT weightKg FROM weights WHERE userId = ? ORDER BY date DESC LIMIT 1')
+    .get(req.userId);
   const yesterdayMealCounts = {};
   if (yesterday) {
     for (const row of db
-      .prepare('SELECT meal, COUNT(*) AS c FROM food_log WHERE date = ? GROUP BY meal')
-      .all(yesterday)) {
+      .prepare('SELECT meal, COUNT(*) AS c FROM food_log WHERE date = ? AND userId = ? GROUP BY meal')
+      .all(yesterday, req.userId)) {
       yesterdayMealCounts[row.meal] = row.c;
     }
   }
-  const done = db.prepare('SELECT 1 FROM day_done WHERE date = ?').get(date) != null;
+  const done =
+    db.prepare('SELECT 1 FROM day_done WHERE date = ? AND userId = ?').get(date, req.userId) != null;
   res.json({ entries, exercises, latestWeightKg: latest?.weightKg, yesterdayMealCounts, done });
 });
 
@@ -584,16 +706,16 @@ app.get('/api/week', (req, res) => {
   };
   for (const row of db
     .prepare(`SELECT date, SUM(caloriesCached) AS food, COUNT(*) AS n FROM food_log
-              WHERE date BETWEEN ? AND ? GROUP BY date`)
-    .all(from, to)) {
+              WHERE date BETWEEN ? AND ? AND userId = ? GROUP BY date`)
+    .all(from, to, req.userId)) {
     const d = day(row.date);
     d.food = row.food;
     d.entries = row.n;
   }
   for (const row of db
     .prepare(`SELECT date, SUM(caloriesBurned) AS burned FROM exercise_log
-              WHERE date BETWEEN ? AND ? GROUP BY date`)
-    .all(from, to)) {
+              WHERE date BETWEEN ? AND ? AND userId = ? GROUP BY date`)
+    .all(from, to, req.userId)) {
     day(row.date).exercise = row.burned;
   }
   res.json({ from, to, days: [...days.values()].sort((a, b) => a.date.localeCompare(b.date)) });
@@ -601,8 +723,11 @@ app.get('/api/week', (req, res) => {
 
 app.get('/api/foods/browse', (req, res) => {
   const { q, source } = req.query;
-  const where = [];
-  const params = [];
+  // How often *you* have logged it, not how often anyone has.
+  const params = [req.userId];
+  // Reference data plus the foods you made — never another user's.
+  const where = ['(f.ownerId IS NULL OR f.ownerId = ?)'];
+  params.push(req.userId);
   if (q) {
     where.push('(f.name LIKE ? OR f.brand LIKE ?)');
     params.push(`%${q}%`, `%${q}%`);
@@ -614,9 +739,9 @@ app.get('/api/foods/browse', (req, res) => {
   res.json(
     db
       .prepare(
-        `SELECT f.*, (SELECT COUNT(*) FROM food_log l WHERE l.foodId = f.id) AS usageCount
+        `SELECT f.*, (SELECT COUNT(*) FROM food_log l WHERE l.foodId = f.id AND l.userId = ?) AS usageCount
          FROM foods f
-         ${where.length ? `WHERE ${where.join(' AND ')}` : ''}
+         WHERE ${where.join(' AND ')}
          -- Your own foods first, then the curated ones, and the 300,000
          -- crowd-sourced products last: unfiltered, they would be the entire
          -- list and nothing you recognise would appear in it.
@@ -629,9 +754,16 @@ app.get('/api/foods/browse', (req, res) => {
   );
 });
 
-app.get('/api/foods/counts', (_req, res) => {
+app.get('/api/foods/counts', (req, res) => {
   const counts = { custom: 0, openfoodfacts: 0, seed: 0 };
-  for (const row of db.prepare('SELECT source, COUNT(*) AS c FROM foods GROUP BY source').all()) {
+  // The counts on the Foods screen should add up to what that screen lists,
+  // which is the shared data plus this user's own.
+  for (const row of db
+    .prepare(
+      `SELECT source, COUNT(*) AS c FROM foods
+       WHERE ownerId IS NULL OR ownerId = ? GROUP BY source`,
+    )
+    .all(req.userId)) {
     counts[row.source] = row.c;
   }
   res.json(counts);
@@ -643,12 +775,15 @@ app.get('/api/report', (req, res) => {
   const bounds = db
     .prepare(
       `SELECT MIN(d) AS first, MAX(d) AS last FROM (
-         SELECT MIN(date) AS d FROM food_log UNION ALL SELECT MAX(date) FROM food_log
-         UNION ALL SELECT MIN(date) FROM exercise_log UNION ALL SELECT MAX(date) FROM exercise_log
-         UNION ALL SELECT MIN(date) FROM weights UNION ALL SELECT MAX(date) FROM weights
+         SELECT MIN(date) AS d FROM food_log WHERE userId = @userId
+         UNION ALL SELECT MAX(date) FROM food_log WHERE userId = @userId
+         UNION ALL SELECT MIN(date) FROM exercise_log WHERE userId = @userId
+         UNION ALL SELECT MAX(date) FROM exercise_log WHERE userId = @userId
+         UNION ALL SELECT MIN(date) FROM weights WHERE userId = @userId
+         UNION ALL SELECT MAX(date) FROM weights WHERE userId = @userId
        ) WHERE d IS NOT NULL`,
     )
-    .get();
+    .get({ userId: req.userId });
   if (!bounds?.first) return res.json({ from: null, to: null, days: [], weights: [] });
   // Clamp to the data that exists, so a 3-month range on a week-old account
   // reports on that week rather than on 90 mostly-empty days.
@@ -667,9 +802,9 @@ app.get('/api/report', (req, res) => {
   for (const row of db
     .prepare(
       `SELECT date, meal, SUM(caloriesCached) AS calories, COUNT(*) AS n
-       FROM food_log WHERE date BETWEEN ? AND ? GROUP BY date, meal`,
+       FROM food_log WHERE date BETWEEN ? AND ? AND userId = ? GROUP BY date, meal`,
     )
-    .all(from, to)) {
+    .all(from, to, req.userId)) {
     const d = day(row.date);
     d.food += row.calories;
     d.entries += row.n;
@@ -680,17 +815,17 @@ app.get('/api/report', (req, res) => {
     .prepare(
       `SELECT l.date, SUM(f.protein * l.servings) AS protein
        FROM food_log l JOIN foods f ON f.id = l.foodId
-       WHERE l.date BETWEEN ? AND ? AND f.protein IS NOT NULL GROUP BY l.date`,
+       WHERE l.date BETWEEN ? AND ? AND l.userId = ? AND f.protein IS NOT NULL GROUP BY l.date`,
     )
-    .all(from, to)) {
+    .all(from, to, req.userId)) {
     day(row.date).protein = Math.round(row.protein * 10) / 10;
   }
   for (const row of db
     .prepare(
       `SELECT date, SUM(caloriesBurned) AS calories FROM exercise_log
-       WHERE date BETWEEN ? AND ? GROUP BY date`,
+       WHERE date BETWEEN ? AND ? AND userId = ? GROUP BY date`,
     )
-    .all(from, to)) {
+    .all(from, to, req.userId)) {
     day(row.date).exercise += row.calories;
   }
 
@@ -698,31 +833,37 @@ app.get('/api/report', (req, res) => {
     from,
     to,
     done: db
-      .prepare('SELECT date FROM day_done WHERE date BETWEEN ? AND ? ORDER BY date')
-      .all(from, to)
+      .prepare('SELECT date FROM day_done WHERE date BETWEEN ? AND ? AND userId = ? ORDER BY date')
+      .all(from, to, req.userId)
       .map((r) => r.date),
     days: [...byDate.values()].sort((a, b) => a.date.localeCompare(b.date)),
     weights: db
-      .prepare('SELECT date, weightKg FROM weights WHERE date BETWEEN ? AND ? ORDER BY date')
-      .all(from, to),
+      .prepare('SELECT date, weightKg FROM weights WHERE date BETWEEN ? AND ? AND userId = ? ORDER BY date')
+      .all(from, to, req.userId),
   });
 });
 
 app.get('/api/foods', (req, res) => {
   const { q, source } = req.query;
   if (source) {
-    return res.json(db.prepare('SELECT * FROM foods WHERE source = ? ORDER BY name').all(source));
+    return res.json(
+      db
+        .prepare(
+          `SELECT * FROM foods WHERE source = ? AND (ownerId IS NULL OR ownerId = ?) ORDER BY name`,
+        )
+        .all(source, req.userId),
+    );
   }
   if (!q) return res.json([]);
   // Ranked full-text search. A LIKE scan can't tell "Chicken breast" from
   // "Chicken breast flavoured crisps", and can't match a phrase against USDA's
   // qualifiers-last naming at all.
-  res.json(searchFoods(db, q, { limit: 50 }));
+  res.json(searchFoods(db, q, { limit: 50, ownerId: req.userId }));
 });
 
 // The lookup the meal-photo path will use: one answer or none, never a guess.
 app.get('/api/foods/match', (req, res) => {
-  const food = matchFood(db, req.query.q ?? '');
+  const food = matchFood(db, req.query.q ?? '', { ownerId: req.userId });
   res.json(food ?? null);
 });
 
@@ -745,15 +886,26 @@ app.get('/api/foods/barcode/:code', (req, res) => {
   const local = db
     .prepare(
       `SELECT * FROM foods WHERE barcode IN (${variants.map(() => '?').join(', ')})
+         AND (ownerId IS NULL OR ownerId = ?)
        ORDER BY (kcal100 IS NULL), (source = 'custom') DESC LIMIT 1`,
     )
-    .get(...variants);
+    .get(...variants, req.userId);
   res.json(local ?? null);
 });
 
 app.post('/api/foods', (req, res) => {
   const foods = Array.isArray(req.body) ? req.body : [req.body];
-  db.transaction(() => foods.forEach(saveFood))();
+  db.transaction(() =>
+    foods.forEach((food) =>
+      saveFood({
+        ...food,
+        // A food with a barcode is about a packet rather than about you, so it
+        // goes into the shared database and the next person to scan that packet
+        // finds it. Anything else you create is yours alone.
+        ownerId: food.barcode ? null : req.userId,
+      }),
+    ),
+  )();
   res.json({ ok: true, count: foods.length });
 });
 
@@ -763,38 +915,43 @@ app.delete('/api/foods/:id', (req, res) => {
   if (food.source === 'seed') {
     return res.status(400).json({ error: 'built-in foods cannot be deleted' });
   }
+  if (food.ownerId && food.ownerId !== req.userId) {
+    return res.status(403).json({ error: 'that food belongs to someone else' });
+  }
   // Past log entries keep their calories; stamp the name so history stays readable.
   db.transaction(() => {
-    db.prepare('UPDATE food_log SET label = COALESCE(label, ?), foodId = NULL WHERE foodId = ?').run(
-      food.brand ? `${food.name} (${food.brand})` : food.name,
-      food.id,
-    );
+    db
+      .prepare(
+        'UPDATE food_log SET label = COALESCE(label, ?), foodId = NULL WHERE foodId = ? AND userId = ?',
+      )
+      .run(food.brand ? `${food.name} (${food.brand})` : food.name, food.id, req.userId);
     db.prepare('DELETE FROM foods WHERE id = ?').run(food.id);
   })();
   res.json({ ok: true });
 });
 
-app.get('/api/recents', (_req, res) => {
+app.get('/api/recents', (req, res) => {
   res.json(
     db
       .prepare(`SELECT f.* FROM foods f JOIN (
-          SELECT foodId, MAX(rowid) AS r FROM food_log GROUP BY foodId ORDER BY r DESC LIMIT 25
+          SELECT foodId, MAX(rowid) AS r FROM food_log WHERE userId = ?
+          GROUP BY foodId ORDER BY r DESC LIMIT 25
         ) l ON l.foodId = f.id ORDER BY l.r DESC`)
-      .all(),
+      .all(req.userId),
   );
 });
 
 // Quick adds have no food behind them, so they can never show up in /api/recents.
 // Their labels are the next best handle: the ten you've typed most recently.
-app.get('/api/recent-quick-adds', (_req, res) => {
+app.get('/api/recent-quick-adds', (req, res) => {
   res.json(
     db
       .prepare(`SELECT label, caloriesCached AS calories, MAX(rowid) AS r
                 FROM food_log
-                WHERE foodId IS NULL AND label IS NOT NULL AND label != ''
+                WHERE foodId IS NULL AND label IS NOT NULL AND label != '' AND userId = ?
                 GROUP BY label COLLATE NOCASE
                 ORDER BY r DESC LIMIT 10`)
-      .all()
+      .all(req.userId)
       .map(({ label, calories }) => ({ label, calories: Math.round(calories) })),
   );
 });
@@ -802,22 +959,26 @@ app.get('/api/recent-quick-adds', (_req, res) => {
 app.post('/api/food-log', (req, res) => {
   const e = { id: newId(), foodId: null, label: null, servings: 1, estimated: 0, ...req.body };
   e.estimated = e.estimated ? 1 : 0;
+  e.userId = req.userId; // from the session, never from the body
   // INSERT OR IGNORE, not INSERT: an entry queued offline may be sent twice if
   // the reply is lost on a flaky connection. The client generates the id, so a
   // repeat is the same row and lands as a no-op rather than a duplicate meal.
-  db.prepare(`INSERT OR IGNORE INTO food_log (id, date, meal, foodId, servings, caloriesCached, label, estimated)
-    VALUES (@id, @date, @meal, @foodId, @servings, @caloriesCached, @label, @estimated)`).run(e);
+  db.prepare(`INSERT OR IGNORE INTO food_log
+      (id, date, meal, foodId, servings, caloriesCached, label, estimated, userId)
+    VALUES (@id, @date, @meal, @foodId, @servings, @caloriesCached, @label, @estimated, @userId)`).run(e);
   res.json(e);
 });
 
 app.delete('/api/food-log/:id', (req, res) => {
-  db.prepare('DELETE FROM food_log WHERE id = ?').run(req.params.id);
+  db.prepare('DELETE FROM food_log WHERE id = ? AND userId = ?').run(req.params.id, req.userId);
   res.json({ ok: true });
 });
 
 // Editing a logged entry in place, rather than delete-and-re-add.
 app.patch('/api/food-log/:id', (req, res) => {
-  const existing = db.prepare('SELECT * FROM food_log WHERE id = ?').get(req.params.id);
+  const existing = db
+    .prepare('SELECT * FROM food_log WHERE id = ? AND userId = ?')
+    .get(req.params.id, req.userId);
   if (!existing) return res.status(404).json({ error: 'not found' });
   const e = {
     ...existing,
@@ -825,7 +986,7 @@ app.patch('/api/food-log/:id', (req, res) => {
     id: existing.id,
   };
   db.prepare(`UPDATE food_log SET meal = @meal, servings = @servings,
-    caloriesCached = @caloriesCached, label = @label WHERE id = @id`).run(e);
+    caloriesCached = @caloriesCached, label = @label WHERE id = @id AND userId = @userId`).run(e);
   res.json(e);
 });
 
@@ -850,21 +1011,23 @@ function templateWithItems(row) {
   };
 }
 
-app.get('/api/meal-templates', (_req, res) => {
-  const rows = db.prepare('SELECT * FROM meal_templates ORDER BY name COLLATE NOCASE').all();
+app.get('/api/meal-templates', (req, res) => {
+  const rows = db
+    .prepare('SELECT * FROM meal_templates WHERE userId = ? ORDER BY name COLLATE NOCASE')
+    .all(req.userId);
   res.json(rows.map(templateWithItems));
 });
 
 const insertTemplate = db.prepare(
-  'INSERT INTO meal_templates (id, name, createdAt) VALUES (@id, @name, @createdAt)',
+  'INSERT INTO meal_templates (id, name, createdAt, userId) VALUES (@id, @name, @createdAt, @userId)',
 );
 const insertTemplateItem = db.prepare(
   `INSERT INTO meal_template_items (id, templateId, foodId, servings, caloriesCached, label, position)
    VALUES (@id, @templateId, @foodId, @servings, @caloriesCached, @label, @position)`,
 );
 
-function createTemplate(name, items) {
-  const template = { id: newId(), name, createdAt: new Date().toISOString() };
+function createTemplate(name, items, userId) {
+  const template = { id: newId(), name, createdAt: new Date().toISOString(), userId };
   db.transaction(() => {
     insertTemplate.run(template);
     items.forEach((item, position) =>
@@ -888,7 +1051,7 @@ app.post('/api/meal-templates', (req, res) => {
   if (!Array.isArray(items) || items.length === 0) {
     return res.status(400).json({ error: 'at least one item required' });
   }
-  const template = createTemplate(name.trim(), items);
+  const template = createTemplate(name.trim(), items, req.userId);
   res.json(templateWithItems(db.prepare('SELECT * FROM meal_templates WHERE id = ?').get(template.id)));
 });
 
@@ -897,19 +1060,25 @@ app.post('/api/meal-templates/from-day', (req, res) => {
   const { name, date, meal } = req.body ?? {};
   if (!name?.trim()) return res.status(400).json({ error: 'name required' });
   const entries = db
-    .prepare('SELECT * FROM food_log WHERE date = ? AND meal = ? ORDER BY rowid')
-    .all(date, meal);
+    .prepare('SELECT * FROM food_log WHERE date = ? AND meal = ? AND userId = ? ORDER BY rowid')
+    .all(date, meal, req.userId);
   if (entries.length === 0) return res.status(400).json({ error: 'nothing logged for that meal' });
-  const template = createTemplate(name.trim(), entries);
+  const template = createTemplate(name.trim(), entries, req.userId);
   res.json(templateWithItems(db.prepare('SELECT * FROM meal_templates WHERE id = ?').get(template.id)));
 });
 
+/** A saved meal, only if it is this user's. */
+const ownTemplate = (id, userId) =>
+  db.prepare('SELECT * FROM meal_templates WHERE id = ? AND userId = ?').get(id, userId);
+
 app.post('/api/meal-templates/:id/log', (req, res) => {
   const { date, meal } = req.body ?? {};
+  if (!ownTemplate(req.params.id, req.userId)) return res.status(404).json({ error: 'not found' });
   const items = templateItems.all(req.params.id);
   if (items.length === 0) return res.status(404).json({ error: 'not found' });
-  const insert = db.prepare(`INSERT INTO food_log (id, date, meal, foodId, servings, caloriesCached, label)
-    VALUES (@id, @date, @meal, @foodId, @servings, @caloriesCached, @label)`);
+  const insert = db.prepare(`INSERT INTO food_log
+      (id, date, meal, foodId, servings, caloriesCached, label, userId)
+    VALUES (@id, @date, @meal, @foodId, @servings, @caloriesCached, @label, @userId)`);
   db.transaction(() => {
     for (const item of items) {
       insert.run({
@@ -920,6 +1089,7 @@ app.post('/api/meal-templates/:id/log', (req, res) => {
         servings: item.servings,
         caloriesCached: item.caloriesCached,
         label: item.label,
+        userId: req.userId,
       });
     }
   })();
@@ -933,6 +1103,7 @@ app.post('/api/meal-templates/:id/as-food', (req, res) => {
   const makes = Number(servings);
   if (!name?.trim()) return res.status(400).json({ error: 'name required' });
   if (!Number.isFinite(makes) || makes <= 0) return res.status(400).json({ error: 'servings required' });
+  if (!ownTemplate(req.params.id, req.userId)) return res.status(404).json({ error: 'not found' });
   const items = templateItems.all(req.params.id);
   if (items.length === 0) return res.status(404).json({ error: 'not found' });
 
@@ -971,6 +1142,7 @@ app.post('/api/meal-templates/:id/as-food', (req, res) => {
 });
 
 app.delete('/api/meal-templates/:id', (req, res) => {
+  if (!ownTemplate(req.params.id, req.userId)) return res.status(404).json({ error: 'not found' });
   db.transaction(() => {
     db.prepare('DELETE FROM meal_template_items WHERE templateId = ?').run(req.params.id);
     db.prepare('DELETE FROM meal_templates WHERE id = ?').run(req.params.id);
@@ -979,14 +1151,16 @@ app.delete('/api/meal-templates/:id', (req, res) => {
 });
 
 app.post('/api/exercise', (req, res) => {
-  const e = { id: newId(), ...req.body };
-  db.prepare(`INSERT OR IGNORE INTO exercise_log (id, date, name, minutes, caloriesBurned)
-    VALUES (@id, @date, @name, @minutes, @caloriesBurned)`).run(e);
+  const e = { id: newId(), ...req.body, userId: req.userId };
+  db.prepare(`INSERT OR IGNORE INTO exercise_log (id, date, name, minutes, caloriesBurned, userId)
+    VALUES (@id, @date, @name, @minutes, @caloriesBurned, @userId)`).run(e);
   res.json(e);
 });
 
 app.patch('/api/exercise/:id', (req, res) => {
-  const existing = db.prepare('SELECT * FROM exercise_log WHERE id = ?').get(req.params.id);
+  const existing = db
+    .prepare('SELECT * FROM exercise_log WHERE id = ? AND userId = ?')
+    .get(req.params.id, req.userId);
   if (!existing) return res.status(404).json({ error: 'not found' });
   const e = { ...existing, ...pick(req.body, ['name', 'minutes', 'caloriesBurned']), id: existing.id };
   db.prepare(
@@ -996,24 +1170,31 @@ app.patch('/api/exercise/:id', (req, res) => {
 });
 
 app.delete('/api/exercise/:id', (req, res) => {
-  db.prepare('DELETE FROM exercise_log WHERE id = ?').run(req.params.id);
+  db.prepare('DELETE FROM exercise_log WHERE id = ? AND userId = ?').run(req.params.id, req.userId);
   res.json({ ok: true });
 });
 
-app.get('/api/weights', (_req, res) => {
-  res.json(db.prepare('SELECT * FROM weights ORDER BY date').all());
+app.get('/api/weights', (req, res) => {
+  res.json(db.prepare('SELECT * FROM weights WHERE userId = ? ORDER BY date').all(req.userId));
 });
 
 app.put('/api/weights', (req, res) => {
   const { date, weightKg } = req.body;
-  const existing = db.prepare('SELECT id FROM weights WHERE date = ?').get(date);
+  const existing = db
+    .prepare('SELECT id FROM weights WHERE date = ? AND userId = ?')
+    .get(date, req.userId);
   const id = existing?.id ?? newId();
-  db.prepare('INSERT OR REPLACE INTO weights (id, date, weightKg) VALUES (?, ?, ?)').run(id, date, weightKg);
+  db.prepare('INSERT OR REPLACE INTO weights (id, date, weightKg, userId) VALUES (?, ?, ?, ?)').run(
+    id,
+    date,
+    weightKg,
+    req.userId,
+  );
   res.json({ id, date, weightKg });
 });
 
 app.delete('/api/weights/:id', (req, res) => {
-  db.prepare('DELETE FROM weights WHERE id = ?').run(req.params.id);
+  db.prepare('DELETE FROM weights WHERE id = ? AND userId = ?').run(req.params.id, req.userId);
   res.json({ ok: true });
 });
 
@@ -1021,12 +1202,13 @@ app.put('/api/day-done', (req, res) => {
   const { date, done } = req.body ?? {};
   if (!isDate(date)) return res.status(400).json({ error: 'bad date' });
   if (done) {
-    db.prepare('INSERT OR REPLACE INTO day_done (date, completedAt) VALUES (?, ?)').run(
+    db.prepare('INSERT OR REPLACE INTO day_done (date, completedAt, userId) VALUES (?, ?, ?)').run(
       date,
       new Date().toISOString(),
+      req.userId,
     );
   } else {
-    db.prepare('DELETE FROM day_done WHERE date = ?').run(date);
+    db.prepare('DELETE FROM day_done WHERE date = ? AND userId = ?').run(date, req.userId);
   }
   res.json({ date, done: !!done });
 });
@@ -1068,8 +1250,10 @@ app.post('/api/meals/estimate', bigJson, createMealEstimateHandler({ db, visionH
 
 const photoPath = (id) => path.join(PHOTOS_DIR, `${id}.jpg`);
 
-app.get('/api/photos', (_req, res) => {
-  res.json(db.prepare('SELECT * FROM photos ORDER BY date, createdAt').all());
+app.get('/api/photos', (req, res) => {
+  res.json(
+    db.prepare('SELECT * FROM photos WHERE userId = ? ORDER BY date, createdAt').all(req.userId),
+  );
 });
 
 // Raw JPEG body; date in the query string. Client compresses before upload.
@@ -1079,15 +1263,21 @@ app.post('/api/photos', express.raw({ type: 'image/jpeg', limit: '10mb' }), (req
   if (!Buffer.isBuffer(req.body) || req.body.length === 0) {
     return res.status(400).json({ error: 'no image' });
   }
-  const photo = { id: newId(), date, createdAt: new Date().toISOString() };
+  const photo = { id: newId(), date, createdAt: new Date().toISOString(), userId: req.userId };
   fs.writeFileSync(photoPath(photo.id), req.body);
-  db.prepare('INSERT INTO photos (id, date, createdAt) VALUES (@id, @date, @createdAt)').run(photo);
+  db.prepare('INSERT INTO photos (id, date, createdAt, userId) VALUES (@id, @date, @createdAt, @userId)').run(
+    photo,
+  );
   res.json(photo);
 });
 
-// The id must be one we issued — never a path fragment from the client.
+// The id must be one we issued — never a path fragment from the client — and it
+// must be this user's. A photo of someone is the most private thing here, and
+// the id is the only thing standing between it and anyone who guesses one.
 function knownPhoto(req, res) {
-  const row = db.prepare('SELECT * FROM photos WHERE id = ?').get(req.params.id);
+  const row = db
+    .prepare('SELECT * FROM photos WHERE id = ? AND userId = ?')
+    .get(req.params.id, req.userId);
   if (!row) res.status(404).json({ error: 'not found' });
   return row;
 }
@@ -1117,8 +1307,10 @@ app.delete('/api/photos/:id', (req, res) => {
 
 // ——— body measurements ———
 
-app.get('/api/measurements', (_req, res) => {
-  res.json(db.prepare('SELECT * FROM measurements ORDER BY date, site').all());
+app.get('/api/measurements', (req, res) => {
+  res.json(
+    db.prepare('SELECT * FROM measurements WHERE userId = ? ORDER BY date, site').all(req.userId),
+  );
 });
 
 app.put('/api/measurements', (req, res) => {
@@ -1126,19 +1318,18 @@ app.put('/api/measurements', (req, res) => {
   if (!isDate(date) || !site || !Number.isFinite(Number(valueCm))) {
     return res.status(400).json({ error: 'date, site and value required' });
   }
-  const existing = db.prepare('SELECT id FROM measurements WHERE date = ? AND site = ?').get(date, site);
+  const existing = db
+    .prepare('SELECT id FROM measurements WHERE date = ? AND site = ? AND userId = ?')
+    .get(date, site, req.userId);
   const id = existing?.id ?? newId();
-  db.prepare('INSERT OR REPLACE INTO measurements (id, date, site, valueCm) VALUES (?, ?, ?, ?)').run(
-    id,
-    date,
-    site,
-    Number(valueCm),
-  );
+  db.prepare(
+    'INSERT OR REPLACE INTO measurements (id, date, site, valueCm, userId) VALUES (?, ?, ?, ?, ?)',
+  ).run(id, date, site, Number(valueCm), req.userId);
   res.json({ id, date, site, valueCm: Number(valueCm) });
 });
 
 app.delete('/api/measurements/:id', (req, res) => {
-  db.prepare('DELETE FROM measurements WHERE id = ?').run(req.params.id);
+  db.prepare('DELETE FROM measurements WHERE id = ? AND userId = ?').run(req.params.id, req.userId);
   res.json({ ok: true });
 });
 
@@ -1161,11 +1352,13 @@ if (pushReady) {
   console.log('Push reminders disabled: set VAPID_PUBLIC_KEY and VAPID_PRIVATE_KEY to enable.');
 }
 
-app.get('/api/push/config', (_req, res) => {
+app.get('/api/push/config', (req, res) => {
   res.json({
     enabled: pushReady,
     publicKey: VAPID_PUBLIC ?? null,
-    subscriptions: db.prepare('SELECT COUNT(*) AS c FROM push_subscriptions').get().c,
+    subscriptions: db
+      .prepare('SELECT COUNT(*) AS c FROM push_subscriptions WHERE userId = ?')
+      .get(req.userId).c,
   });
 });
 
@@ -1175,27 +1368,31 @@ app.post('/api/push/subscribe', (req, res) => {
     return res.status(400).json({ error: 'incomplete subscription' });
   }
   db.prepare(
-    `INSERT OR REPLACE INTO push_subscriptions (endpoint, p256dh, auth, createdAt)
-     VALUES (?, ?, ?, ?)`,
-  ).run(endpoint, keys.p256dh, keys.auth, new Date().toISOString());
+    `INSERT OR REPLACE INTO push_subscriptions (endpoint, p256dh, auth, createdAt, userId)
+     VALUES (?, ?, ?, ?, ?)`,
+  ).run(endpoint, keys.p256dh, keys.auth, new Date().toISOString(), req.userId);
   res.json({ ok: true });
 });
 
 app.post('/api/push/unsubscribe', (req, res) => {
   if (req.body?.endpoint) {
-    db.prepare('DELETE FROM push_subscriptions WHERE endpoint = ?').run(req.body.endpoint);
+    db.prepare('DELETE FROM push_subscriptions WHERE endpoint = ? AND userId = ?').run(
+      req.body.endpoint,
+      req.userId,
+    );
   }
   res.json({ ok: true });
 });
 
 app.post('/api/push/test', async (req, res) => {
-  const sent = await sendReminder('Bend It!', 'Reminders are working.');
+  const sent = await sendReminder(req.userId, 'Bend It!', 'Reminders are working.');
   res.json({ sent });
 });
 
-async function sendReminder(title, body) {
+/** Sends to one person's devices — never to everyone's. */
+async function sendReminder(userId, title, body) {
   if (!pushReady) return 0;
-  const subs = db.prepare('SELECT * FROM push_subscriptions').all();
+  const subs = db.prepare('SELECT * FROM push_subscriptions WHERE userId = ?').all(userId);
   let sent = 0;
   for (const sub of subs) {
     try {
@@ -1232,23 +1429,29 @@ function localNow(timezone, at = new Date()) {
 }
 
 /** True when the day deserves a nudge: nothing logged and not marked done. */
-function dayNeedsNudge(date) {
-  const logged = db.prepare('SELECT 1 FROM food_log WHERE date = ? LIMIT 1').get(date);
-  const done = db.prepare('SELECT 1 FROM day_done WHERE date = ?').get(date);
+function dayNeedsNudge(userId, date) {
+  const logged = db
+    .prepare('SELECT 1 FROM food_log WHERE date = ? AND userId = ? LIMIT 1')
+    .get(date, userId);
+  const done = db.prepare('SELECT 1 FROM day_done WHERE date = ? AND userId = ?').get(date, userId);
   return !logged && !done;
 }
 
-let lastReminderDate = null;
+/** The last date each user was nudged, so nobody gets two in a day. */
+const lastReminded = new Map();
 
 async function reminderTick() {
   if (!pushReady) return;
-  const profile = db.prepare('SELECT * FROM profile WHERE id = ?').get(PROFILE_ID);
-  if (!profile || profile.reminderHour == null) return;
-  const { date, hour } = localNow(profile.timezone);
-  if (hour !== profile.reminderHour || lastReminderDate === date) return;
-  if (!dayNeedsNudge(date)) return;
-  lastReminderDate = date;
-  await sendReminder("Today isn't logged", 'A minute now beats guessing tomorrow.');
+  // Everyone who asked for a reminder, each in their own timezone and at their
+  // own hour — one person's evening is another's afternoon.
+  const profiles = db.prepare('SELECT * FROM profile WHERE reminderHour IS NOT NULL').all();
+  for (const profile of profiles) {
+    const { date, hour } = localNow(profile.timezone);
+    if (hour !== profile.reminderHour || lastReminded.get(profile.userId) === date) continue;
+    if (!dayNeedsNudge(profile.userId, date)) continue;
+    lastReminded.set(profile.userId, date);
+    await sendReminder(profile.userId, "Today isn't logged", 'A minute now beats guessing tomorrow.');
+  }
 }
 
 // Every five minutes: cheap, and fine-grained enough for an hourly trigger.
@@ -1267,14 +1470,15 @@ function sendCsv(res, filename, rows) {
   res.send(csv(rows));
 }
 
-app.get('/api/export/food-log.csv', (_req, res) => {
+app.get('/api/export/food-log.csv', (req, res) => {
   const rows = db
     .prepare(`SELECT l.date, l.meal, COALESCE(f.name, l.label, '') AS item, f.brand,
                      l.servings, f.servingLabel, l.caloriesCached,
                      f.protein, f.carbs, f.fat
               FROM food_log l LEFT JOIN foods f ON f.id = l.foodId
+              WHERE l.userId = ?
               ORDER BY l.date, l.meal, l.rowid`)
-    .all();
+    .all(req.userId);
   sendCsv(res, 'bendit-food-log.csv', [
     ['date', 'meal', 'item', 'brand', 'servings', 'serving', 'calories', 'protein_g', 'carbs_g', 'fat_g'],
     ...rows.map((r) => [
@@ -1292,24 +1496,32 @@ app.get('/api/export/food-log.csv', (_req, res) => {
   ]);
 });
 
-app.get('/api/export/weights.csv', (_req, res) => {
-  const rows = db.prepare('SELECT date, weightKg FROM weights ORDER BY date').all();
+app.get('/api/export/weights.csv', (req, res) => {
+  const rows = db
+    .prepare('SELECT date, weightKg FROM weights WHERE userId = ? ORDER BY date')
+    .all(req.userId);
   sendCsv(res, 'bendit-weights.csv', [
     ['date', 'weight_kg', 'weight_lb'],
     ...rows.map((r) => [r.date, r.weightKg, +(r.weightKg / 0.45359237).toFixed(2)]),
   ]);
 });
 
-app.get('/api/export/exercise.csv', (_req, res) => {
-  const rows = db.prepare('SELECT date, name, minutes, caloriesBurned FROM exercise_log ORDER BY date').all();
+app.get('/api/export/exercise.csv', (req, res) => {
+  const rows = db
+    .prepare(
+      'SELECT date, name, minutes, caloriesBurned FROM exercise_log WHERE userId = ? ORDER BY date',
+    )
+    .all(req.userId);
   sendCsv(res, 'bendit-exercise.csv', [
     ['date', 'activity', 'minutes', 'calories_burned'],
     ...rows.map((r) => [r.date, r.name, r.minutes, Math.round(r.caloriesBurned)]),
   ]);
 });
 
-app.get('/api/export/measurements.csv', (_req, res) => {
-  const rows = db.prepare('SELECT date, site, valueCm FROM measurements ORDER BY date, site').all();
+app.get('/api/export/measurements.csv', (req, res) => {
+  const rows = db
+    .prepare('SELECT date, site, valueCm FROM measurements WHERE userId = ? ORDER BY date, site')
+    .all(req.userId);
   sendCsv(res, 'bendit-measurements.csv', [
     ['date', 'site', 'cm', 'inches'],
     ...rows.map((r) => [r.date, r.site, r.valueCm, +(r.valueCm / 2.54).toFixed(2)]),
@@ -1319,6 +1531,11 @@ app.get('/api/export/measurements.csv', (_req, res) => {
 // Everything, in one file: a consistent copy of the database plus the photos.
 // db.backup() rather than reading the file directly — with WAL on, a plain copy
 // can catch a write half-finished.
+//
+// This is the whole database, everyone's rows included, so it is not something
+// to hand to one user of a shared server. It stays available because it is the
+// only real backup, and the app is a household's rather than a stranger's — but
+// the photos in it are only ever the requester's.
 app.get('/api/backup', async (req, res) => {
   const stamp = new Date().toISOString().slice(0, 10);
   const tmp = path.join(os.tmpdir(), `bendit-backup-${Date.now()}.db`);
@@ -1344,7 +1561,7 @@ app.get('/api/backup', async (req, res) => {
 
   archive.pipe(res);
   archive.file(tmp, { name: 'bendit.db' });
-  for (const row of db.prepare('SELECT id, date FROM photos ORDER BY date').all()) {
+  for (const row of db.prepare('SELECT id, date FROM photos WHERE userId = ? ORDER BY date').all(req.userId)) {
     const file = photoPath(row.id);
     if (fs.existsSync(file)) archive.file(file, { name: `photos/${row.date}-${row.id}.jpg` });
   }
@@ -1359,21 +1576,21 @@ app.get('/api/backup', async (req, res) => {
   await archive.finalize();
 });
 
-app.delete('/api/all', (_req, res) => {
+app.delete('/api/all', (req, res) => {
+  // Read the photo ids before the rows go, or the files are left on the volume
+  // with nothing pointing at them.
+  const photos = db.prepare('SELECT id FROM photos WHERE userId = ?').all(req.userId);
   db.transaction(() => {
-    db.prepare('DELETE FROM profile').run();
-    db.prepare('DELETE FROM food_log').run();
-    db.prepare('DELETE FROM exercise_log').run();
-    db.prepare('DELETE FROM weights').run();
-    db.prepare('DELETE FROM day_done').run();
-    db.prepare('DELETE FROM meal_template_items').run();
-    db.prepare('DELETE FROM meal_templates').run();
-    db.prepare('DELETE FROM measurements').run();
-    for (const row of db.prepare('SELECT id FROM photos').all()) {
-      fs.rmSync(photoPath(row.id), { force: true });
+    db.prepare(
+      'DELETE FROM meal_template_items WHERE templateId IN (SELECT id FROM meal_templates WHERE userId = ?)',
+    ).run(req.userId);
+    for (const table of USER_TABLES) {
+      db.prepare(`DELETE FROM ${table} WHERE userId = ?`).run(req.userId);
     }
-    db.prepare('DELETE FROM photos').run();
-    db.prepare("DELETE FROM foods WHERE source != 'seed'").run();
+    for (const row of photos) fs.rmSync(photoPath(row.id), { force: true });
+    // Your own foods go with you. The shared reference data — 300,000 products
+    // and everything with a barcode — is the app's, not yours to erase.
+    db.prepare('DELETE FROM foods WHERE ownerId = ?').run(req.userId);
   })();
   res.json({ ok: true });
 });

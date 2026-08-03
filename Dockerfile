@@ -23,6 +23,10 @@ COPY server/index.mjs server/seedFoods.json ./
 # the data never has to travel.
 COPY server/lib ./lib
 COPY server/ingest ./ingest
+COPY server/tools ./tools
+# `bendit-user add josh` on the machine, rather than a path to remember:
+#   fly ssh console -a bendit -C "bendit-user add josh"
+RUN chmod +x ./tools/*.mjs && ln -sf /srv/tools/users.mjs /usr/local/bin/bendit-user
 COPY --from=serverdeps /srv/node_modules ./node_modules
 COPY --from=client /app/dist ./public
 EXPOSE 8080

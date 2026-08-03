@@ -123,16 +123,17 @@ const post = (path: string, body: unknown, method = 'POST') =>
   j<unknown>(path, { method, body: JSON.stringify(body) });
 
 export const api = {
-  session: () => j<{ authed: boolean; configured: boolean }>('/api/session'),
-  login: async (password: string) => {
+  session: () =>
+    j<{ authed: boolean; configured: boolean; username: string | null }>('/api/session'),
+  login: async (username: string, password: string) => {
     const res = await fetch('/api/login', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ password }),
+      body: JSON.stringify({ username, password }),
     });
     const body = await res.json().catch(() => null);
     if (!res.ok) throw new Error(body?.error ?? 'Could not sign in.');
-    return body as { ok: true };
+    return body as { ok: true; username: string };
   },
   logout: () => post('/api/logout', {}),
 
