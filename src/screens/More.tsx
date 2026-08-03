@@ -3,7 +3,7 @@ import { Link } from 'react-router-dom';
 import { api } from '../lib/api';
 import { useData } from '../lib/useData';
 import { useUI } from '../store/ui';
-import { computeBudget } from '../lib/budget';
+import { computeBudget, suggestedProteinG } from '../lib/budget';
 import { todayStr } from '../lib/dates';
 import { cmToFtIn, ftInToCm, formatCalories, kgToLb, lbToKg } from '../lib/units';
 import type { ActivityLevel, Profile, Sex, Units } from '../types';
@@ -40,6 +40,9 @@ export default function More({ profile }: { profile: Profile }) {
   );
   const [activity, setActivity] = useState<ActivityLevel>(profile.activityLevel);
   const [rateKg, setRateKg] = useState(profile.weeklyRateKg);
+  const [proteinTarget, setProteinTarget] = useState(
+    profile.proteinTargetG == null ? '' : String(profile.proteinTargetG),
+  );
   const [saved, setSaved] = useState(false);
 
   const { ft, inch } = cmToFtIn(heightCm);
@@ -85,6 +88,7 @@ export default function More({ profile }: { profile: Profile }) {
       activityLevel: activity,
       weeklyRateKg: closestRate.value,
       units,
+      proteinTargetG: proteinTarget.trim() === '' ? null : Number(proteinTarget),
     });
     bump();
     setSaved(true);
@@ -193,6 +197,27 @@ export default function More({ profile }: { profile: Profile }) {
               </select>
             </label>
           </div>
+
+          <label className={label}>
+            <span className="flex items-baseline justify-between">
+              Daily protein target (g)
+              <button
+                type="button"
+                onClick={() => setProteinTarget(String(suggestedProteinG(profile.goalWeightKg)))}
+                className="text-xs font-medium text-accent"
+              >
+                Suggest {suggestedProteinG(profile.goalWeightKg)} g
+              </button>
+            </span>
+            <input
+              type="number"
+              inputMode="numeric"
+              className={field}
+              placeholder="Leave empty to skip protein"
+              value={proteinTarget}
+              onChange={(e) => setProteinTarget(e.target.value)}
+            />
+          </label>
 
           <label className={label}>
             Activity level

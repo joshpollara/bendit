@@ -77,6 +77,15 @@ export function computeBudget(
   };
 }
 
+/**
+ * A protein target to suggest, in grams: 1.6 g per kg of goal body weight —
+ * the middle of the range the muscle-retention literature settles on for
+ * someone in a deficit. Rounded to something a person would actually type.
+ */
+export function suggestedProteinG(goalWeightKg: number): number {
+  return Math.round((goalWeightKg * 1.6) / 5) * 5;
+}
+
 // The Budget screen equation: remaining = budget − food + exercise.
 export function remaining(budget: number, foodCalories: number, exerciseCalories: number): number {
   return budget - foodCalories + exerciseCalories;

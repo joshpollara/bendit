@@ -110,6 +110,52 @@ function BudgetSummary({
   );
 }
 
+// Macros come from the foods behind the entries; quick adds contribute
+// calories only, so the totals are a floor, not a claim of completeness.
+function MacroRow({
+  entries,
+  proteinTargetG,
+}: {
+  entries: JoinedEntry[];
+  proteinTargetG?: number | null;
+}) {
+  const total = (get: (f: NonNullable<JoinedEntry['food']>) => number | undefined) =>
+    entries.reduce((sum, e) => sum + (e.food ? (get(e.food) ?? 0) * e.servings : 0), 0);
+
+  const protein = Math.round(total((f) => f.protein));
+  const carbs = Math.round(total((f) => f.carbs));
+  const fat = Math.round(total((f) => f.fat));
+  if (protein + carbs + fat === 0) return null;
+
+  const target = proteinTargetG ?? 0;
+  const pct = target > 0 ? Math.min(100, (protein / target) * 100) : 0;
+  const hit = target > 0 && protein >= target;
+
+  return (
+    <section className="mx-4 mt-3 rounded-2xl border border-line bg-card p-4 shadow-sm">
+      <div className="flex items-baseline justify-between">
+        <h2 className="text-sm font-semibold">Protein</h2>
+        <span className="text-sm tabular-nums">
+          <strong className={hit ? 'text-good' : ''}>{protein} g</strong>
+          {target > 0 && <span className="text-ink-muted"> of {target} g</span>}
+        </span>
+      </div>
+      {target > 0 && (
+        <div className="mt-2 h-2 overflow-hidden rounded-full bg-line" role="presentation">
+          <div
+            className={`h-full rounded-full transition-all ${hit ? 'bg-good' : 'bg-accent'}`}
+            style={{ width: `${pct}%` }}
+          />
+        </div>
+      )}
+      <p className="mt-2 text-xs text-ink-muted">
+        Carbs {carbs} g · Fat {fat} g
+        {target === 0 && ' · set a protein target in More'}
+      </p>
+    </section>
+  );
+}
+
 function MealSection({
   meal,
   date,
@@ -310,6 +356,7 @@ export default function Today({ profile }: { profile: Profile }) {
     <div className="pt-[env(safe-area-inset-top)]">
       <DateNav />
       <BudgetSummary budget={budget} food={foodCalories} exercise={exerciseCalories} />
+      <MacroRow entries={joined} proteinTargetG={profile.proteinTargetG} />
 
       {MEALS.map((meal) => (
         <MealSection

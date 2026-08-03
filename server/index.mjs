@@ -345,7 +345,7 @@ app.get('/api/report', (req, res) => {
   const day = (date) => {
     let d = byDate.get(date);
     if (!d) {
-      d = { date, food: 0, exercise: 0, entries: 0, meals: {} };
+      d = { date, food: 0, exercise: 0, entries: 0, protein: 0, meals: {} };
       byDate.set(date, d);
     }
     return d;
@@ -360,6 +360,16 @@ app.get('/api/report', (req, res) => {
     d.food += row.calories;
     d.entries += row.n;
     d.meals[row.meal] = row.calories;
+  }
+  // Macros only exist for entries backed by a food that carries them.
+  for (const row of db
+    .prepare(
+      `SELECT l.date, SUM(f.protein * l.servings) AS protein
+       FROM food_log l JOIN foods f ON f.id = l.foodId
+       WHERE l.date BETWEEN ? AND ? AND f.protein IS NOT NULL GROUP BY l.date`,
+    )
+    .all(from, to)) {
+    day(row.date).protein = Math.round(row.protein * 10) / 10;
   }
   for (const row of db
     .prepare(

@@ -313,11 +313,19 @@ export default function Reports({ profile }: { profile: Profile }) {
                 <MealChart
                   data={meals.map((m) => ({ meal: MEAL_LABELS[m.meal], average: Math.round(m.average) }))}
                 />
-                {summary.avgExercise > 0 && (
-                  <p className="mt-1 text-center text-xs text-ink-muted">
-                    Plus {formatCalories(summary.avgExercise)} cal burned per day.
-                  </p>
-                )}
+                <p className="mt-1 text-center text-xs text-ink-muted">
+                  {summary.avgProtein > 0 && (
+                    <>
+                      {Math.round(summary.avgProtein)} g protein per day
+                      {profile.proteinTargetG
+                        ? ` · target ${profile.proteinTargetG} g`
+                        : ''}
+                      {summary.avgExercise > 0 ? ' · ' : ''}
+                    </>
+                  )}
+                  {summary.avgExercise > 0 &&
+                    `plus ${formatCalories(summary.avgExercise)} cal burned per day`}
+                </p>
               </section>
             )}
           </Suspense>

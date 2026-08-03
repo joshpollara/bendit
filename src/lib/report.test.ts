@@ -20,11 +20,18 @@ const dates = (from: string, count: number): string[] =>
     return d.toISOString().slice(0, 10);
   });
 
-const day = (date: string, food: number, exercise = 0, meals: DayTotals['meals'] = {}): DayTotals => ({
+const day = (
+  date: string,
+  food: number,
+  exercise = 0,
+  meals: DayTotals['meals'] = {},
+  protein = 0,
+): DayTotals => ({
   date,
   food,
   exercise,
   entries: food > 0 ? 1 : 0,
+  protein,
   meals,
 });
 

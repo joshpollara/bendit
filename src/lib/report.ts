@@ -8,6 +8,8 @@ export interface DayTotals {
   food: number;
   exercise: number;
   entries: number;
+  /** Grams of protein from entries whose food records it; 0 when unknown. */
+  protein: number;
   meals: Partial<Record<Meal, number>>;
 }
 
@@ -101,6 +103,7 @@ export interface CalorieSummary {
   totalVsBudget: number; // cumulative surplus/deficit across logged days
   daysUnder: number;
   daysOver: number;
+  avgProtein: number;
 }
 
 // budgetFor lets each day be measured against the budget that applied then,
@@ -126,6 +129,7 @@ export function summarize(days: DayTotals[], budgetFor: (date: string) => number
     totalVsBudget: totalNet - totalBudget,
     daysUnder: logged.filter((d, i) => net(d) <= budgets[i]).length,
     daysOver: logged.filter((d, i) => net(d) > budgets[i]).length,
+    avgProtein: mean(sum((d) => d.protein ?? 0)),
   };
 }
 
@@ -211,7 +215,7 @@ export function fillDays(days: DayTotals[], from: string, to: string): DayTotals
     const d = new Date(`${from}T00:00:00Z`);
     d.setUTCDate(d.getUTCDate() + i);
     const date = d.toISOString().slice(0, 10);
-    out.push(byDate.get(date) ?? { date, food: 0, exercise: 0, entries: 0, meals: {} });
+    out.push(byDate.get(date) ?? { date, food: 0, exercise: 0, entries: 0, protein: 0, meals: {} });
   }
   return out;
 }
