@@ -54,14 +54,18 @@ function BudgetSummary({
   budget,
   food,
   exercise,
+  measured,
 }: {
   budget: number;
   food: number;
   exercise: number;
+  /** A measured budget already includes activity, so exercise isn't added back. */
+  measured: boolean;
 }) {
-  const left = remaining(budget, food, exercise);
+  const left = remaining(budget, food, measured ? 0 : exercise);
   const over = left < 0;
-  const consumedPct = budget > 0 ? Math.min(100, (Math.max(0, food - exercise) / budget) * 100) : 0;
+  const consumedPct =
+    budget > 0 ? Math.min(100, (Math.max(0, food - (measured ? 0 : exercise)) / budget) * 100) : 0;
 
   const stat = (label: string, value: number) => (
     <div className="flex flex-col items-center">
@@ -76,8 +80,12 @@ function BudgetSummary({
         {stat('Budget', budget)}
         <span className="text-ink-muted">−</span>
         {stat('Food', food)}
-        <span className="text-ink-muted">+</span>
-        {stat('Exercise', exercise)}
+        {!measured && (
+          <>
+            <span className="text-ink-muted">+</span>
+            {stat('Exercise', exercise)}
+          </>
+        )}
         <span className="text-ink-muted">=</span>
         <div className="flex flex-col items-center">
           <span className="text-[11px] font-medium uppercase tracking-wide text-ink-muted">
@@ -348,14 +356,19 @@ export default function Today({ profile }: { profile: Profile }) {
   const exercises = day?.exercises ?? [];
   const foodCalories = joined.reduce((sum, e) => sum + e.caloriesCached, 0);
   const exerciseCalories = exercises.reduce((sum, e) => sum + e.caloriesBurned, 0);
-  const { budget } = computeBudget(profile, date, day?.latestWeightKg);
+  const { budget, measured } = computeBudget(profile, date, day?.latestWeightKg);
   const yesterdayByMeal = day?.yesterdayMealCounts ?? {};
-  const left = remaining(budget, foodCalories, exerciseCalories);
+  const left = remaining(budget, foodCalories, measured ? 0 : exerciseCalories);
 
   return (
     <div className="pt-[env(safe-area-inset-top)]">
       <DateNav />
-      <BudgetSummary budget={budget} food={foodCalories} exercise={exerciseCalories} />
+      <BudgetSummary
+        budget={budget}
+        food={foodCalories}
+        exercise={exerciseCalories}
+        measured={measured}
+      />
       <MacroRow entries={joined} proteinTargetG={profile.proteinTargetG} />
 
       {MEALS.map((meal) => (
@@ -371,6 +384,9 @@ export default function Today({ profile }: { profile: Profile }) {
       <section className="mx-4 mt-3 mb-4 rounded-2xl border border-line bg-card shadow-sm">
         <header className="flex items-center gap-2 px-4 py-3">
           <h2 className="flex-1 font-semibold">Exercise</h2>
+          {measured && exerciseCalories > 0 && (
+            <span className="text-[11px] text-ink-muted">already in your budget</span>
+          )}
           {exerciseCalories > 0 && (
             <span className="text-sm font-medium tabular-nums text-good">
               +{formatCalories(exerciseCalories)}

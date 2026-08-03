@@ -134,3 +134,49 @@ describe('remaining', () => {
     expect(remaining(1650, 2000, 100)).toBe(-250);
   });
 });
+
+describe('computeBudget with a measured expenditure', () => {
+  const profile = {
+    sex: 'male' as const,
+    birthDate: '1985-04-02',
+    heightCm: 180,
+    startWeightKg: 90,
+    activityLevel: 'light' as const,
+    weeklyRateKg: 0.5,
+  };
+
+  it('uses the formula when no measurement has been adopted', () => {
+    const r = computeBudget(profile, '2026-08-03');
+    expect(r.measured).toBe(false);
+    expect(r.tdee).toBe(r.formulaTdee);
+  });
+
+  it('replaces the formula TDEE with the measured one', () => {
+    const r = computeBudget(
+      { ...profile, budgetSource: 'measured', measuredTdee: 2800 },
+      '2026-08-03',
+    );
+    expect(r.measured).toBe(true);
+    expect(r.tdee).toBe(2800);
+    expect(r.budget).toBe(Math.round(2800 - r.deficit));
+    expect(r.formulaTdee).not.toBe(2800); // still reports what the formula thought
+  });
+
+  it('keeps the safety floor above a low measurement', () => {
+    const r = computeBudget(
+      { ...profile, budgetSource: 'measured', measuredTdee: 1600, weeklyRateKg: 1 },
+      '2026-08-03',
+    );
+    expect(r.floored).toBe(true);
+    expect(r.budget).toBe(1500);
+  });
+
+  it('ignores a stale measurement once the user switches back to the formula', () => {
+    const r = computeBudget(
+      { ...profile, budgetSource: 'formula', measuredTdee: 2800 },
+      '2026-08-03',
+    );
+    expect(r.measured).toBe(false);
+    expect(r.tdee).toBe(r.formulaTdee);
+  });
+});

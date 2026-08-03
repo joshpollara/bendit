@@ -17,6 +17,8 @@ import {
 } from '../lib/report';
 import { MEAL_LABELS, type Profile } from '../types';
 import GoalTrack from '../components/GoalTrack';
+import ExpenditureCard from '../components/ExpenditureCard';
+import { measureExpenditure } from '../lib/expenditure';
 import BodyFigure from '../components/BodyFigure';
 
 // recharts is heavy; keep it out of the main bundle.
@@ -101,6 +103,8 @@ export default function Reports({ profile }: { profile: Profile }) {
     toGoalDays != null && toGoalDays > 0
       ? format(new Date(Date.now() + toGoalDays * 86_400_000), 'MMM d, yyyy')
       : undefined;
+
+  const measured = measureExpenditure(days, trend);
 
   // What the logged calories imply per week, for comparison with the scale.
   const impliedRateKg =
@@ -234,6 +238,13 @@ export default function Reports({ profile }: { profile: Profile }) {
               )}
             </ul>
           </section>
+
+          <ExpenditureCard
+            profile={profile}
+            measured={measured}
+            latestTrendKg={latestTrend}
+            className={card}
+          />
 
           {latestTrend != null && (
             <section className={card}>

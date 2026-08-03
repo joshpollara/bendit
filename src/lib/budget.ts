@@ -48,21 +48,31 @@ export interface BudgetResult {
   raw: number; // budget before the safety floor
   floored: boolean; // true when the rate pushed below the safe minimum
   bmr: number;
-  tdee: number;
+  tdee: number; // the expenditure the budget was built from
+  formulaTdee: number; // what Mifflin-St Jeor alone would say
+  measured: boolean; // true when tdee came from the user's own data
   deficit: number;
 }
 
 // currentWeightKg lets the budget follow the user's latest logged weight,
 // falling back to the profile's start weight.
+//
+// When the profile carries a measured expenditure (adopted from the user's own
+// intake and weight trend), that replaces the formula's TDEE — the deficit and
+// the safety floor still apply on top of it.
 export function computeBudget(
-  profile: Pick<Profile, 'sex' | 'birthDate' | 'heightCm' | 'startWeightKg' | 'activityLevel' | 'weeklyRateKg'>,
+  profile: Pick<Profile, 'sex' | 'birthDate' | 'heightCm' | 'startWeightKg' | 'activityLevel' | 'weeklyRateKg'> &
+    Partial<Pick<Profile, 'budgetSource' | 'measuredTdee'>>,
   onDate: string,
   currentWeightKg?: number,
 ): BudgetResult {
   const weightKg = currentWeightKg ?? profile.startWeightKg;
   const age = ageInYears(profile.birthDate, onDate);
   const bmrValue = bmr(profile.sex, weightKg, profile.heightCm, age);
-  const tdeeValue = tdee(bmrValue, profile.activityLevel);
+  const formulaTdee = tdee(bmrValue, profile.activityLevel);
+  const measured =
+    profile.budgetSource === 'measured' && profile.measuredTdee ? profile.measuredTdee : null;
+  const tdeeValue = measured ?? formulaTdee;
   const deficit = dailyDeficit(profile.weeklyRateKg);
   const raw = Math.round(tdeeValue - deficit);
   const floor = MIN_BUDGET[profile.sex];
@@ -73,6 +83,8 @@ export function computeBudget(
     floored,
     bmr: bmrValue,
     tdee: tdeeValue,
+    formulaTdee,
+    measured: measured != null,
     deficit,
   };
 }
