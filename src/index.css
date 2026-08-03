@@ -17,6 +17,12 @@
   --color-accent-deep: #1f5678;
   --color-accent-soft: #e8f0f5;
   --color-amber: #e8a13d;
+  /* "Check this" — a scan that needs a human glance, not an error. Amber is
+     decorative in charts; here it is a UI state, and the deep tone is what
+     carries text so it stays legible on the soft ground. */
+  --color-warn: #d08a1c;
+  --color-warn-soft: #fdf3e3;
+  --color-warn-deep: #8a5a12;
   --color-good: #2e7d4f;
   --color-good-soft: #e9f3ed;
   --color-over: #c03b2d;
@@ -44,6 +50,9 @@
       --color-accent-deep: #8dbcd9;
       --color-accent-soft: #223540;
       --color-amber: #d19a4a;
+      --color-warn: #d19a4a;
+      --color-warn-soft: #322a1d;
+      --color-warn-deep: #e3b978;
       --color-good: #5aa87d;
       --color-good-soft: #21322a;
       --color-over: #d4695c;
@@ -63,6 +72,9 @@
     --color-accent-deep: #8dbcd9;
     --color-accent-soft: #223540;
     --color-amber: #d19a4a;
+    --color-warn: #d19a4a;
+    --color-warn-soft: #322a1d;
+    --color-warn-deep: #e3b978;
     --color-good: #5aa87d;
     --color-good-soft: #21322a;
     --color-over: #d4695c;

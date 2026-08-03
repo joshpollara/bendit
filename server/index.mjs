@@ -9,6 +9,10 @@ import { barcodeVariants } from './lib/barcode.mjs';
 import { per100FromServing } from './lib/foodSchema.mjs';
 import { matchFood, searchFoods } from './lib/foodSearch.mjs';
 import { createVisionProvider } from './lib/vision.mjs';
+import {
+  createLabelExtractHandler,
+  createLabelValidateHandler,
+} from './lib/labelRoute.mjs';
 import { createVisionExtractHandler } from './lib/visionRoute.mjs';
 import webpush from 'web-push';
 import Database from 'better-sqlite3';
@@ -414,10 +418,31 @@ function rowFood(row) {
 }
 
 const upsertFood = db.prepare(`INSERT OR REPLACE INTO foods
-  (id, name, brand, barcode, servingLabel, servingGrams, caloriesPerServing, protein, carbs, fat, source)
-  VALUES (@id, @name, @brand, @barcode, @servingLabel, @servingGrams, @caloriesPerServing, @protein, @carbs, @fat, @source)`);
+  (id, name, brand, barcode, servingLabel, servingGrams, caloriesPerServing, protein, carbs, fat,
+   source, sourceId, basis, kcal100, protein100, carbs100, fat100, fiber100, sugar100, satFat100,
+   sodiumMg100, updatedAt)
+  VALUES (@id, @name, @brand, @barcode, @servingLabel, @servingGrams, @caloriesPerServing, @protein,
+   @carbs, @fat, @source, @sourceId, @basis, @kcal100, @protein100, @carbs100, @fat100, @fiber100,
+   @sugar100, @satFat100, @sodiumMg100, @updatedAt)`);
 
+const clearServings = db.prepare('DELETE FROM food_servings WHERE foodId = ?');
+const insertServing = db.prepare(
+  `INSERT INTO food_servings (id, foodId, label, grams, isDefault)
+   VALUES (@id, @foodId, @label, @grams, @isDefault)`,
+);
+
+/**
+ * Writes a food, keeping everything the row carries.
+ *
+ * INSERT OR REPLACE deletes the old row and writes a new one, so any column
+ * left out of the statement comes back null. Before the per-100g columns were
+ * listed here, saving an edited food quietly erased its canonical nutrition —
+ * and with it the ability to rescale a portion.
+ */
 function saveFood(f) {
+  // A food that arrives per-serving still needs its per-100 form: it's what
+  // portions are computed from. Derive it when the caller didn't send it.
+  const derived = f.kcal100 == null ? (per100FromServing(f) ?? {}) : {};
   upsertFood.run({
     brand: null,
     barcode: null,
@@ -425,8 +450,37 @@ function saveFood(f) {
     protein: null,
     carbs: null,
     fat: null,
+    sourceId: null,
+    basis: 'g',
+    kcal100: null,
+    protein100: null,
+    carbs100: null,
+    fat100: null,
+    fiber100: null,
+    sugar100: null,
+    satFat100: null,
+    sodiumMg100: null,
     ...f,
+    // Derived values fill gaps; they never overwrite what the caller sent.
+    ...derived,
+    updatedAt: new Date().toISOString(),
   });
+
+  // Household servings, when the caller has them — "1 portie (40 g)", "whole
+  // pack (150 g)". Replaced wholesale so an edit can remove one.
+  if (Array.isArray(f.servings)) {
+    clearServings.run(f.id);
+    f.servings.forEach((serving, index) => {
+      if (!serving?.label || !(serving.grams > 0)) return;
+      insertServing.run({
+        id: `${f.id}:${index}`,
+        foodId: f.id,
+        label: serving.label,
+        grams: serving.grams,
+        isDefault: index === 0 ? 1 : 0,
+      });
+    });
+  }
 }
 
 // ——— API ———
@@ -954,16 +1008,25 @@ app.put('/api/day-done', (req, res) => {
 // tests. The key is read from the environment here and never leaves the server.
 
 const vision = createVisionProvider();
+const bigJson = express.json({ limit: '4mb' });
 
-app.post(
-  '/api/vision/extract',
-  express.json({ limit: '4mb' }),
-  createVisionExtractHandler({
-    db,
-    provider: vision,
-    dailyLimit: Number(process.env.VISION_DAILY_LIMIT ?? 100),
-  }),
-);
+const visionHandler = createVisionExtractHandler({
+  db,
+  provider: vision,
+  dailyLimit: Number(process.env.VISION_DAILY_LIMIT ?? 100),
+});
+
+app.post('/api/vision/extract', bigJson, visionHandler);
+
+// ——— nutrition labels ———
+//
+// A photo goes through the model; numbers already read on the device by OCR
+// come in through the second route. Both are checked by the same arithmetic
+// before anything is offered to the user, so an offline read is held to the
+// same standard as an online one.
+
+app.post('/api/labels/extract', bigJson, createLabelExtractHandler({ visionHandler }));
+app.post('/api/labels/validate', express.json(), createLabelValidateHandler());
 
 // ——— progress photos ———
 

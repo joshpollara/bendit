@@ -1,7 +1,7 @@
 import { useRef, useState } from 'react';
 import { api } from '../lib/api';
-import { energyCheck, rescale } from '../lib/labelParse';
-import { scanLabel } from '../lib/labelScan';
+import { rescale } from '../lib/labelParse';
+import { readLabel, type LabelIssue, type LabelReading, type ReadStage } from '../lib/labelRead';
 import { formatCalories } from '../lib/units';
 import type { Food } from '../types';
 import { CameraIcon } from './Icons';
@@ -17,6 +17,13 @@ import { CameraIcon } from './Icons';
 type Basis = 'serving' | '100g';
 
 const field = 'w-full rounded-xl border border-line bg-card px-3 py-2.5 text-sm';
+// A field the check flagged: amber for "look at this", red for "this can't be right".
+const flagged = {
+  warning: 'w-full rounded-xl border-2 border-warn bg-card px-3 py-2.5 text-sm',
+  error: 'w-full rounded-xl border-2 border-over bg-card px-3 py-2.5 text-sm',
+};
+const round1 = (v: number | null | undefined) =>
+  v == null ? null : Math.round(v * 10) / 10;
 const num = (v: string) => (v.trim() === '' ? undefined : Number(v));
 const str = (v: number | null | undefined) => (v == null ? '' : String(v));
 
@@ -41,10 +48,17 @@ export default function FoodForm({
   const [fat, setFat] = useState(str(initial?.fat));
   const [basis, setBasis] = useState<Basis>('serving');
 
-  const [scanState, setScanState] = useState<'idle' | 'loading' | 'reading'>('idle');
+  const [scanState, setScanState] = useState<'idle' | ReadStage>('idle');
   const [scanNote, setScanNote] = useState<string | null>(null);
   const [scanError, setScanError] = useState<string | null>(null);
   const [scanText, setScanText] = useState<string | null>(null);
+  // What the check found, so the fields in question can be pointed at rather
+  // than the user re-reading the whole packet.
+  const [issues, setIssues] = useState<LabelIssue[]>([]);
+  // The servings a scanned label offered — the printed portion, 100 g, and the
+  // whole pack. Kept so saving keeps them too, which is what lets an entry be
+  // rescaled later to "half the packet".
+  const [scanned, setScanned] = useState<LabelReading['food'] | null>(null);
   const photoInput = useRef<HTMLInputElement>(null);
 
   const grams = Number(servingGrams);
@@ -63,39 +77,27 @@ export default function FoodForm({
     savedCalories >= 0 &&
     (basis === 'serving' || gramsValid);
 
-  async function readLabel(file: File) {
-    setScanState('loading');
+  async function scanFromPhoto(file: File) {
+    setScanState('sending');
     setScanError(null);
     setScanNote(null);
+    setIssues([]);
+    setScanned(null);
     try {
-      const r = await scanLabel(file, setScanState);
-      setScanText(r.text);
-      if (r.found.length === 0) {
+      const reading = await readLabel(file, { barcode: prefillBarcode, onStage: setScanState });
+      setScanText(reading.text ?? null);
+      setIssues(reading.issues);
+
+      if (!reading.food) {
         setScanError(
-          "Couldn't find any nutrition values in that photo. Try again with the panel filling the frame, in even light — or just type them in.",
+          reading.issues[0]?.message ??
+            "Couldn't find any nutrition values in that photo. Try again with the panel filling the frame, in even light — or just type them in.",
         );
         return;
       }
-      // Only fill what was read; anything missed stays as you left it.
-      if (r.calories != null) setCalories(str(r.calories));
-      if (r.protein != null) setProtein(str(r.protein));
-      if (r.carbs != null) setCarbs(str(r.carbs));
-      if (r.fat != null) setFat(str(r.fat));
-
-      if (r.basis === '100g' || r.basis === '100ml') {
-        setBasis('100g');
-        // A portion size printed alongside the per-100g column is the best
-        // available guess at a real serving; otherwise start at 100 g.
-        setServingGrams(str(r.servingGrams ?? 100));
-        setScanNote(
-          `Read per 100 ${r.basis === '100ml' ? 'ml' : 'g'}. Set the serving weight below — everything rescales to it.${checkSuffix(r)}`,
-        );
-      } else {
-        setBasis('serving');
-        if (r.servingLabel) setServingLabel(r.servingLabel);
-        if (r.servingGrams != null) setServingGrams(str(r.servingGrams));
-        setScanNote(`Read ${r.found.join(', ')} from your photo.${checkSuffix(r)} Check the values before saving.`);
-      }
+      setScanned(reading.food);
+      const column = fillFrom(reading);
+      setScanNote(describe(reading, column));
     } catch (e) {
       setScanError(e instanceof Error ? e.message : "Couldn't read that photo.");
     } finally {
@@ -103,14 +105,59 @@ export default function FoodForm({
     }
   }
 
-  // The label's own arithmetic: calories ≈ 4·protein + 4·carbs + 9·fat.
-  // A failed check almost always means one number was misread.
-  function checkSuffix(r: { calories: number | null; protein: number | null; carbs: number | null; fat: number | null }) {
-    const check = energyCheck(r);
-    if (check === 'consistent') return ' The numbers cross-check.';
-    if (check === 'inconsistent')
-      return " Careful — protein, carbs and fat don't add up to the calories, so one value was likely misread.";
-    return '';
+  /**
+   * Fills the form the way the packet is printed: a per-portion panel goes in
+   * as per-portion, a per-100 one as per-100. The user is looking at the label
+   * while they check, and matching it is what makes checking quick.
+   */
+  function fillFrom(reading: LabelReading): 'per100' | 'perServing' {
+    const food = reading.food as unknown as Food & Record<string, number | null>;
+    const printedPerServing = reading.label.perServing != null && reading.label.per100 == null;
+
+    if (food.name && food.name !== 'Scanned food') setName(food.name);
+    if (food.brand) setBrand(food.brand);
+    if (food.servingGrams != null) setServingGrams(str(food.servingGrams));
+
+    if (printedPerServing) {
+      setBasis('serving');
+      if (food.servingLabel) setServingLabel(food.servingLabel);
+      setCalories(str(Math.round(food.caloriesPerServing)));
+      setProtein(str(food.protein ?? null));
+      setCarbs(str(food.carbs ?? null));
+      setFat(str(food.fat ?? null));
+      return 'perServing';
+    }
+
+    setBasis('100g');
+    if (food.servingGrams == null) setServingGrams('100');
+    setCalories(str(round1(food.kcal100)));
+    setProtein(str(round1(food.protein100)));
+    setCarbs(str(round1(food.carbs100)));
+    setFat(str(round1(food.fat100)));
+    return 'per100';
+  }
+
+  function describe(reading: LabelReading, column: 'per100' | 'perServing') {
+    // When the model couldn't be used, say so and why in one breath: "read on
+    // your phone instead" is only reassuring if the reason comes with it.
+    const where =
+      reading.source === 'vision'
+        ? 'Read from your photo.'
+        : reading.fellBackBecause
+          ? `Read on your phone instead — ${reading.fellBackBecause[0].toLowerCase()}${reading.fellBackBecause.slice(1)}`
+          : 'Read on your phone.';
+
+    if (reading.issues.length === 0) {
+      return reading.confidence === 'high'
+        ? `${where} The numbers cross-check. Have a glance and save.`
+        : `${where} Nothing here contradicts itself, but check the figures against the packet.`;
+    }
+    // A fault in the column that isn't on screen: say so, rather than send the
+    // user hunting for a highlight that isn't there.
+    const here = reading.issues.some((i) => !i.field.includes('.') || i.field.startsWith(column));
+    return here
+      ? `${where} Check the highlighted values against the packet before saving.`
+      : `${where} These are the ${column === 'per100' ? 'per-100' : 'per-portion'} figures, which add up — but something in the other column didn't, so check them over.`;
   }
 
   async function save() {
@@ -129,11 +176,33 @@ export default function FoodForm({
       fat: perServing(fat),
       source: initial?.source ?? 'custom',
     };
-    await api.saveFoods(food);
+    // A scanned food carries more than the form shows: the per-100 figures it
+    // was read from, and the portions the packet names. They ride along so the
+    // entry can be rescaled later without re-reading the label.
+    const extras = scanned
+      ? {
+          basis: (scanned as { basis?: string }).basis,
+          servings: (scanned as { servings?: unknown }).servings,
+        }
+      : {};
+    await api.saveFoods({ ...food, ...extras } as Food);
     onSaved(food);
   }
 
   const per = basis === '100g' ? ' / 100g' : '';
+
+  // Issues name their column ("per100.calories") and the form shows one column
+  // at a time. Only the column on screen is highlighted: painting a field red
+  // over a fault in the other column marks a number that is right there in
+  // front of the user and correct, which teaches them to ignore the colour.
+  // The message still appears in the list either way.
+  const shownColumn = basis === '100g' ? 'per100' : 'perServing';
+  const issueFor = (name: string) =>
+    issues.find((i) => i.field === name || i.field === `${shownColumn}.${name}`);
+  const classFor = (name: string) => {
+    const issue = issueFor(name);
+    return issue ? flagged[issue.severity] : field;
+  };
 
   return (
     <div className="flex flex-col gap-3">
@@ -152,7 +221,7 @@ export default function FoodForm({
         onChange={(e) => {
           const file = e.target.files?.[0];
           e.target.value = ''; // let the same file be picked twice
-          if (file) void readLabel(file);
+          if (file) void scanFromPhoto(file);
         }}
       />
       <button
@@ -162,18 +231,37 @@ export default function FoodForm({
         className="flex items-center justify-center gap-2 rounded-xl border border-accent py-2.5 text-sm font-semibold text-accent disabled:opacity-60"
       >
         <CameraIcon className="h-4 w-4" />
-        {scanState === 'loading'
-          ? 'Preparing the reader…'
-          : scanState === 'reading'
-            ? 'Reading label…'
-            : 'Scan nutrition label'}
+        {scanState === 'sending'
+          ? 'Reading label…'
+          : scanState === 'loading'
+            ? 'Preparing the reader…'
+            : scanState === 'reading'
+              ? 'Reading on your phone…'
+              : scanState === 'checking'
+                ? 'Checking the numbers…'
+                : 'Scan nutrition label'}
       </button>
       <p className="-mt-1 text-center text-xs text-ink-muted">
-        Fill the frame with the panel. Reading happens on your phone — nothing is uploaded.
+        Fill the frame with the panel. The photo is sent to be read, and read on your phone
+        instead when you're offline.
       </p>
       {scanError && <p className="rounded-xl bg-over-soft px-3 py-2 text-xs text-over">{scanError}</p>}
       {scanNote && (
         <p className="rounded-xl bg-accent-soft px-3 py-2 text-xs text-accent-deep">{scanNote}</p>
+      )}
+      {issues.length > 0 && (
+        <ul className="flex flex-col gap-1">
+          {issues.map((issue) => (
+            <li
+              key={`${issue.field}:${issue.message}`}
+              className={`rounded-xl px-3 py-2 text-xs ${
+                issue.severity === 'error' ? 'bg-over-soft text-over' : 'bg-warn-soft text-warn-deep'
+              }`}
+            >
+              {issue.message}
+            </li>
+          ))}
+        </ul>
       )}
       {scanText && (
         <details className="text-xs text-ink-muted">
@@ -238,7 +326,7 @@ export default function FoodForm({
 
       <div className="flex gap-3">
         <input
-          className={field}
+          className={classFor('calories')}
           type="number"
           inputMode="numeric"
           placeholder={`Calories${per}`}
@@ -246,7 +334,7 @@ export default function FoodForm({
           onChange={(e) => setCalories(e.target.value)}
         />
         <input
-          className={field}
+          className={classFor('protein')}
           type="number"
           inputMode="decimal"
           placeholder={`Protein g${per}`}
@@ -256,7 +344,7 @@ export default function FoodForm({
       </div>
       <div className="flex gap-3">
         <input
-          className={field}
+          className={classFor('carbs')}
           type="number"
           inputMode="decimal"
           placeholder={`Carbs g${per}`}
@@ -264,7 +352,7 @@ export default function FoodForm({
           onChange={(e) => setCarbs(e.target.value)}
         />
         <input
-          className={field}
+          className={classFor('fat')}
           type="number"
           inputMode="decimal"
           placeholder={`Fat g${per}`}

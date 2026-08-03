@@ -87,24 +87,25 @@ export async function toBase64(blob: Blob): Promise<string> {
 type ExtractOptions = { fetchImpl?: typeof fetch; online?: boolean };
 
 /**
- * Posts an already-encoded image. Split out from the resizing so the failure
- * handling can be tested without a canvas.
+ * Posts to one of the model-backed endpoints and turns any failure into a
+ * coded one. Split out from the resizing so the failure handling can be tested
+ * without a canvas, and shared by every such endpoint so they behave alike.
  */
-export async function requestExtraction<T>(
-  task: string,
-  imageBase64: string,
+export async function postToModel<T>(
+  endpoint: string,
+  payload: Record<string, unknown>,
   { fetchImpl = fetch, online = navigator.onLine }: ExtractOptions = {},
-): Promise<{ data: T; meta: VisionMeta }> {
+): Promise<T> {
   // Worth checking first: this is the branch where the offline OCR path takes
   // over, and a doomed request would only delay it.
   if (!online) throw new VisionRequestError('offline', visionErrorMessage('offline'));
 
   let response: Response;
   try {
-    response = await fetchImpl('/api/vision/extract', {
+    response = await fetchImpl(endpoint, {
       method: 'POST',
       headers: { 'content-type': 'application/json' },
-      body: JSON.stringify({ task, image: imageBase64, mimeType: 'image/jpeg' }),
+      body: JSON.stringify(payload),
     });
   } catch {
     throw new VisionRequestError('network_error', visionErrorMessage('network_error'));
@@ -115,15 +116,27 @@ export async function requestExtraction<T>(
     const code = (body?.error?.code ?? 'unknown') as VisionErrorCode;
     throw new VisionRequestError(code, visionErrorMessage(code));
   }
-  return body as { data: T; meta: VisionMeta };
+  return body as T;
 }
 
-/** Resize, encode, send. The resize is not optional — it's the cost control. */
+export const requestExtraction = <T>(task: string, imageBase64: string, options?: ExtractOptions) =>
+  postToModel<{ data: T; meta: VisionMeta }>(
+    '/api/vision/extract',
+    { task, image: imageBase64, mimeType: 'image/jpeg' },
+    options,
+  );
+
+/** Down to one image tile before it leaves the device. Not optional: it's the cost control. */
+export async function resizeForModel(photo: Blob): Promise<string> {
+  const resized = await compressPhoto(photo, { maxEdge: VISION_MAX_EDGE, quality: 0.85 });
+  return toBase64(resized);
+}
+
+/** Resize, encode, send. */
 export async function extractFromPhoto<T>(
   task: string,
   photo: Blob,
   options: ExtractOptions = {},
 ): Promise<{ data: T; meta: VisionMeta }> {
-  const resized = await compressPhoto(photo, { maxEdge: VISION_MAX_EDGE, quality: 0.85 });
-  return requestExtraction<T>(task, await toBase64(resized), options);
+  return requestExtraction<T>(task, await resizeForModel(photo), options);
 }

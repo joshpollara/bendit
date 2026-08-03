@@ -22,6 +22,11 @@ const NUTRIENTS = {
     satFat: { type: 'number', nullable: true, description: 'Grams of saturated fat' },
     fiber: { type: 'number', nullable: true, description: 'Grams' },
     sodiumMg: { type: 'number', nullable: true, description: 'Milligrams of sodium' },
+    alcohol: {
+      type: 'number',
+      nullable: true,
+      description: 'Grams of alcohol, if the label states it — drinks often do',
+    },
     saltG: { type: 'number', nullable: true, description: 'Grams of salt, as European labels print' },
   },
   required: ['calories', 'protein', 'carbs', 'fat'],
@@ -29,7 +34,7 @@ const NUTRIENTS = {
 
 export const TASKS = {
   label: {
-    version: '1',
+    version: '2', // added alcohol, which the energy check needs for drinks
     /**
      * European labels lead with a per-100g column and often add a per-portion
      * one; American labels give per-serving only. Both columns are captured
@@ -48,6 +53,7 @@ export const TASKS = {
       '',
       'Energy: record kcal in calories and kJ in energyKj. Do not convert between them.',
       'Record sodium in mg and salt in g, whichever the label prints — do not convert.',
+      'For a drink, record alcohol in grams if stated: it carries calories no macro accounts for.',
       'basis is "ml" only if the panel is measured by volume, otherwise "g".',
       'servingLabel is the portion as written, e.g. "1 biscuit (12,5 g)" or "2/3 cup".',
       '',
