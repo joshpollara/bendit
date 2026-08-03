@@ -30,18 +30,43 @@ function sodiumMg(row) {
 }
 
 /**
- * Sanity limits. Nothing edible has 1000 kcal per 100 g (pure fat is ~900), and
- * no macro can exceed 100 g per 100 g. Rows outside these are data-entry
- * errors, of which OFF has plenty.
+ * Energy the macros can actually account for: protein and carbohydrate at 4
+ * kcal/g, fat at 9, alcohol at 7. Fiber is inside the carbohydrate figure and
+ * yields nearer 2 kcal/g than 4, so this runs high rather than low — which is
+ * what makes it safe to use as a ceiling.
+ */
+export function atwaterEnergy(per100) {
+  return (
+    4 * (per100.protein100 ?? 0) +
+    4 * (per100.carbs100 ?? 0) +
+    9 * (per100.fat100 ?? 0) +
+    7 * (per100.alcohol100 ?? 0)
+  );
+}
+
+/**
+ * Sanity limits. OFF is crowd-sourced, and a fair number of rows have a kJ
+ * figure typed into the kcal field or a decimal point in the wrong place.
+ *
+ * Three checks, cheapest first: nothing edible exceeds pure fat at 900 kcal per
+ * 100 g; no macro exceeds the weight of the food; and stated energy can't be
+ * far above what the macros could produce. The last one is deliberately loose —
+ * polyols, glycerol and rounding all push real labels a little over — so it
+ * only catches the gross errors ("1000 kcal" against macros worth 115).
  */
 export function isPlausible(per100) {
-  if (per100.kcal100 == null || per100.kcal100 <= 0 || per100.kcal100 > 1000) return false;
+  if (per100.kcal100 == null || per100.kcal100 <= 0 || per100.kcal100 > 900) return false;
   for (const key of ['protein100', 'carbs100', 'fat100', 'fiber100', 'sugar100', 'satFat100']) {
     const value = per100[key];
     if (value != null && (value < 0 || value > 100)) return false;
   }
   const macros = (per100.protein100 ?? 0) + (per100.carbs100 ?? 0) + (per100.fat100 ?? 0);
-  return macros <= 105; // a little slack for rounding and water content
+  if (macros > 105) return false; // a little slack for rounding and water content
+
+  // Only checkable when the macros are actually published; most rows have them.
+  const stated = per100.kcal100;
+  if (per100.protein100 == null || per100.carbs100 == null || per100.fat100 == null) return true;
+  return stated <= atwaterEnergy(per100) * 1.4 + 60;
 }
 
 /** Does this product belong to the countries we're importing? */
@@ -72,6 +97,9 @@ export function toFood(row) {
     sugar100: number(field(row, 'sugars_100g')),
     satFat100: number(field(row, 'saturated-fat_100g')),
     sodiumMg100: sodiumMg(row),
+    // Not stored — the canonical schema has no alcohol field — but a drink's
+    // calories come mostly from it, so the plausibility check needs it.
+    alcohol100: number(field(row, 'alcohol_100g')),
   };
   if (!isPlausible(per100)) return null;
 

@@ -1,12 +1,16 @@
 import { useEffect, useRef, useState } from 'react';
-import { BrowserMultiFormatReader, type IScannerControls } from '@zxing/browser';
+import { startScanning, type Scanner } from '../lib/barcodeScan';
+import { isValidBarcode, normalizeBarcode } from '../lib/barcode';
 import { XIcon } from './Icons';
 
 export default function BarcodeScanner({
   onDetected,
+  onNoBarcode,
   onClose,
 }: {
   onDetected: (barcode: string) => void;
+  /** Loose produce and anything foreign-labelled has no code to scan. */
+  onNoBarcode: () => void;
   onClose: () => void;
 }) {
   const videoRef = useRef<HTMLVideoElement>(null);
@@ -14,21 +18,28 @@ export default function BarcodeScanner({
   const [manual, setManual] = useState('');
 
   useEffect(() => {
-    const reader = new BrowserMultiFormatReader();
-    let controls: IScannerControls | null = null;
+    let stream: MediaStream | null = null;
+    let scanner: Scanner | null = null;
     let unmounted = false;
-    let fired = false;
 
-    reader
-      .decodeFromVideoDevice(undefined, videoRef.current ?? undefined, (result) => {
-        if (result && !fired) {
-          fired = true;
-          onDetected(result.getText());
+    // The camera is opened here rather than by the decoder, so both engines get
+    // the same stream and the back camera is asked for explicitly — a phone
+    // defaults to the front one, which never sees the packet.
+    navigator.mediaDevices
+      .getUserMedia({ video: { facingMode: { ideal: 'environment' } } })
+      .then(async (opened) => {
+        stream = opened;
+        if (unmounted || !videoRef.current) return;
+        videoRef.current.srcObject = opened;
+        await videoRef.current.play().catch(() => {});
+        try {
+          scanner = await startScanning(videoRef.current, onDetected);
+          if (unmounted) scanner.stop();
+        } catch {
+          // The camera is fine; the decoder isn't. Saying "check permissions"
+          // here would send someone into Settings for no reason.
+          if (!unmounted) setError('Barcode reading failed. Enter the number below instead.');
         }
-      })
-      .then((c) => {
-        controls = c;
-        if (unmounted) c.stop();
       })
       .catch(() => {
         if (!unmounted) {
@@ -38,9 +49,13 @@ export default function BarcodeScanner({
 
     return () => {
       unmounted = true;
-      controls?.stop();
+      scanner?.stop();
+      stream?.getTracks().forEach((track) => track.stop());
     };
   }, [onDetected]);
+
+  const typed = normalizeBarcode(manual);
+  const typedLooksWrong = typed.length >= 8 && !isValidBarcode(typed);
 
   return (
     <div className="fixed inset-0 z-50 flex flex-col bg-black">
@@ -53,7 +68,7 @@ export default function BarcodeScanner({
 
       <div className="relative mx-auto w-full max-w-md flex-1">
         {/* eslint-disable-next-line jsx-a11y/media-has-caption */}
-        <video ref={videoRef} className="h-full w-full object-cover" />
+        <video ref={videoRef} playsInline muted className="h-full w-full object-cover" />
         <div className="pointer-events-none absolute inset-0 flex items-center justify-center">
           <div className="h-40 w-72 rounded-xl border-2 border-white/80" />
         </div>
@@ -65,26 +80,41 @@ export default function BarcodeScanner({
       </div>
 
       <form
-        className="mx-auto flex w-full max-w-md gap-2 p-4"
+        className="mx-auto w-full max-w-md p-4"
         onSubmit={(e) => {
           e.preventDefault();
-          const code = manual.trim();
-          if (code) onDetected(code);
+          if (typed) onDetected(typed);
         }}
       >
-        <input
-          type="text"
-          inputMode="numeric"
-          placeholder="Or type the barcode number"
-          value={manual}
-          onChange={(e) => setManual(e.target.value)}
-          className="flex-1 rounded-xl border border-line bg-card px-3 py-2.5 text-sm"
-        />
+        <div className="flex gap-2">
+          <input
+            type="text"
+            inputMode="numeric"
+            placeholder="Or type the barcode number"
+            value={manual}
+            onChange={(e) => setManual(e.target.value)}
+            className="flex-1 rounded-xl border border-line bg-card px-3 py-2.5 text-sm"
+          />
+          <button
+            type="submit"
+            className="rounded-xl bg-accent px-4 py-2.5 text-sm font-semibold text-white"
+          >
+            Look up
+          </button>
+        </div>
+        {/* A warning, not a block: the number may be right and the check digit
+            simply mistyped, and looking it up costs nothing. */}
+        {typedLooksWrong && (
+          <p className="mt-2 text-center text-xs text-white/70">
+            That doesn&apos;t look like a complete barcode — check the digits.
+          </p>
+        )}
         <button
-          type="submit"
-          className="rounded-xl bg-accent px-4 py-2.5 text-sm font-semibold text-white"
+          type="button"
+          onClick={onNoBarcode}
+          className="mt-3 w-full py-2 text-center text-sm font-medium text-white/80"
         >
-          Look up
+          No barcode — photograph the label
         </button>
       </form>
     </div>

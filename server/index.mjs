@@ -5,6 +5,7 @@ import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { ZipArchive } from 'archiver';
 import compression from 'compression';
+import { barcodeVariants } from './lib/barcode.mjs';
 import { per100FromServing } from './lib/foodSchema.mjs';
 import { matchFood, searchFoods } from './lib/foodSearch.mjs';
 import webpush from 'web-push';
@@ -518,7 +519,11 @@ app.get('/api/foods/browse', (req, res) => {
         `SELECT f.*, (SELECT COUNT(*) FROM food_log l WHERE l.foodId = f.id) AS usageCount
          FROM foods f
          ${where.length ? `WHERE ${where.join(' AND ')}` : ''}
-         ORDER BY CASE f.source WHEN 'custom' THEN 0 WHEN 'openfoodfacts' THEN 1 ELSE 2 END,
+         -- Your own foods first, then the curated ones, and the 300,000
+         -- crowd-sourced products last: unfiltered, they would be the entire
+         -- list and nothing you recognise would appear in it.
+         ORDER BY CASE f.source
+                    WHEN 'custom' THEN 0 WHEN 'seed' THEN 1 WHEN 'usda' THEN 2 ELSE 3 END,
                   f.name COLLATE NOCASE
          LIMIT 500`,
       )
@@ -634,10 +639,17 @@ app.get('/api/foods/:id/servings', (req, res) => {
 
 app.get('/api/foods/barcode/:code', (req, res) => {
   // Local first: with the bulk import in place this answers without touching
-  // the network, which is the whole point of the barcode path.
+  // the network, which is the whole point of the barcode path. The same product
+  // may be stored under either its UPC-A or EAN-13 form, so both are tried.
+  const variants = barcodeVariants(req.params.code);
+  if (variants.length === 0) return res.json(null);
+
   const local = db
-    .prepare('SELECT * FROM foods WHERE barcode = ? ORDER BY (kcal100 IS NULL) LIMIT 1')
-    .get(req.params.code);
+    .prepare(
+      `SELECT * FROM foods WHERE barcode IN (${variants.map(() => '?').join(', ')})
+       ORDER BY (kcal100 IS NULL), (source = 'custom') DESC LIMIT 1`,
+    )
+    .get(...variants);
   res.json(local ?? null);
 });
 

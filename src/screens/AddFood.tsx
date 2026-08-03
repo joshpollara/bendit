@@ -493,7 +493,15 @@ export default function AddFood() {
 
       {scanning && (
         <Suspense fallback={<div className="fixed inset-0 z-50 bg-black" />}>
-          <BarcodeScanner onDetected={handleScan} onClose={() => setScanning(false)} />
+          <BarcodeScanner
+            onDetected={handleScan}
+            onNoBarcode={() => {
+              setScanning(false);
+              setPendingBarcode(undefined);
+              setTab('create');
+            }}
+            onClose={() => setScanning(false)}
+          />
         </Suspense>
       )}
 

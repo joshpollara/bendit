@@ -195,10 +195,68 @@ describe('Open Food Facts normalization', () => {
   });
 
   it('converts kJ when only joules are published', () => {
+    // European labels lead with kJ; 2100 kJ is a biscuit, and its macros have
+    // to add up to that or the row is rejected as mistyped.
     const food = toFood(
-      product({ 'energy-kcal_100g': '', 'energy-kj_100g': '2100', carbohydrates_100g: '48' }),
+      product({
+        product_name: 'Digestive biscuits',
+        'energy-kcal_100g': '',
+        'energy-kj_100g': '2100',
+        proteins_100g: '7',
+        carbohydrates_100g: '60',
+        fat_100g: '25',
+      }),
     );
     expect(Math.round(food.kcal100)).toBe(502);
+  });
+
+  it('rejects rows whose energy the macros cannot account for', () => {
+    // Real rows from the export: "1000 kcal" against macros worth 115. Someone
+    // typed the kJ figure, or the field was capped.
+    expect(
+      toFood(
+        product({
+          'energy-kcal_100g': '1000',
+          proteins_100g: '2',
+          carbs_100g: '25',
+          carbohydrates_100g: '25',
+          fat_100g: '1',
+        }),
+      ),
+    ).toBeNull();
+  });
+
+  it('keeps a spirit, whose calories are alcohol rather than macros', () => {
+    // 40% ABV is ~32g alcohol per 100ml — 224 kcal that no macro explains.
+    const gin = toFood(
+      product({
+        product_name: 'London Dry Gin',
+        'energy-kcal_100g': '250',
+        proteins_100g: '0',
+        carbohydrates_100g: '0',
+        fat_100g: '0',
+        alcohol_100g: '32',
+        serving_size: '35 ml',
+      }),
+    );
+    expect(gin?.kcal100).toBe(250);
+  });
+
+  it('keeps a high-fiber food, where fiber makes the sum look wrong', () => {
+    // Bran: carbohydrate includes fiber, which yields ~2 kcal/g not 4, so the
+    // stated energy sits well *below* the Atwater figure. That direction is
+    // always fine.
+    const bran = toFood(
+      product({
+        product_name: 'Wheat bran',
+        'energy-kcal_100g': '216',
+        proteins_100g: '15.6',
+        carbohydrates_100g: '64.5',
+        fat_100g: '4.3',
+        fiber_100g: '42.8',
+      }),
+    );
+    expect(bran?.kcal100).toBe(216);
   });
 
   it('rejects rows a human clearly mistyped', () => {
@@ -235,5 +293,13 @@ describe('Open Food Facts normalization', () => {
     expect(isPlausible({ kcal100: 900, fat100: 100 })).toBe(true); // pure oil
     expect(isPlausible({ kcal100: 1 })).toBe(true);
     expect(isPlausible({ kcal100: null })).toBe(false);
+    expect(isPlausible({ kcal100: 901, fat100: 100 })).toBe(false); // past pure fat
+  });
+
+  it('only cross-checks energy when the macros are all published', () => {
+    // Most of OFF has macros; a row without them still gets in on the other
+    // checks rather than being rejected for a sum that can't be computed.
+    expect(isPlausible({ kcal100: 400 })).toBe(true);
+    expect(isPlausible({ kcal100: 400, protein100: 0, carbs100: 0, fat100: 0 })).toBe(false);
   });
 });
