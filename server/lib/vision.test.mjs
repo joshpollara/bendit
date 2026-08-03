@@ -119,6 +119,17 @@ describe('vision provider', () => {
     await expect(provider(fetchImpl).extract(call)).rejects.toMatchObject({ code: 'empty_response' });
   });
 
+  it('carries the provider\'s own explanation into the error', async () => {
+    // A retired model returns a 404 whose body is the only thing that says why.
+    const fetchImpl = async () => ({
+      ok: false,
+      status: 404,
+      text: async () =>
+        JSON.stringify({ error: { message: 'This model is no longer available to new users.' } }),
+    });
+    await expect(provider(fetchImpl).extract(call)).rejects.toThrow(/no longer available to new users/);
+  });
+
   it('says so when no key is configured instead of calling anything', async () => {
     const fetchImpl = vi.fn();
     const unconfigured = createVisionProvider({ apiKey: '', fetchImpl });

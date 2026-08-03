@@ -20,11 +20,18 @@ export class VisionError extends Error {
   }
 }
 
-// Flash-Lite 2.5 is the cheapest tier that reads images: $0.10 per million
-// input tokens, $0.40 per million out. A 768px photo is one tile — about 258
-// tokens — so a label read costs on the order of $0.0001. The 3.x Flash-Lite
-// models are two to six times that. Overridable with VISION_MODEL.
-const DEFAULT_MODEL = 'gemini-2.5-flash-lite';
+// Flash-Lite 3.1: the cheapest tier that actually reads images for a new API
+// key. 2.5 is cheaper on paper and is still listed by the models endpoint, but
+// calling it returns "no longer available to new users" — a 404 that says
+// nothing until the provider's own message is read, which is why that message
+// is now included in the error.
+//
+// Measured on a real photographed panel: ~1,400 input tokens and ~100 output,
+// so about $0.0005 a read at $0.25/M in and $1.50/M out. A 768px photo is more
+// than the one 258-token tile the docs quote — a portrait shot spans two.
+// 3.5-flash-lite read the same panel identically and costs twice as much.
+// Overridable with VISION_MODEL.
+const DEFAULT_MODEL = 'gemini-3.1-flash-lite';
 // Overridable so the whole path can be exercised against a local stand-in,
 // without a key and without spending anything.
 const ENDPOINT =
@@ -38,6 +45,16 @@ const MAX_ATTEMPTS = 3;
 const isRetryable = (status) => status === 429 || (status >= 500 && status < 600);
 
 const backoffMs = (attempt) => 400 * 2 ** (attempt - 1);
+
+/** The human-readable part of an error body, if it has one. */
+function parseProviderMessage(text) {
+  if (!text) return '';
+  try {
+    return String(JSON.parse(text)?.error?.message ?? '').slice(0, 200);
+  } catch {
+    return text.slice(0, 200);
+  }
+}
 
 const sleep = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
 
@@ -103,10 +120,14 @@ export function createVisionProvider({
       });
 
       if (!response.ok) {
+        // The provider's own message is the only thing that says *why*. Without
+        // it a retired model reads as an unexplained 404, which is three round
+        // trips of guessing instead of one line of text.
         const detail = await response.text().catch(() => '');
+        const reason = parseProviderMessage(detail);
         throw new VisionError(
           response.status === 429 ? 'rate_limited' : 'provider_error',
-          `Vision provider returned ${response.status}`,
+          `Vision provider returned ${response.status}${reason ? `: ${reason}` : ''}`,
           { status: response.status, retryable: isRetryable(response.status) },
         );
       }
