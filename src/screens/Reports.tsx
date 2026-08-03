@@ -17,6 +17,7 @@ import {
 } from '../lib/report';
 import { MEAL_LABELS, type Profile } from '../types';
 import GoalTrack from '../components/GoalTrack';
+import BodyFigure from '../components/BodyFigure';
 
 // recharts is heavy; keep it out of the main bundle.
 const TrendChart = lazy(() =>
@@ -237,6 +238,31 @@ export default function Reports({ profile }: { profile: Profile }) {
           {latestTrend != null && (
             <section className={card}>
               <h2 className="mb-1 font-semibold">Goal</h2>
+
+              <div className="mb-2 flex items-end justify-around">
+                {(
+                  [
+                    { label: 'Start', kg: profile.startWeightKg, cls: 'text-ink-muted', dashed: false },
+                    { label: 'Now', kg: latestTrend, cls: 'text-accent', dashed: false },
+                    { label: 'Goal', kg: profile.goalWeightKg, cls: 'text-good', dashed: true },
+                  ] as const
+                ).map((f) => (
+                  <figure key={f.label} className={`m-0 text-center ${f.cls}`}>
+                    <BodyFigure
+                      weightKg={f.kg}
+                      heightCm={profile.heightCm}
+                      sex={profile.sex}
+                      dashed={f.dashed}
+                      className="h-28 w-auto"
+                    />
+                    <figcaption className="mt-1 text-[11px] font-medium">
+                      <span className="block text-ink-secondary">{f.label}</span>
+                      <span className="tabular-nums">{formatWeight(f.kg, profile.units, 0)}</span>
+                    </figcaption>
+                  </figure>
+                ))}
+              </div>
+
               <GoalTrack
                 startKg={profile.startWeightKg}
                 goalKg={profile.goalWeightKg}
