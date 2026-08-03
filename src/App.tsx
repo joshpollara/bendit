@@ -30,9 +30,9 @@ function Splash() {
 function Shell({ profile }: { profile: Profile }) {
   return (
     <BrowserRouter>
-      <div className="mx-auto flex min-h-dvh w-full max-w-md justify-center gap-8 pb-28 md:max-w-4xl md:gap-10 md:px-6 md:py-8 md:pb-8">
+      <div className="mx-auto flex min-h-dvh w-full max-w-md gap-8 pb-28 md:max-w-6xl xl:max-w-7xl md:gap-8 md:px-6 md:py-8 md:pb-8 lg:gap-10">
         <SideNav />
-        <main className="w-full min-w-0 md:max-w-2xl">
+        <main className="w-full min-w-0 flex-1">
           <Routes>
             <Route path="/" element={<Today profile={profile} />} />
             <Route path="/add-food" element={<AddFood />} />

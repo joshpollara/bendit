@@ -376,10 +376,12 @@ export default function AddFood() {
         >
           <ChevronLeftIcon className="h-5 w-5" />
         </button>
-        <h1 className="text-lg font-semibold capitalize">Add Food · {meal}</h1>
+        <h1 className="text-lg font-semibold capitalize lg:text-2xl lg:font-bold lg:tracking-tight">
+          Add Food · {meal}
+        </h1>
       </header>
 
-      <div className="mx-4 flex items-center gap-2">
+      <div className="mx-4 flex items-center gap-2 lg:mx-0">
         <div className="flex flex-1 items-center gap-2 rounded-xl border border-line bg-card px-3">
           <SearchIcon className="h-4 w-4 shrink-0 text-ink-muted" />
           <input
@@ -404,10 +406,10 @@ export default function AddFood() {
       </div>
 
       {banner && (
-        <p className="mx-4 mt-3 rounded-xl bg-over-soft px-3 py-2.5 text-sm text-over">{banner}</p>
+        <p className="mx-4 mt-3 rounded-xl bg-over-soft px-3 py-2.5 text-sm text-over lg:mx-0">{banner}</p>
       )}
 
-      <div className="mx-4 mt-3 grid grid-cols-6 rounded-xl bg-card p-1 text-center text-[11px] font-semibold">
+      <div className="mx-4 mt-3 grid grid-cols-6 rounded-xl bg-card p-1 text-center text-[11px] font-semibold lg:mx-0">
         {tabs.map((t) => (
           <button
             key={t.key}
@@ -420,7 +422,7 @@ export default function AddFood() {
         ))}
       </div>
 
-      <div className="mx-4 mt-3 mb-4 overflow-hidden rounded-2xl border border-line bg-card shadow-sm">
+      <div className="mx-4 mt-3 mb-4 overflow-hidden rounded-2xl border border-line bg-card shadow-sm lg:mx-0">
         {tab === 'quick' && <QuickAddForm initialMeal={meal} onAdd={quickAdd} />}
 
         {tab === 'search' && (

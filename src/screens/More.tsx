@@ -24,7 +24,7 @@ function rateOptions(units: Units): { value: number; label: string }[] {
     : [0.25, 0.5, 0.75, 1].map((kg) => ({ value: kg, label: `${kg} kg / week` }));
 }
 
-const card = 'mx-4 mt-3 rounded-2xl border border-line bg-card p-4 shadow-sm';
+const card = 'mx-4 mt-3 rounded-2xl border border-line bg-card p-4 shadow-sm lg:mx-0 lg:mt-0';
 const field = 'w-full rounded-xl border border-line bg-surface px-3 py-2.5 text-sm';
 const label = 'flex flex-col gap-1 text-sm text-ink-secondary';
 
@@ -107,11 +107,13 @@ export default function More({ profile }: { profile: Profile }) {
 
   return (
     <div className="pt-[env(safe-area-inset-top)] pb-4">
-      <header className="px-4 py-3">
-        <h1 className="text-lg font-semibold">More</h1>
+      <header className="px-4 py-3 lg:px-0 lg:pb-4 lg:pt-0">
+        <h1 className="text-lg font-semibold lg:text-2xl lg:font-bold lg:tracking-tight">More</h1>
       </header>
 
-      <section className={card}>
+      <div className="lg:grid lg:grid-cols-2 lg:items-start lg:gap-4">
+
+      <section className={`${card} lg:col-span-2`}>
         <h2 className="mb-3 font-semibold">Profile & goals</h2>
         <div className="flex flex-col gap-3">
           <div className="grid grid-cols-2 gap-3">
@@ -353,6 +355,8 @@ export default function More({ profile }: { profile: Profile }) {
           Delete all data
         </button>
       </section>
+
+      </div>
 
       <p className="mt-6 text-center text-xs text-ink-muted">
         Bend It! — simple calorie tracking.

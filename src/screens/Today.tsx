@@ -23,7 +23,38 @@ import {
 function DateNav() {
   const { date, setDate } = useUI();
   return (
-    <div className="flex items-center justify-between px-2 py-3">
+    <>
+      <header className="hidden items-center justify-between pb-4 lg:flex">
+        <h1 className="text-2xl font-bold tracking-tight">{dayLabel(date)}</h1>
+        <div className="flex items-center gap-1">
+          <button
+            type="button"
+            aria-label="Previous day"
+            onClick={() => setDate(shiftDay(date, -1))}
+            className="rounded-lg border border-line p-1.5 text-ink-secondary hover:bg-card"
+          >
+            <ChevronLeftIcon className="h-4 w-4" />
+          </button>
+          <button
+            type="button"
+            onClick={() => setDate(todayStr())}
+            disabled={date === todayStr()}
+            className="rounded-lg border border-line px-3 py-1.5 text-xs font-semibold text-ink-secondary hover:bg-card disabled:opacity-40"
+          >
+            Today
+          </button>
+          <button
+            type="button"
+            aria-label="Next day"
+            onClick={() => setDate(shiftDay(date, 1))}
+            className="rounded-lg border border-line p-1.5 text-ink-secondary hover:bg-card"
+          >
+            <ChevronRightIcon className="h-4 w-4" />
+          </button>
+        </div>
+      </header>
+
+    <div className="flex items-center justify-between px-2 py-3 lg:hidden">
       <button
         type="button"
         aria-label="Previous day"
@@ -48,6 +79,7 @@ function DateNav() {
         <ChevronRightIcon className="h-5 w-5" />
       </button>
     </div>
+    </>
   );
 }
 
@@ -76,7 +108,7 @@ function BudgetSummary({
   );
 
   return (
-    <section className="mx-4 rounded-2xl border border-line bg-card p-4 shadow-sm">
+    <section className="mx-4 rounded-2xl border border-line bg-card p-4 shadow-sm lg:mx-0">
       <div className="flex items-center justify-between">
         {stat('Budget', budget)}
         <span className="text-ink-muted">−</span>
@@ -136,7 +168,7 @@ function WeekLine({ date, dailyBudget, measured }: { date: string; dailyBudget: 
   const pace = elapsed > 0 ? Math.round(used / elapsed) : 0;
 
   return (
-    <section className="mx-4 mt-3 rounded-2xl border border-line bg-card px-4 py-3 shadow-sm">
+    <section className="mx-4 mt-3 rounded-2xl border border-line bg-card px-4 py-3 shadow-sm lg:mx-0 lg:mt-0">
       <div className="flex items-baseline justify-between text-sm">
         <h2 className="font-semibold">This week</h2>
         <span className="tabular-nums text-ink-secondary">
@@ -180,7 +212,7 @@ function MacroRow({
   const hit = target > 0 && protein >= target;
 
   return (
-    <section className="mx-4 mt-3 rounded-2xl border border-line bg-card p-4 shadow-sm">
+    <section className="mx-4 mt-3 rounded-2xl border border-line bg-card p-4 shadow-sm lg:mx-0 lg:mt-0">
       <div className="flex items-baseline justify-between">
         <h2 className="text-sm font-semibold">Protein</h2>
         <span className="text-sm tabular-nums">
@@ -248,7 +280,7 @@ function MealSection({
   }
 
   return (
-    <section className="mx-4 mt-3 rounded-2xl border border-line bg-card shadow-sm">
+    <section className="mx-4 mt-3 rounded-2xl border border-line bg-card shadow-sm lg:mx-0 lg:mt-0">
       <header className="flex items-center gap-2 px-4 py-3">
         <button
           type="button"
@@ -366,14 +398,14 @@ function DayDone({ date, done, left }: { date: string; done: boolean; left: numb
       <button
         type="button"
         onClick={() => toggle(true)}
-        className="mx-4 mt-3 mb-4 block w-[calc(100%-2rem)] rounded-2xl border border-line bg-card py-3 text-sm font-semibold text-ink-secondary hover:bg-surface"
+        className="mx-4 mt-3 mb-4 block w-[calc(100%-2rem)] lg:mx-0 lg:w-full rounded-2xl border border-line bg-card py-3 text-sm font-semibold text-ink-secondary hover:bg-surface"
       >
         I'm done logging for today
       </button>
     );
   }
   return (
-    <div className="mx-4 mt-3 mb-4 flex items-center gap-2 rounded-2xl bg-good-soft px-4 py-3">
+    <div className="mx-4 mt-3 mb-4 flex items-center gap-2 rounded-2xl bg-good-soft px-4 py-3 lg:mx-0">
       <CheckIcon className="h-4 w-4 shrink-0 text-good" />
       <p className="flex-1 text-sm text-ink-secondary">
         Logging closed for today
@@ -404,26 +436,36 @@ export default function Today({ profile }: { profile: Profile }) {
   return (
     <div className="pt-[env(safe-area-inset-top)]">
       <DateNav />
-      <BudgetSummary
-        budget={budget}
-        food={foodCalories}
-        exercise={exerciseCalories}
-        measured={measured}
-      />
-      <WeekLine date={date} dailyBudget={budget} measured={measured} />
-      <MacroRow entries={joined} proteinTargetG={profile.proteinTargetG} />
 
-      {MEALS.map((meal) => (
-        <MealSection
-          key={meal}
-          meal={meal}
-          date={date}
-          entries={joined.filter((e) => e.meal === meal)}
-          yesterdayCount={yesterdayByMeal[meal] ?? 0}
-        />
-      ))}
+      <div className="lg:grid lg:grid-cols-[22rem_minmax(0,1fr)] lg:items-start lg:gap-5 lg:px-0">
+        {/* The standings: pinned while you scroll the log beside them. */}
+        <div className="lg:sticky lg:top-8 lg:space-y-3">
+          <BudgetSummary
+            budget={budget}
+            food={foodCalories}
+            exercise={exerciseCalories}
+            measured={measured}
+          />
+          <WeekLine date={date} dailyBudget={budget} measured={measured} />
+          <MacroRow entries={joined} proteinTargetG={profile.proteinTargetG} />
+          <div className="hidden lg:block">
+            {day && <DayDone date={date} done={day.done} left={left} />}
+          </div>
+        </div>
 
-      <section className="mx-4 mt-3 mb-4 rounded-2xl border border-line bg-card shadow-sm">
+        {/* The working surface. */}
+        <div className="lg:space-y-3">
+          {MEALS.map((meal) => (
+            <MealSection
+              key={meal}
+              meal={meal}
+              date={date}
+              entries={joined.filter((e) => e.meal === meal)}
+              yesterdayCount={yesterdayByMeal[meal] ?? 0}
+            />
+          ))}
+
+      <section className="mx-4 mt-3 mb-4 rounded-2xl border border-line bg-card shadow-sm lg:mx-0 lg:mb-0 lg:mt-0">
         <header className="flex items-center gap-2 px-4 py-3">
           <h2 className="flex-1 font-semibold">Exercise</h2>
           {measured && exerciseCalories > 0 && (
@@ -479,6 +521,9 @@ export default function Today({ profile }: { profile: Profile }) {
         </div>
       </section>
 
+        </div>
+      </div>
+
       {editingExercise && (
         <ExerciseSheet
           entry={editingExercise}
@@ -490,7 +535,7 @@ export default function Today({ profile }: { profile: Profile }) {
         />
       )}
 
-      {day && <DayDone date={date} done={day.done} left={left} />}
+      <div className="lg:hidden">{day && <DayDone date={date} done={day.done} left={left} />}</div>
     </div>
   );
 }

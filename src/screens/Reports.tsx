@@ -44,7 +44,8 @@ function rangeStart(range: Range): string | undefined {
   return undefined;
 }
 
-const card = 'mx-4 mt-3 rounded-2xl border border-line bg-card p-4 shadow-sm';
+const card = 'mx-4 mt-3 rounded-2xl border border-line bg-card p-4 shadow-sm lg:mx-0 lg:mt-0';
+const wide = `${card} lg:col-span-2`;
 
 function Tile({ label, value, note, tone }: { label: string; value: string; note?: string; tone?: string }) {
   return (
@@ -153,8 +154,8 @@ export default function Reports({ profile }: { profile: Profile }) {
 
   return (
     <div className="pt-[env(safe-area-inset-top)] pb-4">
-      <header className="flex items-center justify-between px-4 py-3">
-        <h1 className="text-lg font-semibold">Reports</h1>
+      <header className="flex items-center justify-between px-4 py-3 lg:px-0 lg:pb-4 lg:pt-0">
+        <h1 className="text-lg font-semibold lg:text-2xl lg:font-bold lg:tracking-tight">Reports</h1>
         <div className="flex gap-1">
           {RANGES.map((r) => (
             <button
@@ -176,7 +177,7 @@ export default function Reports({ profile }: { profile: Profile }) {
           Log a few days of food and weight and your trends will show up here.
         </p>
       ) : (
-        <>
+        <div className="lg:grid lg:grid-cols-2 lg:items-start lg:gap-4">
           <section className={card}>
             <h2 className="mb-3 font-semibold">At a glance</h2>
             <div className="grid grid-cols-2 gap-2">
@@ -284,8 +285,10 @@ export default function Reports({ profile }: { profile: Profile }) {
             </section>
           )}
 
-          <Suspense fallback={<div className={`${card} h-72`} />}>
-            <section className={card}>
+          <Suspense fallback={<div className={`${wide} h-72`} />}>
+            {/* display:contents so the charts sit in the page grid, not a wrapper */}
+            <div className="contents">
+            <section className={wide}>
               <h2 className="font-semibold">Weight trend</h2>
               <p className="mb-2 text-xs text-ink-muted">
                 Weight swings day to day with water and food in transit. The trend line is a
@@ -303,7 +306,7 @@ export default function Reports({ profile }: { profile: Profile }) {
               )}
             </section>
 
-            <section className={card}>
+            <section className={wide}>
               <h2 className="font-semibold">Calories</h2>
               <p className="mb-2 text-xs text-ink-muted">
                 Net calories per day (food minus exercise) against your budget.
@@ -340,6 +343,7 @@ export default function Reports({ profile }: { profile: Profile }) {
                 </p>
               </section>
             )}
+            </div>
           </Suspense>
 
           {days.length > 0 && (
@@ -352,7 +356,7 @@ export default function Reports({ profile }: { profile: Profile }) {
           )}
 
           {weeks.length > 0 && (
-            <section className="mx-4 mt-3 overflow-hidden rounded-2xl border border-line bg-card shadow-sm">
+            <section className="mx-4 mt-3 overflow-hidden rounded-2xl border border-line bg-card shadow-sm lg:col-span-2 lg:mx-0 lg:mt-0">
               <h2 className="border-b border-line px-4 py-3 font-semibold">By week</h2>
               <div className="overflow-x-auto">
                 <table className="w-full text-sm">
@@ -409,7 +413,7 @@ export default function Reports({ profile }: { profile: Profile }) {
               </div>
             </section>
           )}
-        </>
+        </div>
       )}
     </div>
   );

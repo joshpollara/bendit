@@ -55,7 +55,7 @@ export default function Measurements({ units }: { units: Units }) {
   }
 
   return (
-    <section className="mx-4 mt-3 rounded-2xl border border-line bg-card p-4 shadow-sm">
+    <section className="mx-4 mt-3 rounded-2xl border border-line bg-card p-4 shadow-sm lg:mx-0 lg:mt-0">
       <div className="mb-1 flex items-center justify-between">
         <h2 className="font-semibold">Measurements</h2>
         <button

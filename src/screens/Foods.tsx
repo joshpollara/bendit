@@ -104,10 +104,12 @@ export default function Foods() {
         >
           <ChevronLeftIcon className="h-5 w-5" />
         </button>
-        <h1 className="text-lg font-semibold md:px-2">Food database</h1>
+        <h1 className="text-lg font-semibold md:px-2 lg:text-2xl lg:font-bold lg:tracking-tight">
+          Food database
+        </h1>
       </header>
 
-      <div className="mx-4 flex items-center gap-2 rounded-xl border border-line bg-card px-3">
+      <div className="mx-4 flex items-center gap-2 rounded-xl border border-line bg-card px-3 lg:mx-0">
         <SearchIcon className="h-4 w-4 shrink-0 text-ink-muted" />
         <input
           type="search"
@@ -118,7 +120,7 @@ export default function Foods() {
         />
       </div>
 
-      <div className="mx-4 mt-3 grid grid-cols-4 rounded-xl bg-card p-1 text-center text-xs font-semibold">
+      <div className="mx-4 mt-3 grid grid-cols-4 rounded-xl bg-card p-1 text-center text-xs font-semibold lg:mx-0">
         {FILTERS.map((f) => (
           <button
             key={f.key}
@@ -133,12 +135,12 @@ export default function Foods() {
         ))}
       </div>
 
-      <p className="mx-4 mt-3 text-xs text-ink-muted">
+      <p className="mx-4 mt-3 text-xs text-ink-muted lg:mx-0">
         Tap a food you added to edit it. Built-in foods can't be changed or deleted, and deleting a
         food leaves your logged entries untouched.
       </p>
 
-      <div className="mx-4 mt-2 overflow-hidden rounded-2xl border border-line bg-card shadow-sm">
+      <div className="mx-4 mt-2 overflow-hidden rounded-2xl border border-line bg-card shadow-sm lg:mx-0">
         {foods === undefined ? (
           <p className="px-4 py-6 text-center text-sm text-ink-muted">Loading…</p>
         ) : foods.length === 0 ? (
@@ -167,7 +169,7 @@ export default function Foods() {
       )}
 
       {foods && foods.length === 500 && (
-        <p className="mx-4 mt-2 text-xs text-ink-muted">
+        <p className="mx-4 mt-2 text-xs text-ink-muted lg:mx-0">
           Showing the first 500 — narrow it down with the filter above.
         </p>
       )}

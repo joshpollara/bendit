@@ -189,7 +189,7 @@ export default function ProgressPhotos() {
   }
 
   return (
-    <section className="mx-4 mt-3 rounded-2xl border border-line bg-card p-4 shadow-sm">
+    <section className="mx-4 mt-3 rounded-2xl border border-line bg-card p-4 shadow-sm lg:mx-0 lg:mt-0">
       <div className="mb-1 flex items-center justify-between gap-2">
         <h2 className="flex-1 font-semibold">Progress photos</h2>
         {photos.length >= 2 && (

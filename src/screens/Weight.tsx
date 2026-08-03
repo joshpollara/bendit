@@ -75,6 +75,35 @@ export default function Weight({ profile }: { profile: Profile }) {
     setLogging(false);
   }
 
+  // The weight log is long by nature; on a desktop it scrolls inside its card
+  // rather than pushing everything else off the screen.
+  const history = entries.length > 0 && (
+    <section className="mx-4 mt-3 mb-4 overflow-hidden rounded-2xl border border-line bg-card shadow-sm lg:mx-0 lg:mb-0 lg:mt-0">
+      <h2 className="border-b border-line px-4 py-3 font-semibold">History</h2>
+      <ul className="lg:max-h-96 lg:overflow-y-auto">
+        {[...entries].reverse().slice(0, 60).map((e) => (
+          <li
+            key={e.id}
+            className="flex items-center gap-3 border-b border-line px-4 py-2.5 last:border-b-0"
+          >
+            <span className="flex-1 text-sm">{shortDate(e.date)}</span>
+            <span className="text-sm font-medium tabular-nums">
+              {formatWeight(e.weightKg, profile.units)}
+            </span>
+            <button
+              type="button"
+              aria-label={`Delete weight from ${e.date}`}
+              onClick={() => api.deleteWeight(e.id).then(bump)}
+              className="rounded-full p-1 text-ink-muted hover:bg-surface hover:text-over"
+            >
+              <XIcon className="h-4 w-4" />
+            </button>
+          </li>
+        ))}
+      </ul>
+    </section>
+  );
+
   const stat = (label: string, value: string, tone = '') => (
     <div className="flex flex-col items-center">
       <span className="text-[11px] font-medium uppercase tracking-wide text-ink-muted">{label}</span>
@@ -84,8 +113,8 @@ export default function Weight({ profile }: { profile: Profile }) {
 
   return (
     <div className="pt-[env(safe-area-inset-top)]">
-      <header className="flex items-center justify-between px-4 py-3">
-        <h1 className="text-lg font-semibold">Weight</h1>
+      <header className="flex items-center justify-between px-4 py-3 lg:px-0 lg:pb-4 lg:pt-0">
+        <h1 className="text-lg font-semibold lg:text-2xl lg:font-bold lg:tracking-tight">Weight</h1>
         <Link to="/reports" className="ml-auto mr-2 text-sm font-medium text-accent">
           Trends
         </Link>
@@ -98,7 +127,8 @@ export default function Weight({ profile }: { profile: Profile }) {
         </button>
       </header>
 
-      <section className="mx-4 rounded-2xl border border-line bg-card p-4 shadow-sm">
+      <div className="lg:grid lg:grid-cols-2 lg:items-start lg:gap-4">
+      <section className="mx-4 rounded-2xl border border-line bg-card p-4 shadow-sm lg:col-span-2 lg:mx-0">
         <div className="flex items-center justify-around">
           {stat('Current', latest ? formatWeight(latest.weightKg, profile.units) : '—')}
           {stat('Goal', formatWeight(goalKg, profile.units))}
@@ -114,7 +144,7 @@ export default function Weight({ profile }: { profile: Profile }) {
         {goalReached && <p className="mt-3 text-center text-sm font-medium text-good">{STRINGS.goalReached}</p>}
       </section>
 
-      <section className="mx-4 mt-3 rounded-2xl border border-line bg-card p-4 shadow-sm">
+      <section className="mx-4 mt-3 rounded-2xl border border-line bg-card p-4 shadow-sm lg:col-span-2 lg:mx-0 lg:mt-0">
         <div className="mb-2 flex items-center justify-between">
           <h2 className="font-semibold">Progress</h2>
           <div className="flex gap-1">
@@ -141,36 +171,14 @@ export default function Weight({ profile }: { profile: Profile }) {
         )}
       </section>
 
-      <Measurements units={profile.units} />
-
-      <ProgressPhotos />
-
-      {entries.length > 0 && (
-        <section className="mx-4 mt-3 mb-4 overflow-hidden rounded-2xl border border-line bg-card shadow-sm">
-          <h2 className="border-b border-line px-4 py-3 font-semibold">History</h2>
-          <ul>
-            {[...entries].reverse().slice(0, 60).map((e) => (
-              <li
-                key={e.id}
-                className="flex items-center gap-3 border-b border-line px-4 py-2.5 last:border-b-0"
-              >
-                <span className="flex-1 text-sm">{shortDate(e.date)}</span>
-                <span className="text-sm font-medium tabular-nums">
-                  {formatWeight(e.weightKg, profile.units)}
-                </span>
-                <button
-                  type="button"
-                  aria-label={`Delete weight from ${e.date}`}
-                  onClick={() => api.deleteWeight(e.id).then(bump)}
-                  className="rounded-full p-1 text-ink-muted hover:bg-surface hover:text-over"
-                >
-                  <XIcon className="h-4 w-4" />
-                </button>
-              </li>
-            ))}
-          </ul>
-        </section>
-      )}
+      <div className="lg:col-span-2 lg:grid lg:grid-cols-2 lg:items-start lg:gap-4">
+        <div className="lg:space-y-4">
+          <Measurements units={profile.units} />
+          {history}
+        </div>
+        <ProgressPhotos />
+      </div>
+      </div>
 
       {logging && (
         <Sheet onClose={() => setLogging(false)}>
