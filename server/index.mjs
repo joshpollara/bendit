@@ -69,8 +69,22 @@ const AUTH_USER = process.env.BASIC_AUTH_USER || 'bendit';
 const sha = (s) => crypto.createHash('sha256').update(s).digest();
 const safeEqual = (a, b) => crypto.timingSafeEqual(sha(a), sha(b));
 
+// PWA assets must be reachable without credentials: Chrome fetches manifest
+// icons credential-less, and without them installs degrade to a browser
+// shortcut. Nothing sensitive lives in these files.
+const PUBLIC_PATHS = new Set([
+  '/manifest.webmanifest',
+  '/sw.js',
+  '/icon-192.png',
+  '/icon-512.png',
+  '/icon-512-maskable.png',
+  '/apple-touch-icon.png',
+  '/favicon.ico',
+]);
+
 // Fails closed: with no BASIC_AUTH_PASSWORD set, every request is denied.
 app.use((req, res, next) => {
+  if (req.method === 'GET' && PUBLIC_PATHS.has(req.path)) return next();
   let ok = false;
   const [scheme, cred] = (req.headers.authorization ?? '').split(' ');
   if (AUTH_PASS && scheme === 'Basic' && cred) {
