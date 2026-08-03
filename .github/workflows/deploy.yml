@@ -21,6 +21,10 @@ jobs:
       - run: npm ci
         env:
           PLAYWRIGHT_SKIP_BROWSER_DOWNLOAD: '1'
+      # The server tests run against a real SQLite database, and better-sqlite3
+      # lives in the server's own package. Without this the suite can't even
+      # load them, so they'd pass locally and never run here.
+      - run: npm ci --prefix server
       - run: npm test
       - run: npm run build
 
