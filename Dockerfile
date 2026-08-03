@@ -18,6 +18,11 @@ FROM node:20-alpine
 WORKDIR /srv
 ENV NODE_ENV=production PORT=8080 SQLITE_PATH=/data/bendit.db
 COPY server/index.mjs server/seedFoods.json ./
+# The food schema, search, and barcode helpers the server imports at startup,
+# plus the importers — they run inside this container against the volume, so
+# the data never has to travel.
+COPY server/lib ./lib
+COPY server/ingest ./ingest
 COPY --from=serverdeps /srv/node_modules ./node_modules
 COPY --from=client /app/dist ./public
 EXPOSE 8080
