@@ -1,13 +1,13 @@
 import { useState } from 'react';
-import { useLiveQuery } from 'dexie-react-hooks';
 import { Link } from 'react-router-dom';
-import { db, latestWeight, newId } from '../db/db';
+import { api, type JoinedEntry } from '../lib/api';
+import { useData } from '../lib/useData';
 import { computeBudget, remaining } from '../lib/budget';
 import { dayLabel, shiftDay, todayStr } from '../lib/dates';
 import { formatCalories } from '../lib/units';
 import { STRINGS } from '../lib/strings';
 import { useUI } from '../store/ui';
-import { MEAL_LABELS, MEALS, type Food, type FoodLogEntry, type Meal, type Profile } from '../types';
+import { MEAL_LABELS, MEALS, type Meal, type Profile } from '../types';
 import {
   CheckIcon,
   ChevronDownIcon,
@@ -109,10 +109,6 @@ function BudgetSummary({
   );
 }
 
-interface JoinedEntry extends FoodLogEntry {
-  food?: Food;
-}
-
 function MealSection({
   meal,
   date,
@@ -125,15 +121,26 @@ function MealSection({
   yesterdayCount: number;
 }) {
   const [open, setOpen] = useState(true);
+  const bump = useUI((s) => s.bump);
   const subtotal = entries.reduce((sum, e) => sum + e.caloriesCached, 0);
 
   async function copyYesterday() {
     const yesterday = shiftDay(date, -1);
-    const prev = await db.foodLog.where('date').equals(yesterday).toArray();
-    const clones = prev
-      .filter((e) => e.meal === meal)
-      .map((e) => ({ ...e, id: newId(), date }));
-    await db.foodLog.bulkAdd(clones);
+    const prev = await api.getDay(yesterday, yesterday);
+    await Promise.all(
+      prev.entries
+        .filter((e) => e.meal === meal)
+        .map((e) =>
+          api.addLogEntry({
+            date,
+            meal: e.meal,
+            foodId: e.foodId,
+            servings: e.servings,
+            caloriesCached: e.caloriesCached,
+          }),
+        ),
+    );
+    bump();
   }
 
   return (
@@ -195,7 +202,7 @@ function MealSection({
                   <button
                     type="button"
                     aria-label={`Remove ${e.food?.name ?? 'entry'}`}
-                    onClick={() => db.foodLog.delete(e.id)}
+                    onClick={() => api.deleteLogEntry(e.id).then(bump)}
                     className="rounded-full p-1 text-ink-muted hover:bg-surface hover:text-over"
                   >
                     <XIcon className="h-4 w-4" />
@@ -212,33 +219,16 @@ function MealSection({
 
 export default function Today({ profile }: { profile: Profile }) {
   const date = useUI((s) => s.date);
+  const bump = useUI((s) => s.bump);
 
-  const day = useLiveQuery(
-    async () => {
-      const [entries, exercises, yesterdayEntries, weight] = await Promise.all([
-        db.foodLog.where('date').equals(date).toArray(),
-        db.exerciseLog.where('date').equals(date).toArray(),
-        db.foodLog.where('date').equals(shiftDay(date, -1)).toArray(),
-        latestWeight(),
-      ]);
-      const foods = await db.foods.bulkGet([...new Set(entries.map((e) => e.foodId))]);
-      const foodMap = new Map(foods.filter((f): f is Food => !!f).map((f) => [f.id, f]));
-      const joined: JoinedEntry[] = entries.map((e) => ({ ...e, food: foodMap.get(e.foodId) }));
-      return { joined, exercises, yesterdayEntries, weightKg: weight?.weightKg };
-    },
-    [date],
-  );
+  const day = useData(() => api.getDay(date, shiftDay(date, -1)), [date]);
 
-  const joined = day?.joined ?? [];
+  const joined = day?.entries ?? [];
   const exercises = day?.exercises ?? [];
   const foodCalories = joined.reduce((sum, e) => sum + e.caloriesCached, 0);
   const exerciseCalories = exercises.reduce((sum, e) => sum + e.caloriesBurned, 0);
-  const { budget } = computeBudget(profile, date, day?.weightKg);
-
-  const yesterdayByMeal = new Map<Meal, number>();
-  for (const e of day?.yesterdayEntries ?? []) {
-    yesterdayByMeal.set(e.meal, (yesterdayByMeal.get(e.meal) ?? 0) + 1);
-  }
+  const { budget } = computeBudget(profile, date, day?.latestWeightKg);
+  const yesterdayByMeal = day?.yesterdayMealCounts ?? {};
 
   return (
     <div className="pt-[env(safe-area-inset-top)]">
@@ -251,7 +241,7 @@ export default function Today({ profile }: { profile: Profile }) {
           meal={meal}
           date={date}
           entries={joined.filter((e) => e.meal === meal)}
-          yesterdayCount={yesterdayByMeal.get(meal) ?? 0}
+          yesterdayCount={yesterdayByMeal[meal] ?? 0}
         />
       ))}
 
@@ -291,7 +281,7 @@ export default function Today({ profile }: { profile: Profile }) {
                   <button
                     type="button"
                     aria-label={`Remove ${e.name}`}
-                    onClick={() => db.exerciseLog.delete(e.id)}
+                    onClick={() => api.deleteExercise(e.id).then(bump)}
                     className="rounded-full p-1 text-ink-muted hover:bg-surface hover:text-over"
                   >
                     <XIcon className="h-4 w-4" />

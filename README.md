@@ -1,31 +1,20 @@
 # Bend It!
 
-A focused calorie tracker. One loop, nothing else:
-
-> Set a daily calorie **budget** → **log** what you eat and the exercise you do →
-> see how much of the budget is **left**.
-
-## Stack
-
-React + Vite + TypeScript · Tailwind CSS · React Router · Zustand · Dexie.js
-(IndexedDB, offline-first) · Recharts · `@zxing/browser` barcode scanning ·
-Open Food Facts for packaged foods · ~180 bundled seed foods.
-
-All data is local to the browser (IndexedDB) — there is no account and no server
-database.
+A simple calorie tracker. Set a daily calorie budget, log what you eat and the
+exercise you do, and see how much of the budget is left.
 
 ## Develop
 
 ```sh
 npm install
-npm run dev      # local dev server
-npm test         # budget-engine unit tests (Vitest)
-npm run build    # typecheck + production build
+cd server && npm install && cd ..
+BASIC_AUTH_PASSWORD=dev node server/index.mjs   # API + database on :8080
+npm run dev                                     # UI on :5173 (proxies /api)
+npm test
 ```
 
 ## Deploy
 
-Merges to `main` deploy to Fly.io via GitHub Actions (`.github/workflows/deploy.yml`);
-the workflow can also be run manually from the Actions tab. The app is a single
-small always-on machine (shared-cpu-1x, 256MB) serving the static bundle via
-nginx, with a 1GB volume mounted at `/data` for future persistence needs.
+Merging to `main` deploys automatically (GitHub Actions → Fly.io). The workflow
+can also be run manually from the Actions tab. The site is password-protected;
+set the password with `fly secrets set BASIC_AUTH_PASSWORD=... --app bendit`.

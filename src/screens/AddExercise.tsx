@@ -1,7 +1,7 @@
 import { useState } from 'react';
-import { useLiveQuery } from 'dexie-react-hooks';
 import { useNavigate, useSearchParams } from 'react-router-dom';
-import { db, latestWeight, newId } from '../db/db';
+import { api } from '../lib/api';
+import { useData } from '../lib/useData';
 import { todayStr } from '../lib/dates';
 import { caloriesBurned, EXERCISES, type ExerciseType } from '../lib/mets';
 import { formatCalories } from '../lib/units';
@@ -15,9 +15,10 @@ export default function AddExercise({ profile }: { profile: Profile }) {
   const [params] = useSearchParams();
   const date = params.get('date') ?? todayStr();
   const setDate = useUI((s) => s.setDate);
+  const bump = useUI((s) => s.bump);
 
-  const weight = useLiveQuery(latestWeight, []);
-  const weightKg = weight?.weightKg ?? profile.startWeightKg;
+  const weights = useData(() => api.getWeights(), []);
+  const weightKg = weights?.[weights.length - 1]?.weightKg ?? profile.startWeightKg;
 
   const [query, setQuery] = useState('');
   const [selected, setSelected] = useState<ExerciseType | null>(null);
@@ -47,13 +48,8 @@ export default function AddExercise({ profile }: { profile: Profile }) {
   }
 
   async function save(name: string, kcal: number) {
-    await db.exerciseLog.add({
-      id: newId(),
-      date,
-      name,
-      minutes,
-      caloriesBurned: kcal,
-    });
+    await api.addExercise({ date, name, minutes, caloriesBurned: kcal });
+    bump();
     setDate(date);
     navigate('/');
   }

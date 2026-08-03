@@ -1,6 +1,7 @@
 import { useState } from 'react';
-import { useLiveQuery } from 'dexie-react-hooks';
-import { db, latestWeight, resetAllData } from '../db/db';
+import { api } from '../lib/api';
+import { useData } from '../lib/useData';
+import { useUI } from '../store/ui';
 import { computeBudget } from '../lib/budget';
 import { todayStr } from '../lib/dates';
 import { cmToFtIn, ftInToCm, formatCalories, kgToLb, lbToKg } from '../lib/units';
@@ -25,7 +26,9 @@ const field = 'w-full rounded-xl border border-line bg-surface px-3 py-2.5 text-
 const label = 'flex flex-col gap-1 text-sm text-ink-secondary';
 
 export default function More({ profile }: { profile: Profile }) {
-  const weight = useLiveQuery(latestWeight, []);
+  const bump = useUI((s) => s.bump);
+  const weights = useData(() => api.getWeights(), []);
+  const latestKg = weights?.[weights.length - 1]?.weightKg;
 
   const [units, setUnits] = useState<Units>(profile.units);
   const [sex, setSex] = useState<Sex>(profile.sex);
@@ -62,7 +65,7 @@ export default function More({ profile }: { profile: Profile }) {
     activityLevel: activity,
     weeklyRateKg: closestRate.value,
   };
-  const preview = computeBudget(draft, todayStr(), weight?.weightKg);
+  const preview = computeBudget(draft, todayStr(), latestKg);
 
   async function save() {
     const goal = Number(goalInput);
@@ -72,7 +75,7 @@ export default function More({ profile }: { profile: Profile }) {
           ? lbToKg(goal)
           : goal
         : profile.goalWeightKg;
-    await db.profile.put({
+    await api.putProfile({
       ...profile,
       sex,
       birthDate,
@@ -82,13 +85,15 @@ export default function More({ profile }: { profile: Profile }) {
       weeklyRateKg: closestRate.value,
       units,
     });
+    bump();
     setSaved(true);
     setTimeout(() => setSaved(false), 2000);
   }
 
   async function reset() {
     if (window.confirm('Delete your profile and all logged data? This cannot be undone.')) {
-      await resetAllData();
+      await api.resetAll();
+      bump();
     }
   }
 

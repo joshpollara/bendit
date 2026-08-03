@@ -1,5 +1,6 @@
 import { useState } from 'react';
-import { db, newId, PROFILE_ID } from '../db/db';
+import { api } from '../lib/api';
+import { useUI } from '../store/ui';
 import { computeBudget } from '../lib/budget';
 import { todayStr } from '../lib/dates';
 import { cmToFtIn, formatCalories, ftInToCm, kgToLb, lbToKg } from '../lib/units';
@@ -25,6 +26,7 @@ const choice = (active: boolean) =>
 const field = 'rounded-xl border border-line bg-card px-3 py-3 text-center text-xl font-semibold tabular-nums';
 
 export default function Onboarding() {
+  const bump = useUI((s) => s.bump);
   const [stepIndex, setStepIndex] = useState(0);
   const [units, setUnits] = useState<Units>('imperial');
   const [sex, setSex] = useState<Sex | null>(null);
@@ -82,17 +84,15 @@ export default function Onboarding() {
 
   async function finish() {
     if (!draft || !goalWeightKg) return;
-    const today = todayStr();
-    await db.transaction('rw', [db.profile, db.weights], async () => {
-      await db.profile.put({
-        id: PROFILE_ID,
-        ...draft,
-        goalWeightKg,
-        units,
-        createdAt: new Date().toISOString(),
-      });
-      await db.weights.put({ id: newId(), date: today, weightKg: draft.startWeightKg });
+    await api.putProfile({
+      id: 'me',
+      ...draft,
+      goalWeightKg,
+      units,
+      createdAt: new Date().toISOString(),
     });
+    await api.putWeight({ date: todayStr(), weightKg: draft.startWeightKg });
+    bump();
   }
 
   const unitToggle = (

@@ -1,6 +1,6 @@
-import { useLiveQuery } from 'dexie-react-hooks';
 import { BrowserRouter, Navigate, Route, Routes } from 'react-router-dom';
-import { getProfile } from './db/db';
+import { api } from './lib/api';
+import { useData } from './lib/useData';
 import type { Profile } from './types';
 import { STRINGS } from './lib/strings';
 import TabBar from './components/TabBar';
@@ -41,8 +41,8 @@ function Shell({ profile }: { profile: Profile }) {
 }
 
 export default function App() {
-  const profile = useLiveQuery(getProfile, [], 'loading' as const);
-  if (profile === 'loading') return <Splash />;
-  if (!profile) return <Onboarding />;
+  const profile = useData(() => api.getProfile(), []);
+  if (profile === undefined) return <Splash />;
+  if (profile === null) return <Onboarding />;
   return <Shell profile={profile} />;
 }

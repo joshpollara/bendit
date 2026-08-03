@@ -1,11 +1,12 @@
 import { lazy, Suspense, useEffect, useState } from 'react';
-import { useLiveQuery } from 'dexie-react-hooks';
 import { useSearchParams } from 'react-router-dom';
 import { subMonths, subYears, format } from 'date-fns';
-import { db, newId } from '../db/db';
+import { api } from '../lib/api';
+import { useData } from '../lib/useData';
 import { DAY, shortDate, todayStr } from '../lib/dates';
 import { formatWeight, kgToLb, lbToKg } from '../lib/units';
 import { STRINGS } from '../lib/strings';
+import { useUI } from '../store/ui';
 import type { Profile } from '../types';
 import Sheet from '../components/Sheet';
 import { PlusIcon, XIcon } from '../components/Icons';
@@ -31,8 +32,9 @@ export default function Weight({ profile }: { profile: Profile }) {
   const [logging, setLogging] = useState(false);
   const [weightInput, setWeightInput] = useState('');
   const [dateInput, setDateInput] = useState(todayStr());
+  const bump = useUI((s) => s.bump);
 
-  const entries = useLiveQuery(() => db.weights.orderBy('date').toArray(), []) ?? [];
+  const entries = useData(() => api.getWeights(), []) ?? [];
 
   // ?log=1 (from quick-add) opens the log sheet immediately.
   useEffect(() => {
@@ -66,8 +68,8 @@ export default function Weight({ profile }: { profile: Profile }) {
     const value = Number(weightInput);
     if (!Number.isFinite(value) || value <= 0) return;
     const weightKg = profile.units === 'imperial' ? lbToKg(value) : value;
-    const existing = await db.weights.where('date').equals(dateInput).first();
-    await db.weights.put({ id: existing?.id ?? newId(), date: dateInput, weightKg });
+    await api.putWeight({ date: dateInput, weightKg });
+    bump();
     setLogging(false);
   }
 
@@ -150,7 +152,7 @@ export default function Weight({ profile }: { profile: Profile }) {
                 <button
                   type="button"
                   aria-label={`Delete weight from ${e.date}`}
-                  onClick={() => db.weights.delete(e.id)}
+                  onClick={() => api.deleteWeight(e.id).then(bump)}
                   className="rounded-full p-1 text-ink-muted hover:bg-surface hover:text-over"
                 >
                   <XIcon className="h-4 w-4" />

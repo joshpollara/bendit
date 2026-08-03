@@ -22,7 +22,7 @@ export default function ServingSheet({
   const calories = Math.round(food.caloriesPerServing * servings);
 
   const macro = (label: string, grams?: number) =>
-    grams === undefined ? null : (
+    grams == null ? null : (
       <span>
         {label} {(grams * servings).toFixed(1).replace(/\.0$/, '')}g
       </span>

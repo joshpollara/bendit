@@ -1,9 +1,9 @@
 import { lazy, Suspense, useEffect, useRef, useState } from 'react';
-import { useLiveQuery } from 'dexie-react-hooks';
 import { useNavigate, useSearchParams } from 'react-router-dom';
-import { db, newId } from '../db/db';
+import { api } from '../lib/api';
+import { useData } from '../lib/useData';
 import { todayStr } from '../lib/dates';
-import { lookupBarcode, searchOpenFoodFacts } from '../lib/openfoodfacts';
+import { lookupBarcodeRemote, searchOpenFoodFacts } from '../lib/openfoodfacts';
 import { formatCalories } from '../lib/units';
 import { STRINGS } from '../lib/strings';
 import { useUI } from '../store/ui';
@@ -78,7 +78,7 @@ function CreateFoodForm({
 
   async function save() {
     const food: Food = {
-      id: `custom-${newId()}`,
+      id: `custom-${crypto.randomUUID()}`,
       name: name.trim(),
       brand: brand.trim() || undefined,
       barcode: prefillBarcode,
@@ -89,7 +89,7 @@ function CreateFoodForm({
       fat: num(fat),
       source: 'custom',
     };
-    await db.foods.add(food);
+    await api.saveFoods(food);
     onCreated(food);
   }
 
@@ -141,6 +141,7 @@ export default function AddFood() {
   const navigate = useNavigate();
   const [params] = useSearchParams();
   const setDate = useUI((s) => s.setDate);
+  const bump = useUI((s) => s.bump);
 
   const meal = (params.get('meal') as Meal | null) ?? defaultMeal();
   const date = params.get('date') ?? todayStr();
@@ -156,13 +157,7 @@ export default function AddFood() {
 
   const q = query.trim().toLowerCase();
 
-  const local = useLiveQuery(
-    async () => {
-      if (!q) return [];
-      return rankFoods(await db.foods.toArray(), q);
-    },
-    [q],
-  );
+  const local = useData(async () => (q ? rankFoods(await api.searchFoods(q), q) : []), [q]);
   const localRef = useRef<Food[]>([]);
   localRef.current = local ?? [];
 
@@ -185,6 +180,7 @@ export default function AddFood() {
     setOffState('loading');
     try {
       const results = await searchOpenFoodFacts(term);
+      if (results.length > 0) await api.saveFoods(results); // cache server-side
       if (queryRef.current !== term) return; // stale response
       const localIds = new Set(localRef.current.map((f) => f.id));
       const localNames = new Set(localRef.current.map((f) => `${f.name}|${f.brand ?? ''}`.toLowerCase()));
@@ -203,7 +199,11 @@ export default function AddFood() {
     setScanning(false);
     setBanner(null);
     try {
-      const food = await lookupBarcode(code);
+      let food = await api.foodByBarcode(code);
+      if (!food) {
+        food = await lookupBarcodeRemote(code);
+        if (food) await api.saveFoods(food);
+      }
       if (food) {
         setSelected(food);
       } else {
@@ -217,34 +217,20 @@ export default function AddFood() {
   }
 
   async function addEntry(food: Food, servings: number, chosenMeal: Meal) {
-    await db.foodLog.add({
-      id: newId(),
+    await api.addLogEntry({
       date,
       meal: chosenMeal,
       foodId: food.id,
       servings,
       caloriesCached: Math.round(food.caloriesPerServing * servings),
     });
+    bump();
     setDate(date);
     navigate('/');
   }
 
-  const recents = useLiveQuery(async () => {
-    const log = await db.foodLog.orderBy('date').reverse().limit(200).toArray();
-    const seen = new Set<string>();
-    const ids: string[] = [];
-    for (const e of log) {
-      if (!seen.has(e.foodId)) {
-        seen.add(e.foodId);
-        ids.push(e.foodId);
-        if (ids.length >= 25) break;
-      }
-    }
-    const foods = await db.foods.bulkGet(ids);
-    return foods.filter((f): f is Food => !!f);
-  }, []);
-
-  const mine = useLiveQuery(() => db.foods.where('source').equals('custom').toArray(), []);
+  const recents = useData(() => api.recentFoods(), []);
+  const mine = useData(() => api.customFoods(), []);
 
   const tabs: { key: Tab; label: string }[] = [
     { key: 'search', label: 'Search' },

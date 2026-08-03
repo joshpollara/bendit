@@ -1,10 +1,8 @@
 import type { Food } from '../types';
-import { db } from '../db/db';
 
-// Open Food Facts integration (SPEC.md §6.2–6.3). Results are cached into
-// IndexedDB so a second scan or search hit works offline. OFF serving data is
-// crowd-sourced and spotty — the serving the calories are based on is always
-// shown and editable downstream.
+// Open Food Facts lookups. Persistence is the server's job — callers save
+// results via the API. OFF serving data is crowd-sourced and spotty, so the
+// serving the calories are based on is always shown and editable downstream.
 
 const OFF_FIELDS = 'code,product_name,brands,serving_size,serving_quantity,nutriments';
 
@@ -76,24 +74,14 @@ function mapProduct(p: OffProduct, barcode?: string): Food | null {
   };
 }
 
-async function cache(food: Food): Promise<Food> {
-  await db.foods.put(food);
-  return food;
-}
-
-export async function lookupBarcode(barcode: string): Promise<Food | null> {
-  const cached = await db.foods.where('barcode').equals(barcode).first();
-  if (cached) return cached;
-
+export async function lookupBarcodeRemote(barcode: string): Promise<Food | null> {
   const res = await fetch(
     `https://world.openfoodfacts.org/api/v2/product/${encodeURIComponent(barcode)}.json?fields=${OFF_FIELDS}`,
   );
   if (!res.ok) return null;
-  const data = (await res.json()) as { status?: number; product?: OffProduct };
+  const data = (await res.json()) as { product?: OffProduct };
   if (!data.product) return null;
-
-  const food = mapProduct(data.product, barcode);
-  return food ? cache(food) : null;
+  return mapProduct(data.product, barcode);
 }
 
 export async function searchOpenFoodFacts(query: string): Promise<Food[]> {
@@ -103,9 +91,7 @@ export async function searchOpenFoodFacts(query: string): Promise<Food[]> {
   const res = await fetch(url);
   if (!res.ok) return [];
   const data = (await res.json()) as { products?: OffProduct[] };
-  const foods = (data.products ?? [])
+  return (data.products ?? [])
     .map((p) => mapProduct(p))
     .filter((food): food is Food => food !== null);
-  await db.foods.bulkPut(foods);
-  return foods;
 }
