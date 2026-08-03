@@ -16,6 +16,8 @@ const FOODS = [
   ['usda-9', 'usda', 'Sweet potato, cooked, baked in skin, flesh, without salt', null, 90],
   ['usda-10', 'usda', 'Avocados, raw, all commercial varieties', null, 160],
   ['usda-12', 'usda', 'Potatoes, boiled, cooked in skin, flesh, without salt', null, 87],
+  ['usda-13', 'usda', 'Chicken, skin (drumsticks and thighs), cooked, roasted', null, 462],
+  ['usda-14', 'usda', 'Chicken, broilers or fryers, drumstick, meat and skin, cooked, roasted', null, 191],
   ['off-1', 'openfoodfacts', 'Chicken Breast Fillets', 'Tesco', 106],
   ['off-2', 'openfoodfacts', 'Greek Style Yogurt', 'Fage', 97],
   ['off-3', 'openfoodfacts', 'Chocolate chip cookies', 'Albert Heijn', 480],
@@ -104,6 +106,19 @@ describe('searchFoods — what a meal photo actually sends', () => {
   it('handles two-word foods where both words matter', () => {
     expect(top('brown rice')).toBe('Rice, brown, long-grain, cooked');
     expect(top('white rice')).toBe('Rice, white, long-grain, regular, enriched, cooked');
+  });
+
+  it('does not answer "chicken" with the skin off a chicken', () => {
+    // Real result from a photographed dinner: "roasted chicken drumstick"
+    // matched "Chicken, skin (drumsticks and thighs)" at 462 kcal/100g, which
+    // was two thirds of the whole meal's calories. The drumstick is 191.
+    const match = top('roasted chicken drumstick');
+    expect(match).toMatch(/meat and skin/);
+    expect(match).not.toMatch(/^Chicken, skin/);
+  });
+
+  it('still finds the skin when the skin is what was asked for', () => {
+    expect(top('chicken skin')).toMatch(/^Chicken, skin/);
   });
 
   it('does not answer "potato" with a different vegetable that contains the word', () => {

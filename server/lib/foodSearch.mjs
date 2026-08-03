@@ -120,6 +120,22 @@ const DERIVED_HEAD = new Set([
 ]);
 
 /**
+ * Parts that are catalogued separately from the food they came from, and whose
+ * nutrition is nothing like it. USDA lists "Chicken, skin (drumsticks and
+ * thighs), cooked, roasted" at 462 kcal/100g beside the drumstick itself at
+ * 191 — and the skin row won, because its name is shorter and leads with the
+ * word asked for. Nobody photographing dinner means the skin.
+ *
+ * Not penalised when the name also says "meat": USDA writes the whole piece as
+ * "meat and skin", which is exactly what a drumstick is.
+ */
+const PART_WORDS = new Set([
+  'skin', 'giblets', 'gizzard', 'liver', 'kidney', 'heart', 'neck', 'bone',
+  'bones', 'marrow', 'rind', 'peel', 'hull', 'bran', 'germ', 'tallow', 'lard',
+  'drippings', 'shell', 'shells',
+]);
+
+/**
  * bm25 is a relevance score, not a food score. These adjustments encode what
  * bm25 can't know: that a short name is usually the plain form of an
  * ingredient, and that a row whose name contains every query word is a better
@@ -149,6 +165,15 @@ export function rankRows(rows, query) {
       // wrong row however well the words line up.
       const head = tokenize(name.split(',')[0]);
       if (head.some((word) => DERIVED_HEAD.has(word) && !tokens.includes(word))) score -= 7;
+
+      // A row for a part of the animal, when the query asked for the animal.
+      const words = tokenize(name);
+      if (
+        !words.includes('meat') &&
+        words.some((word) => PART_WORDS.has(word) && !tokens.includes(word))
+      ) {
+        score -= 6;
+      }
 
       // A head that says nothing the query didn't is the plain form of the
       // food. "boiled potatoes" otherwise matched "Sweet potato, cooked,
