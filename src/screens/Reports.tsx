@@ -20,6 +20,7 @@ import GoalTrack from '../components/GoalTrack';
 import ExpenditureCard from '../components/ExpenditureCard';
 import LoggingCalendar from '../components/LoggingCalendar';
 import { measureExpenditure } from '../lib/expenditure';
+import { findPatterns } from '../lib/patterns';
 import BodyFigure from '../components/BodyFigure';
 
 // recharts is heavy; keep it out of the main bundle.
@@ -107,6 +108,7 @@ export default function Reports({ profile }: { profile: Profile }) {
       : undefined;
 
   const measured = measureExpenditure(days, trend);
+  const patterns = findPatterns(days, profile.proteinTargetG);
 
   // What the logged calories imply per week, for comparison with the scale.
   const impliedRateKg =
@@ -345,6 +347,33 @@ export default function Reports({ profile }: { profile: Profile }) {
             )}
             </div>
           </Suspense>
+
+          {patterns.length > 0 && (
+            <section className={card}>
+              <h2 className="mb-1 font-semibold">Patterns</h2>
+              <p className="mb-3 text-xs text-ink-muted">
+                Only differences big enough, and consistent enough, to be worth knowing.
+              </p>
+              <ul className="flex flex-col gap-2">
+                {patterns.map((p) => (
+                  <li key={p.id} className="flex gap-2 text-sm">
+                    <span
+                      aria-hidden="true"
+                      className={`mt-1.5 h-2 w-2 shrink-0 rounded-full ${
+                        p.good ? 'bg-good' : 'bg-amber'
+                      }`}
+                    />
+                    <span className="text-ink-secondary">
+                      {p.text}{' '}
+                      <span className="whitespace-nowrap text-xs text-ink-muted">
+                        ({p.sampleSize} days)
+                      </span>
+                    </span>
+                  </li>
+                ))}
+              </ul>
+            </section>
+          )}
 
           {days.length > 0 && (
             <LoggingCalendar
