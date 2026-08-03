@@ -10,6 +10,7 @@ import { useUI } from '../store/ui';
 import type { Profile } from '../types';
 import Sheet from '../components/Sheet';
 import ProgressPhotos from '../components/ProgressPhotos';
+import Measurements from '../components/Measurements';
 import { PlusIcon, XIcon } from '../components/Icons';
 
 // recharts is heavy; split it out of the main bundle.
@@ -139,6 +140,8 @@ export default function Weight({ profile }: { profile: Profile }) {
           </Suspense>
         )}
       </section>
+
+      <Measurements units={profile.units} />
 
       <ProgressPhotos />
 
