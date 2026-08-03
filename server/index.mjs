@@ -248,11 +248,25 @@ const seedCount = db.prepare("SELECT COUNT(*) AS c FROM foods WHERE source = 'se
 if (seedCount === 0) {
   const seeds = JSON.parse(fs.readFileSync(path.join(__dirname, 'seedFoods.json'), 'utf8'));
   const ins = db.prepare(`INSERT OR REPLACE INTO foods
-    (id, name, brand, barcode, servingLabel, servingGrams, caloriesPerServing, protein, carbs, fat, source)
-    VALUES (@id, @name, @brand, @barcode, @servingLabel, @servingGrams, @caloriesPerServing, @protein, @carbs, @fat, @source)`);
+    (id, name, brand, barcode, servingLabel, servingGrams, caloriesPerServing, protein, carbs, fat,
+     source, kcal100, protein100, carbs100, fat100, updatedAt)
+    VALUES (@id, @name, @brand, @barcode, @servingLabel, @servingGrams, @caloriesPerServing, @protein,
+     @carbs, @fat, @source, @kcal100, @protein100, @carbs100, @fat100, @updatedAt)`);
   db.transaction(() => {
     for (const f of seeds) {
-      ins.run({ brand: null, barcode: null, servingGrams: null, protein: null, carbs: null, fat: null, ...f });
+      const row = {
+        brand: null, barcode: null, servingGrams: null, protein: null, carbs: null, fat: null, ...f,
+      };
+      // The per-100g form, derived here rather than left to the next startup's
+      // backfill. Seeding runs after that backfill, so on a brand-new database
+      // the seed foods had no canonical nutrition until the server was
+      // restarted — and until then a photographed meal could match none of them.
+      ins.run({
+        ...row,
+        kcal100: null, protein100: null, carbs100: null, fat100: null,
+        ...(per100FromServing(row) ?? {}),
+        updatedAt: new Date().toISOString(),
+      });
     }
   })();
   console.log(`Seeded ${seeds.length} foods`);
