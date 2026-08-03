@@ -1,0 +1,47 @@
+@import 'tailwindcss';
+
+/*
+ * Bend It! theme — light, uncluttered, steel-blue accent.
+ * Chart-facing colors (#2a70a0, #2e7d4f, #c03b2d) validated with the dataviz
+ * palette script against the #fafaf8 surface; amber is decorative only and
+ * never encodes data.
+ */
+@theme {
+  --color-surface: #fafaf8;
+  --color-card: #ffffff;
+  --color-ink: #1f2428;
+  --color-ink-secondary: #5b6570;
+  --color-ink-muted: #8a939c;
+  --color-line: #e7e5e0;
+  --color-accent: #2a70a0;
+  --color-accent-deep: #1f5678;
+  --color-accent-soft: #e8f0f5;
+  --color-amber: #e8a13d;
+  --color-good: #2e7d4f;
+  --color-good-soft: #e9f3ed;
+  --color-over: #c03b2d;
+  --color-over-soft: #f8ebe9;
+
+  --font-sans: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, 'Helvetica Neue', Arial, sans-serif;
+}
+
+html {
+  background: var(--color-surface);
+}
+
+body {
+  color: var(--color-ink);
+  font-family: var(--font-sans);
+  -webkit-font-smoothing: antialiased;
+}
+
+/* Hide number-input spinners; the app supplies its own steppers. */
+input[type='number']::-webkit-outer-spin-button,
+input[type='number']::-webkit-inner-spin-button {
+  -webkit-appearance: none;
+  margin: 0;
+}
+input[type='number'] {
+  -moz-appearance: textfield;
+  appearance: textfield;
+}
