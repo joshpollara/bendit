@@ -150,36 +150,111 @@ const AUTH_USER = process.env.BASIC_AUTH_USER || 'bendit';
 const sha = (s) => crypto.createHash('sha256').update(s).digest();
 const safeEqual = (a, b) => crypto.timingSafeEqual(sha(a), sha(b));
 
-// PWA assets must be reachable without credentials: Chrome fetches manifest
-// icons credential-less, and without them installs degrade to a browser
-// shortcut. Nothing sensitive lives in these files.
-const PUBLIC_PATHS = new Set([
-  '/manifest.webmanifest',
-  '/sw.js',
-  '/icon-192.png',
-  '/icon-512.png',
-  '/icon-512-maskable.png',
-  '/apple-touch-icon.png',
-  '/favicon.ico',
-]);
+// A session is a signed expiry, nothing more — there's one user, so there's no
+// session state worth storing. The signing key is derived from the password, so
+// changing the password signs every device out, which is the behaviour you want.
+const SESSION_COOKIE = 'bendit_session';
+const SESSION_DAYS = 365;
+const sessionKey = sha(`bendit-session:${AUTH_PASS ?? ''}`);
 
-// Fails closed: with no BASIC_AUTH_PASSWORD set, every request is denied.
-app.use((req, res, next) => {
-  if (req.method === 'GET' && PUBLIC_PATHS.has(req.path)) return next();
-  let ok = false;
+const signature = (expiry) =>
+  crypto.createHmac('sha256', sessionKey).update(String(expiry)).digest('base64url');
+
+function issueSession(res, secure) {
+  const expiry = Date.now() + SESSION_DAYS * 86_400_000;
+  res.setHeader(
+    'Set-Cookie',
+    [
+      `${SESSION_COOKIE}=${expiry}.${signature(expiry)}`,
+      'Path=/',
+      'HttpOnly',
+      'SameSite=Lax',
+      `Max-Age=${SESSION_DAYS * 86_400}`,
+      secure ? 'Secure' : '',
+    ]
+      .filter(Boolean)
+      .join('; '),
+  );
+}
+
+function readCookie(req, name) {
+  const header = req.headers.cookie;
+  if (!header) return null;
+  for (const part of header.split(';')) {
+    const [key, ...rest] = part.trim().split('=');
+    if (key === name) return rest.join('=');
+  }
+  return null;
+}
+
+function hasValidSession(req) {
+  if (!AUTH_PASS) return false;
+  const value = readCookie(req, SESSION_COOKIE);
+  if (!value) return false;
+  const [rawExpiry, mac] = value.split('.');
+  const expiry = Number(rawExpiry);
+  if (!Number.isFinite(expiry) || expiry < Date.now() || !mac) return false;
+  const expected = signature(expiry);
+  return (
+    mac.length === expected.length && crypto.timingSafeEqual(Buffer.from(mac), Buffer.from(expected))
+  );
+}
+
+function passwordMatches(password) {
+  return typeof password === 'string' && !!AUTH_PASS && safeEqual(password, AUTH_PASS);
+}
+
+// Still supported, so curl, scripts and backup downloads keep working unchanged.
+function hasValidBasicAuth(req) {
   const [scheme, cred] = (req.headers.authorization ?? '').split(' ');
-  if (AUTH_PASS && scheme === 'Basic' && cred) {
-    const decoded = Buffer.from(cred, 'base64').toString();
-    const i = decoded.indexOf(':');
-    if (i > 0) {
-      ok = safeEqual(decoded.slice(0, i), AUTH_USER) && safeEqual(decoded.slice(i + 1), AUTH_PASS);
-    }
+  if (!AUTH_PASS || scheme !== 'Basic' || !cred) return false;
+  const decoded = Buffer.from(cred, 'base64').toString();
+  const i = decoded.indexOf(':');
+  return i > 0 && safeEqual(decoded.slice(0, i), AUTH_USER) && safeEqual(decoded.slice(i + 1), AUTH_PASS);
+}
+
+// One password, so brute force is the only attack worth blunting.
+const loginAttempts = [];
+function tooManyAttempts() {
+  const cutoff = Date.now() - 60_000;
+  while (loginAttempts.length && loginAttempts[0] < cutoff) loginAttempts.shift();
+  return loginAttempts.length >= 10;
+}
+
+const isSecure = (req) => req.secure || req.headers['x-forwarded-proto'] === 'https';
+
+app.get('/api/session', (req, res) => {
+  res.json({ authed: hasValidSession(req) || hasValidBasicAuth(req), configured: !!AUTH_PASS });
+});
+
+app.post('/api/login', (req, res) => {
+  if (!AUTH_PASS) return res.status(503).json({ error: 'No password is configured on the server.' });
+  if (tooManyAttempts()) {
+    return res.status(429).json({ error: 'Too many attempts. Wait a minute and try again.' });
   }
-  if (!ok) {
-    res.set('WWW-Authenticate', 'Basic realm="Bend It!"');
-    return res.status(401).send('Authentication required');
+  if (!passwordMatches(req.body?.password)) {
+    loginAttempts.push(Date.now()); // only failures count toward the limit
+    return res.status(401).json({ error: "That password doesn't match." });
   }
-  next();
+  loginAttempts.length = 0; // a correct password clears the slate
+  issueSession(res, isSecure(req));
+  res.json({ ok: true });
+});
+
+app.post('/api/logout', (_req, res) => {
+  res.setHeader('Set-Cookie', `${SESSION_COOKIE}=; Path=/; HttpOnly; SameSite=Lax; Max-Age=0`);
+  res.json({ ok: true });
+});
+
+// Only the API is guarded. The app shell and its assets are public — they hold
+// no data, and the login screen has to load before anyone can sign in. Every
+// byte of personal data goes through /api.
+//
+// Deliberately no WWW-Authenticate header on failure: that header is what makes
+// the browser throw its own login box up on every cold start of the app.
+app.use('/api', (req, res, next) => {
+  if (hasValidSession(req) || hasValidBasicAuth(req)) return next();
+  res.status(401).json({ error: 'Not signed in.' });
 });
 
 // ——— helpers ———

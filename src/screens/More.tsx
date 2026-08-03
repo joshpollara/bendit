@@ -318,6 +318,24 @@ export default function More({ profile }: { profile: Profile }) {
       </section>
 
       <section className={card}>
+        <h2 className="mb-1 font-semibold">This device</h2>
+        <p className="mb-3 text-xs text-ink-muted">
+          You're signed in on this device for a year at a time. Signing out means entering the
+          password again next time.
+        </p>
+        <button
+          type="button"
+          onClick={async () => {
+            await api.logout();
+            window.location.reload();
+          }}
+          className="w-full rounded-xl border border-line py-2.5 text-sm font-semibold text-ink-secondary"
+        >
+          Sign out
+        </button>
+      </section>
+
+      <section className={card}>
         <h2 className="mb-1 font-semibold">Start over</h2>
         <p className="mb-3 text-xs text-ink-muted">
           Deletes your profile, food log, exercise, and weights. Seed foods stay.

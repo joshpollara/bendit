@@ -1,10 +1,12 @@
+import { useEffect, useState } from 'react';
 import { BrowserRouter, Navigate, Route, Routes } from 'react-router-dom';
-import { api } from './lib/api';
+import { api, UNAUTHORIZED_EVENT } from './lib/api';
 import { useData } from './lib/useData';
 import type { Profile } from './types';
 import { STRINGS } from './lib/strings';
 import TabBar from './components/TabBar';
 import SideNav from './components/SideNav';
+import Login from './screens/Login';
 import Onboarding from './screens/Onboarding';
 import Today from './screens/Today';
 import AddFood from './screens/AddFood';
@@ -49,6 +51,26 @@ function Shell({ profile }: { profile: Profile }) {
 }
 
 export default function App() {
+  const [authed, setAuthed] = useState<boolean | null>(null);
+
+  useEffect(() => {
+    api
+      .session()
+      .then((s) => setAuthed(s.authed))
+      .catch(() => setAuthed(false));
+    // A session that expires mid-use drops straight back to the login screen
+    // rather than leaving a half-loaded app behind.
+    const onUnauthorized = () => setAuthed(false);
+    window.addEventListener(UNAUTHORIZED_EVENT, onUnauthorized);
+    return () => window.removeEventListener(UNAUTHORIZED_EVENT, onUnauthorized);
+  }, []);
+
+  if (authed === null) return <Splash />;
+  if (!authed) return <Login onSignedIn={() => setAuthed(true)} />;
+  return <SignedIn />;
+}
+
+function SignedIn() {
   const profile = useData(() => api.getProfile(), []);
   if (profile === undefined) return <Splash />;
   if (profile === null) return <Onboarding />;

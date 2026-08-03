@@ -69,12 +69,23 @@ export interface ProgressPhoto {
   createdAt: string;
 }
 
+/** Fires when the server says we're not signed in, so the app can react once. */
+export const UNAUTHORIZED_EVENT = 'bendit:unauthorized';
+
 async function j<T>(path: string, init?: RequestInit): Promise<T> {
   const res = await fetch(path, {
     ...init,
     headers: init?.body ? { 'Content-Type': 'application/json' } : undefined,
   });
-  if (!res.ok) throw new Error(`${res.status} ${res.statusText}`);
+  if (res.status === 401) {
+    window.dispatchEvent(new Event(UNAUTHORIZED_EVENT));
+    throw new Error('Not signed in.');
+  }
+  if (!res.ok) {
+    // Server errors carry a human-readable message; fall back to the status.
+    const body = await res.json().catch(() => null);
+    throw new Error(body?.error ?? `${res.status} ${res.statusText}`);
+  }
   return res.json() as Promise<T>;
 }
 
@@ -82,6 +93,19 @@ const post = (path: string, body: unknown, method = 'POST') =>
   j<unknown>(path, { method, body: JSON.stringify(body) });
 
 export const api = {
+  session: () => j<{ authed: boolean; configured: boolean }>('/api/session'),
+  login: async (password: string) => {
+    const res = await fetch('/api/login', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ password }),
+    });
+    const body = await res.json().catch(() => null);
+    if (!res.ok) throw new Error(body?.error ?? 'Could not sign in.');
+    return body as { ok: true };
+  },
+  logout: () => post('/api/logout', {}),
+
   getProfile: () => j<Profile | null>('/api/profile'),
   putProfile: (p: Profile) => post('/api/profile', p, 'PUT'),
 
