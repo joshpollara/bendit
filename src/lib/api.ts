@@ -72,6 +72,36 @@ export interface ProgressPhoto {
 /** Fires when the server says we're not signed in, so the app can react once. */
 export const UNAUTHORIZED_EVENT = 'bendit:unauthorized';
 
+/**
+ * Appends that can be replayed safely: the client mints the id and the server
+ * ignores a repeat, so a lost reply costs nothing.
+ */
+async function queueableWrite(path: string, body: { id: string; date?: string }): Promise<unknown> {
+  try {
+    const res = await fetch(path, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(body),
+    });
+    if (res.status === 401) {
+      window.dispatchEvent(new Event(UNAUTHORIZED_EVENT));
+      throw new Error('Not signed in.');
+    }
+    if (res.ok) return res.json();
+    if (res.status < 500) {
+      const problem = await res.json().catch(() => null);
+      throw new Error(problem?.error ?? `${res.status} ${res.statusText}`);
+    }
+    throw new Error('server');
+  } catch (err) {
+    // No network (or the server is down): park it and let the app carry on.
+    const { useQueue } = await import('./offlineQueue');
+    useQueue.getState().enqueue({ id: body.id, path, body, date: body.date, queuedAt: Date.now() });
+    if (err instanceof Error && err.message === 'Not signed in.') throw err;
+    return body;
+  }
+}
+
 async function j<T>(path: string, init?: RequestInit): Promise<T> {
   const res = await fetch(path, {
     ...init,
@@ -124,7 +154,8 @@ export const api = {
   foodCounts: () => j<FoodCounts>('/api/foods/counts'),
   deleteFood: (id: string) => j<unknown>(`/api/foods/${encodeURIComponent(id)}`, { method: 'DELETE' }),
 
-  addLogEntry: (e: Omit<FoodLogEntry, 'id'>) => post('/api/food-log', e),
+  addLogEntry: (e: Omit<FoodLogEntry, 'id'> & { id?: string }) =>
+    queueableWrite('/api/food-log', { ...e, id: e.id ?? crypto.randomUUID() }),
   deleteLogEntry: (id: string) => j<unknown>(`/api/food-log/${id}`, { method: 'DELETE' }),
 
   updateLogEntry: (
@@ -150,7 +181,8 @@ export const api = {
 
   recentQuickAdds: () => j<{ label: string; calories: number }[]>('/api/recent-quick-adds'),
 
-  addExercise: (e: Omit<ExerciseEntry, 'id'>) => post('/api/exercise', e),
+  addExercise: (e: Omit<ExerciseEntry, 'id'> & { id?: string }) =>
+    queueableWrite('/api/exercise', { ...e, id: e.id ?? crypto.randomUUID() }),
   updateExercise: (
     id: string,
     changes: Partial<Pick<ExerciseEntry, 'name' | 'minutes' | 'caloriesBurned'>>,

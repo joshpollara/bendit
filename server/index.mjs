@@ -574,7 +574,10 @@ app.get('/api/recent-quick-adds', (_req, res) => {
 
 app.post('/api/food-log', (req, res) => {
   const e = { id: newId(), foodId: null, label: null, servings: 1, ...req.body };
-  db.prepare(`INSERT INTO food_log (id, date, meal, foodId, servings, caloriesCached, label)
+  // INSERT OR IGNORE, not INSERT: an entry queued offline may be sent twice if
+  // the reply is lost on a flaky connection. The client generates the id, so a
+  // repeat is the same row and lands as a no-op rather than a duplicate meal.
+  db.prepare(`INSERT OR IGNORE INTO food_log (id, date, meal, foodId, servings, caloriesCached, label)
     VALUES (@id, @date, @meal, @foodId, @servings, @caloriesCached, @label)`).run(e);
   res.json(e);
 });
@@ -749,7 +752,7 @@ app.delete('/api/meal-templates/:id', (req, res) => {
 
 app.post('/api/exercise', (req, res) => {
   const e = { id: newId(), ...req.body };
-  db.prepare(`INSERT INTO exercise_log (id, date, name, minutes, caloriesBurned)
+  db.prepare(`INSERT OR IGNORE INTO exercise_log (id, date, name, minutes, caloriesBurned)
     VALUES (@id, @date, @name, @minutes, @caloriesBurned)`).run(e);
   res.json(e);
 });

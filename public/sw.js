@@ -13,9 +13,33 @@ self.addEventListener('activate', (event) => {
   );
 });
 
+// Reads worth keeping a copy of: without them the app has nothing to render
+// when the network is gone. Writes are never cached — they go through the
+// app's own queue instead.
+const CACHEABLE_API = ['/api/day', '/api/profile', '/api/session', '/api/week', '/api/recents'];
+
 self.addEventListener('fetch', (event) => {
   const { request } = event;
-  if (request.method !== 'GET' || new URL(request.url).pathname.startsWith('/api/')) return;
+  if (request.method !== 'GET') return;
+  const { pathname } = new URL(request.url);
+
+  if (pathname.startsWith('/api/')) {
+    if (!CACHEABLE_API.some((p) => pathname === p || pathname.startsWith(p + '?'))) return;
+    // Network first: the server is the truth whenever it can be reached.
+    event.respondWith(
+      fetch(request)
+        .then((res) => {
+          if (res.ok) {
+            const copy = res.clone();
+            caches.open(CACHE).then((c) => c.put(request, copy));
+          }
+          return res;
+        })
+        .catch(() => caches.match(request).then((hit) => hit ?? Response.error())),
+    );
+    return;
+  }
+
   event.respondWith(
     fetch(request)
       .then((res) => {

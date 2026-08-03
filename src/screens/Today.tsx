@@ -7,7 +7,15 @@ import { dayLabel, shiftDay, todayStr } from '../lib/dates';
 import { formatCalories } from '../lib/units';
 import { STRINGS } from '../lib/strings';
 import { useUI } from '../store/ui';
-import { MEAL_LABELS, MEALS, type ExerciseEntry, type Meal, type Profile } from '../types';
+import { pendingForDate, useQueue } from '../lib/offlineQueue';
+import {
+  MEAL_LABELS,
+  MEALS,
+  type ExerciseEntry,
+  type FoodLogEntry,
+  type Meal,
+  type Profile,
+} from '../types';
 import EntrySheet from '../components/EntrySheet';
 import ExerciseSheet from '../components/ExerciseSheet';
 import {
@@ -343,9 +351,11 @@ function MealSection({
                       {e.food?.name ?? e.label ?? 'Deleted food'}
                     </p>
                     <p className="truncate text-xs text-ink-muted">
-                      {e.food
-                        ? `${e.servings} × ${e.food.servingLabel}${e.food.brand ? ` · ${e.food.brand}` : ''}`
-                        : 'Calories only'}
+                      {(e as { pending?: boolean }).pending
+                        ? 'Waiting to sync'
+                        : e.food
+                          ? `${e.servings} × ${e.food.servingLabel}${e.food.brand ? ` · ${e.food.brand}` : ''}`
+                          : 'Calories only'}
                     </p>
                   </button>
                   <span className="text-sm font-medium tabular-nums">{formatCalories(e.caloriesCached)}</span>
@@ -425,7 +435,19 @@ export default function Today({ profile }: { profile: Profile }) {
   const day = useData(() => api.getDay(date, shiftDay(date, -1)), [date]);
   const [editingExercise, setEditingExercise] = useState<ExerciseEntry | null>(null);
 
-  const joined = day?.entries ?? [];
+  const queue = useQueue((s) => s.queue);
+  const online = useQueue((s) => s.online);
+
+  // Entries logged while offline aren't on the server yet, but they're real to
+  // the person who logged them — show them in place, marked as not yet synced.
+  const pending: JoinedEntry[] = pendingForDate(queue, date)
+    .filter((w) => w.path === '/api/food-log')
+    .map((w) => {
+      const body = w.body as Omit<FoodLogEntry, 'id'> & { id: string };
+      return { ...body, id: w.id, pending: true } as JoinedEntry & { pending: boolean };
+    });
+
+  const joined = [...(day?.entries ?? []), ...pending];
   const exercises = day?.exercises ?? [];
   const foodCalories = joined.reduce((sum, e) => sum + e.caloriesCached, 0);
   const exerciseCalories = exercises.reduce((sum, e) => sum + e.caloriesBurned, 0);
@@ -436,6 +458,14 @@ export default function Today({ profile }: { profile: Profile }) {
   return (
     <div className="pt-[env(safe-area-inset-top)]">
       <DateNav />
+
+      {(!online || queue.length > 0) && (
+        <p className="mx-4 mb-3 rounded-xl bg-amber/15 px-3 py-2 text-xs text-ink-secondary lg:mx-0">
+          {online
+            ? `Syncing ${queue.length} entr${queue.length === 1 ? 'y' : 'ies'} logged offline…`
+            : `Offline — ${queue.length > 0 ? `${queue.length} logged here, ` : ''}everything you add is saved and sent when you're back.`}
+        </p>
+      )}
 
       <div className="lg:grid lg:grid-cols-[22rem_minmax(0,1fr)] lg:items-start lg:gap-5 lg:px-0">
         {/* The standings: pinned while you scroll the log beside them. */}
