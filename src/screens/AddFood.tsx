@@ -8,12 +8,14 @@ import { formatCalories } from '../lib/units';
 import { STRINGS } from '../lib/strings';
 import { useUI } from '../store/ui';
 import { MEALS, MEAL_LABELS, type Food, type Meal } from '../types';
+import { estimateMealFromPhoto, type MealEstimate, type MealItem } from '../lib/mealPhoto';
 import ServingSheet from '../components/ServingSheet';
 import FoodForm from '../components/FoodForm';
-import { BarcodeIcon, ChevronLeftIcon, SearchIcon, TrashIcon } from '../components/Icons';
+import { BarcodeIcon, CameraIcon, ChevronLeftIcon, SearchIcon, TrashIcon } from '../components/Icons';
 
 // zxing is heavy; only load it when the user actually opens the scanner.
 const BarcodeScanner = lazy(() => import('../components/BarcodeScanner'));
+const MealPhotoSheet = lazy(() => import('../components/MealPhotoSheet'));
 
 type Tab = 'quick' | 'search' | 'recent' | 'meals' | 'mine' | 'create';
 
@@ -234,6 +236,9 @@ export default function AddFood() {
   const [query, setQuery] = useState('');
   const [selected, setSelected] = useState<Food | null>(null);
   const [scanning, setScanning] = useState(false);
+  const [mealPhoto, setMealPhoto] = useState<'idle' | 'reading'>('idle');
+  const [estimate, setEstimate] = useState<MealEstimate | null>(null);
+  const mealPhotoInput = useRef<HTMLInputElement>(null);
   const [banner, setBanner] = useState<string | null>(null);
   const [pendingBarcode, setPendingBarcode] = useState<string | undefined>();
   const [offResults, setOffResults] = useState<Food[]>([]);
@@ -302,6 +307,36 @@ export default function AddFood() {
     } catch {
       setBanner("Couldn't reach Open Food Facts. Check your connection and try again.");
     }
+  }
+
+  async function readMealPhoto(file: File) {
+    setMealPhoto('reading');
+    setBanner(null);
+    try {
+      setEstimate(await estimateMealFromPhoto(file));
+    } catch (e) {
+      setBanner(e instanceof Error ? e.message : "Couldn't read that photo.");
+    } finally {
+      setMealPhoto('idle');
+    }
+  }
+
+  /** Everything the photo found, logged in one go against the chosen meal. */
+  async function logMealPhoto(items: MealItem[], chosenMeal: Meal) {
+    for (const item of items) {
+      if (!item.food || !item.nutrition) continue;
+      await api.addLogEntry({
+        date,
+        meal: chosenMeal,
+        foodId: item.food.id,
+        servings: item.servings ?? item.grams / 100,
+        caloriesCached: Math.round(item.nutrition.calories),
+      });
+    }
+    setEstimate(null);
+    bump();
+    setDate(date);
+    navigate('/');
   }
 
   async function addEntry(food: Food, servings: number, chosenMeal: Meal) {
@@ -392,10 +427,38 @@ export default function AddFood() {
         >
           <BarcodeIcon className="h-5 w-5" />
         </button>
+        {/* The last resort of the three camera paths: a barcode is exact, a
+            label is printed, and a plate has to be judged by eye. */}
+        <button
+          type="button"
+          aria-label="Photograph a meal"
+          disabled={mealPhoto === 'reading'}
+          onClick={() => mealPhotoInput.current?.click()}
+          className="flex h-10 w-10 items-center justify-center rounded-xl border border-line bg-card text-accent disabled:opacity-50"
+        >
+          <CameraIcon className="h-5 w-5" />
+        </button>
+        <input
+          ref={mealPhotoInput}
+          type="file"
+          accept="image/*"
+          capture="environment"
+          className="hidden"
+          onChange={(e) => {
+            const file = e.target.files?.[0];
+            e.target.value = '';
+            if (file) void readMealPhoto(file);
+          }}
+        />
       </div>
 
       {banner && (
         <p className="mx-4 mt-3 rounded-xl bg-over-soft px-3 py-2.5 text-sm text-over lg:mx-0">{banner}</p>
+      )}
+      {mealPhoto === 'reading' && (
+        <p className="mx-4 mt-3 rounded-xl bg-accent-soft px-3 py-2.5 text-sm text-accent-deep lg:mx-0">
+          Looking at your photo…
+        </p>
       )}
 
       <div className="mx-4 mt-3 grid grid-cols-6 rounded-xl bg-card p-1 text-center text-[11px] font-semibold lg:mx-0">
@@ -501,6 +564,17 @@ export default function AddFood() {
               setTab('create');
             }}
             onClose={() => setScanning(false)}
+          />
+        </Suspense>
+      )}
+
+      {estimate && (
+        <Suspense fallback={null}>
+          <MealPhotoSheet
+            estimate={estimate}
+            meal={meal}
+            onLog={logMealPhoto}
+            onClose={() => setEstimate(null)}
           />
         </Suspense>
       )}

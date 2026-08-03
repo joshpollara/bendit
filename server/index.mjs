@@ -13,6 +13,7 @@ import {
   createLabelExtractHandler,
   createLabelValidateHandler,
 } from './lib/labelRoute.mjs';
+import { createMealEstimateHandler } from './lib/mealRoute.mjs';
 import { createVisionExtractHandler } from './lib/visionRoute.mjs';
 import webpush from 'web-push';
 import Database from 'better-sqlite3';
@@ -1027,6 +1028,13 @@ app.post('/api/vision/extract', bigJson, visionHandler);
 
 app.post('/api/labels/extract', bigJson, createLabelExtractHandler({ visionHandler }));
 app.post('/api/labels/validate', express.json(), createLabelValidateHandler());
+
+// ——— meal photos ———
+//
+// The model names the foods and estimates the portions; every calorie comes
+// from the foods table, looked up by the same search the picker uses.
+
+app.post('/api/meals/estimate', bigJson, createMealEstimateHandler({ db, visionHandler }));
 
 // ——— progress photos ———
 

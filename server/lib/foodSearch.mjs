@@ -41,6 +41,21 @@ const contentTokens = (tokens) => {
   return content.length > 0 ? content : tokens;
 };
 
+/**
+ * The written forms a singularised token might appear as in a name.
+ *
+ * Singularising "-ies" to "-y" is right for berries and wrong for cookies —
+ * "cooky" appears in no food name, so the coverage check couldn't find its own
+ * token and refused a row that matched perfectly well. English can't tell the
+ * two apart without a dictionary, so both endings are accepted. (The FTS index
+ * itself is unaffected: Porter stemming already matches either.)
+ */
+function writtenForms(token) {
+  if (!token.endsWith('y')) return [token];
+  const root = token.slice(0, -1);
+  return [token, `${root}ies`, `${root}ie`];
+}
+
 /** Crude, deliberate: only the plural forms that actually show up in food names. */
 function singular(word) {
   if (word.length <= 3) return word;
@@ -116,7 +131,7 @@ export function rankRows(rows, query) {
     .map((row) => {
       const name = row.name.toLowerCase();
       const required = contentTokens(tokens);
-      const covered = required.filter((t) => name.includes(t)).length;
+      const covered = required.filter((t) => writtenForms(t).some((f) => name.includes(f))).length;
       const coverage = required.length ? covered / required.length : 0;
       // Preparation still influences the ordering, just not admissibility.
       const prepBonus = tokens.filter((t) => PREPARATION.has(t) && name.includes(t)).length;
@@ -135,6 +150,13 @@ export function rankRows(rows, query) {
       const head = tokenize(name.split(',')[0]);
       if (head.some((word) => DERIVED_HEAD.has(word) && !tokens.includes(word))) score -= 7;
 
+      // A head that says nothing the query didn't is the plain form of the
+      // food. "boiled potatoes" otherwise matched "Sweet potato, cooked,
+      // boiled" ahead of "Potatoes, boiled" — a different vegetable that
+      // happens to contain the word. A qualifier in the head changes what the
+      // food *is*, so a head without one wins.
+      if (head.length > 0 && head.every((word) => tokens.includes(word))) score += 2.5;
+
       return { ...row, score, coverage };
     })
     .sort((a, b) => b.score - a.score);
@@ -144,9 +166,14 @@ export function rankRows(rows, query) {
  * Searches the foods table. `db` is a better-sqlite3 handle; kept as a
  * parameter so this stays testable against an in-memory database.
  */
-export function searchFoods(db, query, { limit = 25, requireNutrition = false } = {}) {
+export function searchFoods(db, query, { limit = 25, requireNutrition = false, sources } = {}) {
   const plan = buildMatchPlan(query);
-  const filter = requireNutrition ? 'AND f.kcal100 IS NOT NULL' : '';
+  let filter = requireNutrition ? 'AND f.kcal100 IS NOT NULL' : '';
+  const extra = [];
+  if (sources?.length) {
+    filter += ` AND f.source IN (${sources.map(() => '?').join(', ')})`;
+    extra.push(...sources);
+  }
 
   for (const match of plan) {
     let rows;
@@ -158,7 +185,7 @@ export function searchFoods(db, query, { limit = 25, requireNutrition = false } 
            WHERE foods_fts MATCH ? ${filter}
            ORDER BY bm25 LIMIT ?`,
         )
-        .all(match, limit * 4);
+        .all(match, ...extra, limit * 4);
     } catch {
       // A malformed match expression means no results, not a 500.
       continue;
@@ -176,11 +203,31 @@ export function searchFoods(db, query, { limit = 25, requireNutrition = false } 
 export const MIN_COVERAGE = 0.75;
 
 /**
+ * Sources that describe a food rather than a product. A meal photo says "white
+ * rice", never "Jumbo White Rice 1kg", and the reference tables are where a
+ * generic name has an authoritative answer.
+ */
+export const GENERIC_SOURCES = ['usda', 'seed'];
+
+/**
  * The single best match, or null. Used by the meal-photo path, where a wrong
  * confident answer is worse than admitting there wasn't one.
+ *
+ * `preferSources` is tried first and the rest of the table only if it finds
+ * nothing. With 300,000 crowd-sourced products in the same index, a short
+ * branded name will out-rank the reference row for a generic query — which is
+ * how "white rice" landed on a packaged product at 221 kcal/100g instead of
+ * USDA's cooked long-grain at 130. A source bonus alone couldn't fix that
+ * reliably; asking the reference tables first does.
  */
-export function matchFood(db, query, options = {}) {
-  const [best] = searchFoods(db, query, { ...options, limit: 1, requireNutrition: true });
+export function matchFood(db, query, { preferSources = GENERIC_SOURCES, ...options } = {}) {
+  const search = (sources) =>
+    searchFoods(db, query, { ...options, sources, limit: 1, requireNutrition: true })[0];
+
+  const preferred = preferSources?.length ? search(preferSources) : null;
+  if (preferred && preferred.coverage >= MIN_COVERAGE) return preferred;
+
+  const best = search(undefined);
   if (!best || best.coverage < MIN_COVERAGE) return null;
   return best;
 }

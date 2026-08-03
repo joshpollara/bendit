@@ -82,4 +82,56 @@ export const TASKS = {
   },
 };
 
+/**
+ * A photographed meal. The model names the foods and estimates how much of
+ * each is on the plate — and stops there.
+ *
+ * There is no field in this schema for calories or macros, deliberately. A
+ * model asked for "350 kcal" will produce a plausible number by writing one
+ * down; the same food looked up in the database gives a number that came from
+ * a laboratory and is the same every time you ask. Identification is the part
+ * models are good at, so that is the part they are asked for.
+ */
+TASKS.meal = {
+  version: '1',
+  prompt: [
+    'You are looking at a photograph of a meal, to help someone log what they ate.',
+    '',
+    'List each distinct food you can see. For each one give:',
+    '  • name — what the food is, in plain words someone would search for:',
+    '    "grilled chicken breast", "white rice", "olive oil". Name the food, not',
+    '    the dish, when a dish is really several foods on a plate.',
+    '  • grams — how much of it is there, as edible weight. Estimate against the',
+    '    plate, cutlery, or hand in the photo if any are visible.',
+    '  • confidence — "high" if both the food and the amount are clear, "medium"',
+    '    if the amount is a judgement call, "low" if you are unsure what it is.',
+    '',
+    'Do not give calories, protein, carbohydrate, fat or any other nutrition',
+    'figure. They are looked up from the food name, not taken from you.',
+    '',
+    'Ignore anything not eaten: the plate, cutlery, packaging, the table.',
+    'Combine what is genuinely one food — a scattering of peas is one item.',
+    'If the photo is not of food, return an empty list.',
+  ].join('\n'),
+  schema: {
+    type: 'object',
+    properties: {
+      items: {
+        type: 'array',
+        description: 'Each distinct food on the plate',
+        items: {
+          type: 'object',
+          properties: {
+            name: { type: 'string', description: 'Plain searchable food name' },
+            grams: { type: 'number', description: 'Estimated edible weight in grams' },
+            confidence: { type: 'string', enum: ['high', 'medium', 'low'] },
+          },
+          required: ['name', 'grams', 'confidence'],
+        },
+      },
+    },
+    required: ['items'],
+  },
+};
+
 export const getTask = (name) => TASKS[name] ?? null;

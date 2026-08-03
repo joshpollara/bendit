@@ -15,6 +15,7 @@ const FOODS = [
   ['usda-8', 'usda', 'Yogurt, Greek, plain, nonfat', null, 59],
   ['usda-9', 'usda', 'Sweet potato, cooked, baked in skin, flesh, without salt', null, 90],
   ['usda-10', 'usda', 'Avocados, raw, all commercial varieties', null, 160],
+  ['usda-12', 'usda', 'Potatoes, boiled, cooked in skin, flesh, without salt', null, 87],
   ['off-1', 'openfoodfacts', 'Chicken Breast Fillets', 'Tesco', 106],
   ['off-2', 'openfoodfacts', 'Greek Style Yogurt', 'Fage', 97],
   ['off-3', 'openfoodfacts', 'Chocolate chip cookies', 'Albert Heijn', 480],
@@ -105,6 +106,15 @@ describe('searchFoods — what a meal photo actually sends', () => {
     expect(top('white rice')).toBe('Rice, white, long-grain, regular, enriched, cooked');
   });
 
+  it('does not answer "potato" with a different vegetable that contains the word', () => {
+    // "Sweet potato, cooked, baked in skin" covers every word of "boiled
+    // potatoes" and out-ranked the real thing on relevance alone. A qualifier
+    // in the leading segment changes what the food is.
+    expect(top('boiled potatoes')).toMatch(/^Potatoes/);
+    // And the sweet potato is still what you get when you ask for one.
+    expect(top('sweet potato')).toMatch(/^Sweet potato/);
+  });
+
   it('finds a food described loosely', () => {
     expect(top('scrambled eggs')).toMatch(/scrambled/);
     expect(top('a bowl of steamed broccoli')).toMatch(/Broccoli/);
@@ -141,5 +151,23 @@ describe('matchFood — the single answer the photo path commits to', () => {
 
   it('refuses an empty query instead of returning an arbitrary row', () => {
     expect(matchFood(db, '')).toBeNull();
+  });
+
+  it('answers a generic name from the reference tables, not a packaged product', () => {
+    // With 300,000 crowd-sourced products in the index, a short branded name
+    // out-ranks the reference row on bm25 alone. A photo that says "greek
+    // yogurt" means the food, not somebody's tub of it.
+    expect(matchFood(db, 'greek yogurt')?.source).toBe('usda');
+  });
+
+  it('still falls back to a packaged product when nothing generic matches', () => {
+    // "Chocolate chip cookies" exists only as an Open Food Facts row; refusing
+    // it would lose the item from the meal entirely.
+    expect(matchFood(db, 'chocolate chip cookies')?.source).toBe('openfoodfacts');
+  });
+
+  it('can be told to search everything, for callers that want a product', () => {
+    const anywhere = matchFood(db, 'greek yogurt', { preferSources: [] });
+    expect(anywhere).toBeTruthy();
   });
 });
