@@ -1,5 +1,14 @@
 import { NavLink } from 'react-router-dom';
-import { FlameIcon, GaugeIcon, ListIcon, MoreIcon, PlusIcon, ScaleIcon, SearchIcon } from './Icons';
+import {
+  FlameIcon,
+  GaugeIcon,
+  ListIcon,
+  MoreIcon,
+  PlusIcon,
+  ScaleIcon,
+  SearchIcon,
+  TrendIcon,
+} from './Icons';
 
 // Desktop navigation. Replaces the bottom tab bar from `md` up, where a
 // thumb-reach bar pinned to the bottom of a large window reads as a phone
@@ -7,6 +16,7 @@ import { FlameIcon, GaugeIcon, ListIcon, MoreIcon, PlusIcon, ScaleIcon, SearchIc
 const LINKS = [
   { to: '/', label: 'Budget', icon: <GaugeIcon className="h-5 w-5" /> },
   { to: '/weight', label: 'Weight', icon: <ScaleIcon className="h-5 w-5" /> },
+  { to: '/reports', label: 'Reports', icon: <TrendIcon className="h-5 w-5" /> },
   { to: '/foods', label: 'Foods', icon: <ListIcon className="h-5 w-5" /> },
   { to: '/more', label: 'More', icon: <MoreIcon className="h-5 w-5" /> },
 ];

@@ -1,5 +1,5 @@
 import { lazy, Suspense, useEffect, useState } from 'react';
-import { useSearchParams } from 'react-router-dom';
+import { Link, useSearchParams } from 'react-router-dom';
 import { subMonths, subYears, format } from 'date-fns';
 import { api } from '../lib/api';
 import { useData } from '../lib/useData';
@@ -84,6 +84,9 @@ export default function Weight({ profile }: { profile: Profile }) {
     <div className="pt-[env(safe-area-inset-top)]">
       <header className="flex items-center justify-between px-4 py-3">
         <h1 className="text-lg font-semibold">Weight</h1>
+        <Link to="/reports" className="ml-auto mr-2 text-sm font-medium text-accent">
+          Trends
+        </Link>
         <button
           type="button"
           onClick={openLog}

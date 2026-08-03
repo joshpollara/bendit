@@ -1,4 +1,5 @@
 import type { ExerciseEntry, Food, FoodLogEntry, Meal, Profile, WeightEntry } from '../types';
+import type { DayTotals } from './report';
 
 // Thin client for the server API. The server owns the SQLite database; the
 // browser holds no data.
@@ -12,6 +13,13 @@ export interface BrowsedFood extends Food {
 }
 
 export type FoodCounts = Record<Food['source'], number>;
+
+export interface ReportData {
+  from: string | null;
+  to: string | null;
+  days: DayTotals[];
+  weights: { date: string; weightKg: number }[];
+}
 
 export interface DayData {
   entries: JoinedEntry[];
@@ -56,6 +64,9 @@ export const api = {
 
   addExercise: (e: Omit<ExerciseEntry, 'id'>) => post('/api/exercise', e),
   deleteExercise: (id: string) => j<unknown>(`/api/exercise/${id}`, { method: 'DELETE' }),
+
+  getReport: (from?: string) =>
+    j<ReportData>(`/api/report${from ? `?from=${from}` : ''}`),
 
   getWeights: () => j<WeightEntry[]>('/api/weights'),
   putWeight: (w: { date: string; weightKg: number }) => post('/api/weights', w, 'PUT'),

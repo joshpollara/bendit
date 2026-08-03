@@ -244,6 +244,63 @@ app.get('/api/foods/counts', (_req, res) => {
   res.json(counts);
 });
 
+// Everything the reports screen needs for a date range, in one round trip.
+// Only days with data come back; the client fills the gaps.
+app.get('/api/report', (req, res) => {
+  const bounds = db
+    .prepare(
+      `SELECT MIN(d) AS first, MAX(d) AS last FROM (
+         SELECT MIN(date) AS d FROM food_log UNION ALL SELECT MAX(date) FROM food_log
+         UNION ALL SELECT MIN(date) FROM exercise_log UNION ALL SELECT MAX(date) FROM exercise_log
+         UNION ALL SELECT MIN(date) FROM weights UNION ALL SELECT MAX(date) FROM weights
+       ) WHERE d IS NOT NULL`,
+    )
+    .get();
+  if (!bounds?.first) return res.json({ from: null, to: null, days: [], weights: [] });
+  // Clamp to the data that exists, so a 3-month range on a week-old account
+  // reports on that week rather than on 90 mostly-empty days.
+  const from = req.query.from > bounds.first ? req.query.from : bounds.first;
+  const to = req.query.to && req.query.to < bounds.last ? req.query.to : bounds.last;
+
+  const byDate = new Map();
+  const day = (date) => {
+    let d = byDate.get(date);
+    if (!d) {
+      d = { date, food: 0, exercise: 0, entries: 0, meals: {} };
+      byDate.set(date, d);
+    }
+    return d;
+  };
+  for (const row of db
+    .prepare(
+      `SELECT date, meal, SUM(caloriesCached) AS calories, COUNT(*) AS n
+       FROM food_log WHERE date BETWEEN ? AND ? GROUP BY date, meal`,
+    )
+    .all(from, to)) {
+    const d = day(row.date);
+    d.food += row.calories;
+    d.entries += row.n;
+    d.meals[row.meal] = row.calories;
+  }
+  for (const row of db
+    .prepare(
+      `SELECT date, SUM(caloriesBurned) AS calories FROM exercise_log
+       WHERE date BETWEEN ? AND ? GROUP BY date`,
+    )
+    .all(from, to)) {
+    day(row.date).exercise += row.calories;
+  }
+
+  res.json({
+    from,
+    to,
+    days: [...byDate.values()].sort((a, b) => a.date.localeCompare(b.date)),
+    weights: db
+      .prepare('SELECT date, weightKg FROM weights WHERE date BETWEEN ? AND ? ORDER BY date')
+      .all(from, to),
+  });
+});
+
 app.get('/api/foods', (req, res) => {
   const { q, source } = req.query;
   if (source) {

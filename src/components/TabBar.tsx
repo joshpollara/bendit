@@ -1,7 +1,7 @@
 import { useState } from 'react';
 import { NavLink, useNavigate } from 'react-router-dom';
 import Sheet from './Sheet';
-import { FlameIcon, GaugeIcon, MoreIcon, PlusIcon, ScaleIcon, SearchIcon } from './Icons';
+import { FlameIcon, GaugeIcon, MoreIcon, PlusIcon, ScaleIcon, SearchIcon, TrendIcon } from './Icons';
 
 function Tab({ to, label, icon }: { to: string; label: string; icon: React.ReactNode }) {
   return (
@@ -31,7 +31,7 @@ export default function TabBar() {
   return (
     <>
       <nav className="fixed bottom-0 left-1/2 z-30 w-full max-w-md -translate-x-1/2 border-t border-line bg-card pb-[env(safe-area-inset-bottom)] md:hidden">
-        <div className="grid grid-cols-4 items-center">
+        <div className="grid grid-cols-5 items-center">
           <Tab to="/" label="Budget" icon={<GaugeIcon className="h-6 w-6" />} />
           <Tab to="/weight" label="Weight" icon={<ScaleIcon className="h-6 w-6" />} />
           <div className="flex justify-center">
@@ -44,6 +44,7 @@ export default function TabBar() {
               <PlusIcon className="h-7 w-7" />
             </button>
           </div>
+          <Tab to="/reports" label="Reports" icon={<TrendIcon className="h-6 w-6" />} />
           <Tab to="/more" label="More" icon={<MoreIcon className="h-6 w-6" />} />
         </div>
       </nav>
