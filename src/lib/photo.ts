@@ -5,13 +5,16 @@
 const MAX_EDGE = 1280;
 const QUALITY = 0.82;
 
-export function compressPhoto(file: Blob): Promise<Blob> {
+export function compressPhoto(
+  file: Blob,
+  { maxEdge = MAX_EDGE, quality = QUALITY }: { maxEdge?: number; quality?: number } = {},
+): Promise<Blob> {
   return new Promise((resolve, reject) => {
     const url = URL.createObjectURL(file);
     const img = new Image();
     img.onload = () => {
       URL.revokeObjectURL(url);
-      const scale = Math.min(1, MAX_EDGE / Math.max(img.width, img.height));
+      const scale = Math.min(1, maxEdge / Math.max(img.width, img.height));
       const canvas = document.createElement('canvas');
       canvas.width = Math.round(img.width * scale);
       canvas.height = Math.round(img.height * scale);
@@ -21,7 +24,7 @@ export function compressPhoto(file: Blob): Promise<Blob> {
       canvas.toBlob(
         (blob) => (blob ? resolve(blob) : reject(new Error('Could not process the photo.'))),
         'image/jpeg',
-        QUALITY,
+        quality,
       );
     };
     img.onerror = () => {

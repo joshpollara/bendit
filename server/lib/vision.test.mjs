@@ -1,0 +1,189 @@
+import { describe, expect, it, vi } from 'vitest';
+import { createVisionProvider, toGeminiSchema, VisionError } from './vision.mjs';
+import { getTask, TASKS } from './visionTasks.mjs';
+
+// Every test here uses a fake fetch. Nothing in this file reaches the network,
+// and CI never spends money to run it.
+
+const SCHEMA = {
+  type: 'object',
+  properties: { calories: { type: 'number' } },
+  required: ['calories'],
+};
+
+/** A response in the shape the provider actually returns. */
+const geminiResponse = (payload, usage = {}) => ({
+  ok: true,
+  status: 200,
+  json: async () => ({
+    candidates: [{ content: { parts: [{ text: JSON.stringify(payload) }] } }],
+    usageMetadata: { promptTokenCount: 300, candidatesTokenCount: 40, totalTokenCount: 340, ...usage },
+  }),
+});
+
+const errorResponse = (status) => ({
+  ok: false,
+  status,
+  text: async () => `error ${status}`,
+});
+
+const provider = (fetchImpl, options = {}) =>
+  createVisionProvider({
+    apiKey: 'test-key',
+    fetchImpl,
+    // No real waiting between retries.
+    onRetryDelay: async () => {},
+    ...options,
+  });
+
+const call = { imageBase64: 'AAAA', prompt: 'read it', schema: SCHEMA };
+
+describe('vision provider', () => {
+  it('returns parsed JSON, not text', async () => {
+    const result = await provider(async () => geminiResponse({ calories: 210 })).extract(call);
+    expect(result.data).toEqual({ calories: 210 });
+    expect(result.usage.totalTokens).toBe(340);
+    expect(typeof result.latencyMs).toBe('number');
+  });
+
+  it('sends the key in a header and never in the URL', async () => {
+    // A key in a query string ends up in proxy logs and browser histories.
+    const fetchImpl = vi.fn(async () => geminiResponse({ calories: 1 }));
+    await provider(fetchImpl).extract(call);
+    const [url, init] = fetchImpl.mock.calls[0];
+    expect(url).not.toContain('test-key');
+    expect(init.headers['x-goog-api-key']).toBe('test-key');
+  });
+
+  it('asks for structured output rather than hoping for JSON', async () => {
+    const fetchImpl = vi.fn(async () => geminiResponse({ calories: 1 }));
+    await provider(fetchImpl).extract(call);
+    const body = JSON.parse(fetchImpl.mock.calls[0][1].body);
+    expect(body.generationConfig.responseMimeType).toBe('application/json');
+    expect(body.generationConfig.responseSchema.properties.calories.type).toBe('number');
+    expect(body.generationConfig.temperature).toBe(0);
+  });
+
+  it('retries a rate limit and succeeds', async () => {
+    let attempts = 0;
+    const fetchImpl = vi.fn(async () => {
+      attempts++;
+      return attempts < 3 ? errorResponse(429) : geminiResponse({ calories: 99 });
+    });
+    const result = await provider(fetchImpl).extract(call);
+    expect(result.data.calories).toBe(99);
+    expect(attempts).toBe(3);
+  });
+
+  it('gives up after the last attempt rather than retrying forever', async () => {
+    const fetchImpl = vi.fn(async () => errorResponse(503));
+    await expect(provider(fetchImpl).extract(call)).rejects.toMatchObject({ code: 'provider_error' });
+    expect(fetchImpl).toHaveBeenCalledTimes(3);
+  });
+
+  it('does not retry a request that was wrong to begin with', async () => {
+    const fetchImpl = vi.fn(async () => errorResponse(400));
+    await expect(provider(fetchImpl).extract(call)).rejects.toBeInstanceOf(VisionError);
+    expect(fetchImpl).toHaveBeenCalledTimes(1);
+  });
+
+  it('reports a timeout as a timeout', async () => {
+    const fetchImpl = async (_url, init) =>
+      new Promise((_resolve, reject) => {
+        init.signal.addEventListener('abort', () => {
+          const error = new Error('aborted');
+          error.name = 'AbortError';
+          reject(error);
+        });
+      });
+    await expect(provider(fetchImpl, { timeoutMs: 10 }).extract(call)).rejects.toMatchObject({
+      code: 'timeout',
+    });
+  });
+
+  it('refuses to guess when the model returns something that is not JSON', async () => {
+    const fetchImpl = async () => ({
+      ok: true,
+      status: 200,
+      json: async () => ({ candidates: [{ content: { parts: [{ text: 'sorry, I cannot' }] } }] }),
+    });
+    await expect(provider(fetchImpl).extract(call)).rejects.toMatchObject({ code: 'bad_json' });
+  });
+
+  it('treats a blocked response as an error, not an empty result', async () => {
+    const fetchImpl = async () => ({
+      ok: true,
+      status: 200,
+      json: async () => ({ candidates: [], promptFeedback: { blockReason: 'SAFETY' } }),
+    });
+    await expect(provider(fetchImpl).extract(call)).rejects.toMatchObject({ code: 'empty_response' });
+  });
+
+  it('says so when no key is configured instead of calling anything', async () => {
+    const fetchImpl = vi.fn();
+    const unconfigured = createVisionProvider({ apiKey: '', fetchImpl });
+    await expect(unconfigured.extract(call)).rejects.toMatchObject({ code: 'unconfigured' });
+    expect(fetchImpl).not.toHaveBeenCalled();
+    expect(unconfigured.configured).toBe(false);
+  });
+});
+
+describe('schema translation', () => {
+  it('drops the JSON Schema keywords the provider rejects', () => {
+    const translated = toGeminiSchema({
+      type: 'object',
+      additionalProperties: false,
+      $schema: 'http://json-schema.org/draft-07/schema#',
+      properties: { calories: { type: 'number', minimum: 0, nullable: true } },
+      required: ['calories'],
+    });
+    expect(translated.additionalProperties).toBeUndefined();
+    expect(translated.$schema).toBeUndefined();
+    expect(translated.properties.calories.minimum).toBeUndefined();
+    expect(translated.properties.calories.nullable).toBe(true);
+    expect(translated.required).toEqual(['calories']);
+  });
+
+  it('translates nested objects and arrays', () => {
+    const translated = toGeminiSchema({
+      type: 'array',
+      items: { type: 'object', properties: { name: { type: 'string', pattern: '.*' } } },
+    });
+    expect(translated.items.properties.name).toEqual({ type: 'string' });
+  });
+});
+
+describe('tasks', () => {
+  it('only answers to tasks it defines', () => {
+    expect(getTask('label')).toBeTruthy();
+    expect(getTask('anything-else')).toBeNull();
+    expect(getTask(undefined)).toBeNull();
+  });
+
+  it('carries a version on every task, so results can be compared later', () => {
+    for (const [name, task] of Object.entries(TASKS)) {
+      expect(task.version, name).toBeTruthy();
+      expect(task.prompt.length, name).toBeGreaterThan(50);
+      expect(task.schema.type, name).toBe('object');
+    }
+  });
+
+  it('tells the model to transcribe rather than estimate', () => {
+    // The whole point of the label path: a number that was read is worth
+    // having, a number that was guessed is worse than none.
+    expect(TASKS.label.prompt).toMatch(/Do not estimate/i);
+    expect(TASKS.label.prompt).toMatch(/use null/i);
+  });
+
+  it('keeps the two label columns apart', () => {
+    // A per-100g figure logged as a per-portion one is off by a factor of three.
+    expect(TASKS.label.schema.properties.per100).toBeTruthy();
+    expect(TASKS.label.schema.properties.perServing).toBeTruthy();
+  });
+
+  it('produces a schema the provider will accept', () => {
+    const translated = toGeminiSchema(TASKS.label.schema);
+    expect(translated.properties.basis.enum).toEqual(['g', 'ml']);
+    expect(translated.properties.per100.properties.calories.nullable).toBe(true);
+  });
+});

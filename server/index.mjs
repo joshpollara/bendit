@@ -8,6 +8,8 @@ import compression from 'compression';
 import { barcodeVariants } from './lib/barcode.mjs';
 import { per100FromServing } from './lib/foodSchema.mjs';
 import { matchFood, searchFoods } from './lib/foodSearch.mjs';
+import { createVisionProvider } from './lib/vision.mjs';
+import { createVisionExtractHandler } from './lib/visionRoute.mjs';
 import webpush from 'web-push';
 import Database from 'better-sqlite3';
 import express from 'express';
@@ -119,6 +121,20 @@ CREATE TABLE IF NOT EXISTS food_servings (
 );
 CREATE INDEX IF NOT EXISTS idx_servings_food ON food_servings(foodId);
 CREATE INDEX IF NOT EXISTS idx_foods_source ON foods(source, sourceId);
+
+-- Every call to a vision model, kept whether it succeeded or not. Without a
+-- record of which model and which prompt produced which answer, "is the new
+-- one better?" can only be answered by guessing, and never retroactively.
+-- The image itself is not stored — only its hash, which is enough to tell
+-- whether two calls were about the same photo.
+CREATE TABLE IF NOT EXISTS vision_requests (
+  id TEXT PRIMARY KEY, createdAt TEXT NOT NULL, task TEXT NOT NULL,
+  promptVersion TEXT NOT NULL, model TEXT NOT NULL, imageHash TEXT NOT NULL,
+  imageBytes INTEGER NOT NULL, status TEXT NOT NULL, errorCode TEXT,
+  latencyMs INTEGER, inputTokens INTEGER, outputTokens INTEGER, totalTokens INTEGER,
+  responseJson TEXT
+);
+CREATE INDEX IF NOT EXISTS idx_vision_created ON vision_requests(createdAt);
 
 -- Search index over the foods table. External-content FTS5: the index holds no
 -- copy of the data, just the terms, so it stays small on a 1GB volume.
@@ -931,6 +947,23 @@ app.put('/api/day-done', (req, res) => {
   }
   res.json({ date, done: !!done });
 });
+
+// ——— vision proxy ———
+//
+// The one route to a model, mounted from lib so the provider can be swapped in
+// tests. The key is read from the environment here and never leaves the server.
+
+const vision = createVisionProvider();
+
+app.post(
+  '/api/vision/extract',
+  express.json({ limit: '4mb' }),
+  createVisionExtractHandler({
+    db,
+    provider: vision,
+    dailyLimit: Number(process.env.VISION_DAILY_LIMIT ?? 100),
+  }),
+);
 
 // ——— progress photos ———
 
