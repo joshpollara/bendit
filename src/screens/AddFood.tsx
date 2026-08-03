@@ -7,14 +7,14 @@ import { lookupBarcodeRemote, searchOpenFoodFacts } from '../lib/openfoodfacts';
 import { formatCalories } from '../lib/units';
 import { STRINGS } from '../lib/strings';
 import { useUI } from '../store/ui';
-import type { Food, Meal } from '../types';
+import { MEALS, MEAL_LABELS, type Food, type Meal } from '../types';
 import ServingSheet from '../components/ServingSheet';
 import { BarcodeIcon, ChevronLeftIcon, SearchIcon } from '../components/Icons';
 
 // zxing is heavy; only load it when the user actually opens the scanner.
 const BarcodeScanner = lazy(() => import('../components/BarcodeScanner'));
 
-type Tab = 'search' | 'recent' | 'mine' | 'create';
+type Tab = 'quick' | 'search' | 'recent' | 'mine' | 'create';
 
 function defaultMeal(): Meal {
   const h = new Date().getHours();
@@ -137,6 +137,79 @@ function CreateFoodForm({
   );
 }
 
+// For when there's no time to find the exact food: type the calories, pick the
+// meal, done. No Food row is created — the entry stands on its own.
+function QuickAddForm({
+  initialMeal,
+  onAdd,
+}: {
+  initialMeal: Meal;
+  onAdd: (calories: number, label: string, meal: Meal) => void;
+}) {
+  const [calories, setCalories] = useState('');
+  const [label, setLabel] = useState('');
+  const [meal, setMeal] = useState<Meal>(initialMeal);
+
+  const value = Number(calories);
+  const valid = calories.trim() !== '' && Number.isFinite(value) && value > 0;
+  const field = 'w-full rounded-xl border border-line bg-card px-3 py-2.5 text-sm';
+
+  return (
+    <form
+      className="flex flex-col gap-3 px-4 py-4"
+      onSubmit={(e) => {
+        e.preventDefault();
+        if (valid) onAdd(Math.round(value), label.trim(), meal);
+      }}
+    >
+      <label className="flex flex-col items-center gap-1">
+        <input
+          type="number"
+          inputMode="numeric"
+          autoFocus
+          min={1}
+          placeholder="0"
+          value={calories}
+          onChange={(e) => setCalories(e.target.value)}
+          className="w-40 rounded-xl border border-line bg-surface py-3 text-center text-3xl font-bold tabular-nums"
+          aria-label="Calories"
+        />
+        <span className="text-xs uppercase tracking-wide text-ink-muted">calories</span>
+      </label>
+
+      <input
+        className={field}
+        placeholder="What was it? (optional)"
+        value={label}
+        onChange={(e) => setLabel(e.target.value)}
+      />
+
+      <div className="grid grid-cols-4 gap-2">
+        {MEALS.map((m) => (
+          <button
+            key={m}
+            type="button"
+            onClick={() => setMeal(m)}
+            className={`rounded-full py-2 text-xs font-semibold ${
+              meal === m ? 'bg-accent text-white' : 'bg-surface text-ink-secondary'
+            }`}
+          >
+            {MEAL_LABELS[m]}
+          </button>
+        ))}
+      </div>
+
+      <button
+        type="submit"
+        disabled={!valid}
+        className="rounded-xl bg-accent py-3 font-semibold text-white disabled:opacity-40"
+      >
+        Add to {MEAL_LABELS[meal]}
+      </button>
+    </form>
+  );
+}
+
 export default function AddFood() {
   const navigate = useNavigate();
   const [params] = useSearchParams();
@@ -146,7 +219,7 @@ export default function AddFood() {
   const meal = (params.get('meal') as Meal | null) ?? defaultMeal();
   const date = params.get('date') ?? todayStr();
 
-  const [tab, setTab] = useState<Tab>('search');
+  const [tab, setTab] = useState<Tab>(params.get('tab') === 'quick' ? 'quick' : 'search');
   const [query, setQuery] = useState('');
   const [selected, setSelected] = useState<Food | null>(null);
   const [scanning, setScanning] = useState(false);
@@ -232,10 +305,24 @@ export default function AddFood() {
   const recents = useData(() => api.recentFoods(), []);
   const mine = useData(() => api.customFoods(), []);
 
+  async function quickAdd(calories: number, label: string, chosenMeal: Meal) {
+    await api.addLogEntry({
+      date,
+      meal: chosenMeal,
+      servings: 1,
+      caloriesCached: calories,
+      label: label || 'Quick add',
+    });
+    bump();
+    setDate(date);
+    navigate('/');
+  }
+
   const tabs: { key: Tab; label: string }[] = [
+    { key: 'quick', label: 'Quick' },
     { key: 'search', label: 'Search' },
     { key: 'recent', label: 'Recent' },
-    { key: 'mine', label: 'My Foods' },
+    { key: 'mine', label: 'Mine' },
     { key: 'create', label: 'Create' },
   ];
 
@@ -284,7 +371,7 @@ export default function AddFood() {
         <p className="mx-4 mt-3 rounded-xl bg-over-soft px-3 py-2.5 text-sm text-over">{banner}</p>
       )}
 
-      <div className="mx-4 mt-3 grid grid-cols-4 rounded-xl bg-card p-1 text-center text-xs font-semibold">
+      <div className="mx-4 mt-3 grid grid-cols-5 rounded-xl bg-card p-1 text-center text-xs font-semibold">
         {tabs.map((t) => (
           <button
             key={t.key}
@@ -298,6 +385,8 @@ export default function AddFood() {
       </div>
 
       <div className="mx-4 mt-3 mb-4 overflow-hidden rounded-2xl border border-line bg-card shadow-sm">
+        {tab === 'quick' && <QuickAddForm initialMeal={meal} onAdd={quickAdd} />}
+
         {tab === 'search' && (
           <>
             {q === '' && (

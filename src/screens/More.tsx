@@ -1,4 +1,5 @@
 import { useState } from 'react';
+import { Link } from 'react-router-dom';
 import { api } from '../lib/api';
 import { useData } from '../lib/useData';
 import { useUI } from '../store/ui';
@@ -224,6 +225,19 @@ export default function More({ profile }: { profile: Profile }) {
             {saved ? 'Saved ✓' : 'Save changes'}
           </button>
         </div>
+      </section>
+
+      <section className={card}>
+        <h2 className="mb-1 font-semibold">Food database</h2>
+        <p className="mb-3 text-xs text-ink-muted">
+          Browse every food the app knows about, and delete the ones you created or scanned.
+        </p>
+        <Link
+          to="/foods"
+          className="block w-full rounded-xl border border-line py-2.5 text-center text-sm font-semibold text-accent"
+        >
+          Manage foods
+        </Link>
       </section>
 
       <section className={card}>

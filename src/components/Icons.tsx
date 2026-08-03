@@ -109,6 +109,21 @@ export const WarnIcon = (p: IconProps) => (
   </Svg>
 );
 
+export const TrashIcon = (p: IconProps) => (
+  <Svg {...p}>
+    <path d="M4 7h16" />
+    <path d="M9 7V5h6v2" />
+    <path d="M6 7l1 12h10l1-12" />
+    <path d="M10 11v5M14 11v5" />
+  </Svg>
+);
+
+export const ListIcon = (p: IconProps) => (
+  <Svg {...p}>
+    <path d="M4 7h16M4 12h16M4 17h16" />
+  </Svg>
+);
+
 export const CheckIcon = (p: IconProps) => (
   <Svg {...p}>
     <path d="M4 12.5l5 5L20 6.5" />

@@ -30,7 +30,7 @@ export default function TabBar() {
 
   return (
     <>
-      <nav className="fixed bottom-0 left-1/2 z-30 w-full max-w-md -translate-x-1/2 border-t border-line bg-card pb-[env(safe-area-inset-bottom)]">
+      <nav className="fixed bottom-0 left-1/2 z-30 w-full max-w-md -translate-x-1/2 border-t border-line bg-card pb-[env(safe-area-inset-bottom)] md:hidden">
         <div className="grid grid-cols-4 items-center">
           <Tab to="/" label="Budget" icon={<GaugeIcon className="h-6 w-6" />} />
           <Tab to="/weight" label="Weight" icon={<ScaleIcon className="h-6 w-6" />} />
@@ -58,6 +58,13 @@ export default function TabBar() {
               className="flex items-center gap-3 rounded-xl px-3 py-3 text-left font-medium hover:bg-surface"
             >
               <SearchIcon className="h-5 w-5 text-accent" /> Log Food
+            </button>
+            <button
+              type="button"
+              onClick={() => go('/add-food?tab=quick')}
+              className="flex items-center gap-3 rounded-xl px-3 py-3 text-left font-medium hover:bg-surface"
+            >
+              <PlusIcon className="h-5 w-5 text-accent" /> Quick Add Calories
             </button>
             <button
               type="button"

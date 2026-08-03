@@ -4,11 +4,13 @@ import { useData } from './lib/useData';
 import type { Profile } from './types';
 import { STRINGS } from './lib/strings';
 import TabBar from './components/TabBar';
+import SideNav from './components/SideNav';
 import Onboarding from './screens/Onboarding';
 import Today from './screens/Today';
 import AddFood from './screens/AddFood';
 import AddExercise from './screens/AddExercise';
 import Weight from './screens/Weight';
+import Foods from './screens/Foods';
 import More from './screens/More';
 
 function Splash() {
@@ -25,15 +27,19 @@ function Splash() {
 function Shell({ profile }: { profile: Profile }) {
   return (
     <BrowserRouter>
-      <div className="mx-auto min-h-dvh w-full max-w-md pb-28">
-        <Routes>
-          <Route path="/" element={<Today profile={profile} />} />
-          <Route path="/add-food" element={<AddFood />} />
-          <Route path="/add-exercise" element={<AddExercise profile={profile} />} />
-          <Route path="/weight" element={<Weight profile={profile} />} />
-          <Route path="/more" element={<More profile={profile} />} />
-          <Route path="*" element={<Navigate to="/" replace />} />
-        </Routes>
+      <div className="mx-auto flex min-h-dvh w-full max-w-md justify-center gap-8 pb-28 md:max-w-4xl md:gap-10 md:px-6 md:py-8 md:pb-8">
+        <SideNav />
+        <main className="w-full min-w-0 md:max-w-2xl">
+          <Routes>
+            <Route path="/" element={<Today profile={profile} />} />
+            <Route path="/add-food" element={<AddFood />} />
+            <Route path="/add-exercise" element={<AddExercise profile={profile} />} />
+            <Route path="/weight" element={<Weight profile={profile} />} />
+            <Route path="/foods" element={<Foods />} />
+            <Route path="/more" element={<More profile={profile} />} />
+            <Route path="*" element={<Navigate to="/" replace />} />
+          </Routes>
+        </main>
         <TabBar />
       </div>
     </BrowserRouter>

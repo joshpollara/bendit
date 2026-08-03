@@ -34,9 +34,10 @@ export interface FoodLogEntry {
   id: string;
   date: string; // 'YYYY-MM-DD'
   meal: Meal;
-  foodId: string;
+  foodId?: string | null; // null for quick adds and for deleted foods
   servings: number; // multiplier on the food's serving
   caloriesCached: number; // denormalized for fast day totals
+  label?: string; // name for entries with no food behind them
 }
 
 export interface ExerciseEntry {

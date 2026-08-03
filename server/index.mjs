@@ -29,9 +29,11 @@ CREATE TABLE IF NOT EXISTS foods (
   protein REAL, carbs REAL, fat REAL, source TEXT NOT NULL
 );
 CREATE INDEX IF NOT EXISTS idx_foods_barcode ON foods(barcode);
+-- foodId is null for quick-add entries (calories typed straight into a meal);
+-- label names those, and preserves the name of a food that is later deleted.
 CREATE TABLE IF NOT EXISTS food_log (
-  id TEXT PRIMARY KEY, date TEXT NOT NULL, meal TEXT NOT NULL, foodId TEXT NOT NULL,
-  servings REAL NOT NULL, caloriesCached REAL NOT NULL
+  id TEXT PRIMARY KEY, date TEXT NOT NULL, meal TEXT NOT NULL, foodId TEXT,
+  servings REAL NOT NULL, caloriesCached REAL NOT NULL, label TEXT
 );
 CREATE INDEX IF NOT EXISTS idx_log_date ON food_log(date);
 CREATE TABLE IF NOT EXISTS exercise_log (
@@ -43,6 +45,26 @@ CREATE TABLE IF NOT EXISTS weights (
   id TEXT PRIMARY KEY, date TEXT NOT NULL UNIQUE, weightKg REAL NOT NULL
 );
 `);
+
+// Migration: older databases have food_log without `label` and with a NOT NULL
+// foodId. SQLite can't relax NOT NULL in place, so rebuild the table once.
+const logColumns = db.prepare('PRAGMA table_info(food_log)').all().map((c) => c.name);
+if (!logColumns.includes('label')) {
+  db.exec(`
+    BEGIN;
+    ALTER TABLE food_log RENAME TO food_log_old;
+    CREATE TABLE food_log (
+      id TEXT PRIMARY KEY, date TEXT NOT NULL, meal TEXT NOT NULL, foodId TEXT,
+      servings REAL NOT NULL, caloriesCached REAL NOT NULL, label TEXT
+    );
+    INSERT INTO food_log (id, date, meal, foodId, servings, caloriesCached)
+      SELECT id, date, meal, foodId, servings, caloriesCached FROM food_log_old;
+    DROP TABLE food_log_old;
+    CREATE INDEX IF NOT EXISTS idx_log_date ON food_log(date);
+    COMMIT;
+  `);
+  console.log('Migrated food_log for quick-add entries');
+}
 
 const seedCount = db.prepare("SELECT COUNT(*) AS c FROM foods WHERE source = 'seed'").get().c;
 if (seedCount === 0) {
@@ -170,6 +192,7 @@ app.get('/api/day', (req, res) => {
       foodId: row.foodId,
       servings: row.servings,
       caloriesCached: row.caloriesCached,
+      label: row.label ?? undefined,
       food: rowFood(row),
     }));
   const exercises = db.prepare('SELECT * FROM exercise_log WHERE date = ?').all(date);
@@ -183,6 +206,42 @@ app.get('/api/day', (req, res) => {
     }
   }
   res.json({ entries, exercises, latestWeightKg: latest?.weightKg, yesterdayMealCounts });
+});
+
+// Browsing the whole database: every food, newest sources first, with how many
+// log entries reference each one so deletes are an informed choice.
+app.get('/api/foods/browse', (req, res) => {
+  const { q, source } = req.query;
+  const where = [];
+  const params = [];
+  if (q) {
+    where.push('(f.name LIKE ? OR f.brand LIKE ?)');
+    params.push(`%${q}%`, `%${q}%`);
+  }
+  if (source) {
+    where.push('f.source = ?');
+    params.push(source);
+  }
+  res.json(
+    db
+      .prepare(
+        `SELECT f.*, (SELECT COUNT(*) FROM food_log l WHERE l.foodId = f.id) AS usageCount
+         FROM foods f
+         ${where.length ? `WHERE ${where.join(' AND ')}` : ''}
+         ORDER BY CASE f.source WHEN 'custom' THEN 0 WHEN 'openfoodfacts' THEN 1 ELSE 2 END,
+                  f.name COLLATE NOCASE
+         LIMIT 500`,
+      )
+      .all(...params),
+  );
+});
+
+app.get('/api/foods/counts', (_req, res) => {
+  const counts = { custom: 0, openfoodfacts: 0, seed: 0 };
+  for (const row of db.prepare('SELECT source, COUNT(*) AS c FROM foods GROUP BY source').all()) {
+    counts[row.source] = row.c;
+  }
+  res.json(counts);
 });
 
 app.get('/api/foods', (req, res) => {
@@ -209,6 +268,23 @@ app.post('/api/foods', (req, res) => {
   res.json({ ok: true, count: foods.length });
 });
 
+app.delete('/api/foods/:id', (req, res) => {
+  const food = db.prepare('SELECT * FROM foods WHERE id = ?').get(req.params.id);
+  if (!food) return res.status(404).json({ error: 'not found' });
+  if (food.source === 'seed') {
+    return res.status(400).json({ error: 'built-in foods cannot be deleted' });
+  }
+  // Past log entries keep their calories; stamp the name so history stays readable.
+  db.transaction(() => {
+    db.prepare('UPDATE food_log SET label = COALESCE(label, ?), foodId = NULL WHERE foodId = ?').run(
+      food.brand ? `${food.name} (${food.brand})` : food.name,
+      food.id,
+    );
+    db.prepare('DELETE FROM foods WHERE id = ?').run(food.id);
+  })();
+  res.json({ ok: true });
+});
+
 app.get('/api/recents', (_req, res) => {
   res.json(
     db
@@ -220,9 +296,9 @@ app.get('/api/recents', (_req, res) => {
 });
 
 app.post('/api/food-log', (req, res) => {
-  const e = { id: newId(), ...req.body };
-  db.prepare(`INSERT INTO food_log (id, date, meal, foodId, servings, caloriesCached)
-    VALUES (@id, @date, @meal, @foodId, @servings, @caloriesCached)`).run(e);
+  const e = { id: newId(), foodId: null, label: null, servings: 1, ...req.body };
+  db.prepare(`INSERT INTO food_log (id, date, meal, foodId, servings, caloriesCached, label)
+    VALUES (@id, @date, @meal, @foodId, @servings, @caloriesCached, @label)`).run(e);
   res.json(e);
 });
 

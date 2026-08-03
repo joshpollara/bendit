@@ -7,6 +7,12 @@ export interface JoinedEntry extends FoodLogEntry {
   food?: Food;
 }
 
+export interface BrowsedFood extends Food {
+  usageCount: number;
+}
+
+export type FoodCounts = Record<Food['source'], number>;
+
 export interface DayData {
   entries: JoinedEntry[];
   exercises: ExerciseEntry[];
@@ -38,6 +44,12 @@ export const api = {
   foodByBarcode: (code: string) => j<Food | null>(`/api/foods/barcode/${encodeURIComponent(code)}`),
   saveFoods: (foods: Food | Food[]) => post('/api/foods', foods),
   recentFoods: () => j<Food[]>('/api/recents'),
+  browseFoods: (q: string, source?: Food['source']) =>
+    j<BrowsedFood[]>(
+      `/api/foods/browse?q=${encodeURIComponent(q)}${source ? `&source=${source}` : ''}`,
+    ),
+  foodCounts: () => j<FoodCounts>('/api/foods/counts'),
+  deleteFood: (id: string) => j<unknown>(`/api/foods/${encodeURIComponent(id)}`, { method: 'DELETE' }),
 
   addLogEntry: (e: Omit<FoodLogEntry, 'id'>) => post('/api/food-log', e),
   deleteLogEntry: (id: string) => j<unknown>(`/api/food-log/${id}`, { method: 'DELETE' }),
