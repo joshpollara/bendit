@@ -111,7 +111,7 @@ async function check(
  * a session loads about 20MB of engine first.
  */
 export async function readLabel(
-  photo: File,
+  photo: Blob,
   { barcode, onStage }: { barcode?: string; onStage?: (stage: ReadStage) => void } = {},
 ): Promise<LabelReading> {
   try {

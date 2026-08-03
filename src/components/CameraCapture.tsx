@@ -12,15 +12,22 @@ export default function CameraCapture({
   onCapture,
   onClose,
   onPickFile,
+  facing: initialFacing = 'user',
+  title,
+  hint,
 }: {
   onCapture: (photo: Blob) => void;
   onClose: () => void;
   /** Fallback path: pick an existing photo instead of taking one. */
   onPickFile: () => void;
+  /** Which camera to open with: yourself, or what you're looking at. */
+  facing?: Facing;
+  title?: string;
+  hint?: string;
 }) {
   const videoRef = useRef<HTMLVideoElement>(null);
   const streamRef = useRef<MediaStream | null>(null);
-  const [facing, setFacing] = useState<Facing>('user');
+  const [facing, setFacing] = useState<Facing>(initialFacing);
   const [error, setError] = useState<string | null>(null);
   const [shot, setShot] = useState<{ blob: Blob; url: string } | null>(null);
 
@@ -91,7 +98,7 @@ export default function CameraCapture({
   return (
     <div className="fixed inset-0 z-50 flex flex-col bg-black">
       <div className="flex items-center justify-between p-4 pt-[max(env(safe-area-inset-top),1rem)] text-white">
-        <h2 className="font-semibold">{shot ? 'Use this photo?' : 'Progress photo'}</h2>
+        <h2 className="font-semibold">{shot ? 'Use this photo?' : (title ?? 'Progress photo')}</h2>
         <button type="button" aria-label="Close camera" onClick={onClose} className="rounded-full p-2">
           <XIcon className="h-5 w-5" />
         </button>
@@ -111,6 +118,11 @@ export default function CameraCapture({
         {error && !shot && (
           <p className="absolute inset-x-4 top-4 rounded-xl bg-black/70 p-3 text-center text-sm text-white">
             {error}
+          </p>
+        )}
+        {hint && !shot && !error && (
+          <p className="absolute inset-x-4 bottom-4 rounded-xl bg-black/50 p-2.5 text-center text-xs text-white">
+            {hint}
           </p>
         )}
       </div>

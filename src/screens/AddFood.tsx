@@ -16,6 +16,8 @@ import { BarcodeIcon, CameraIcon, ChevronLeftIcon, SearchIcon, TrashIcon } from 
 // zxing is heavy; only load it when the user actually opens the scanner.
 const BarcodeScanner = lazy(() => import('../components/BarcodeScanner'));
 const MealPhotoSheet = lazy(() => import('../components/MealPhotoSheet'));
+// The camera is only opened deliberately, so it loads then too.
+const CameraCapture = lazy(() => import('../components/CameraCapture'));
 
 type Tab = 'quick' | 'search' | 'recent' | 'meals' | 'mine' | 'create';
 
@@ -237,6 +239,7 @@ export default function AddFood() {
   const [selected, setSelected] = useState<Food | null>(null);
   const [scanning, setScanning] = useState(false);
   const [mealPhoto, setMealPhoto] = useState<'idle' | 'reading'>('idle');
+  const [shootingMeal, setShootingMeal] = useState(false);
   const [estimate, setEstimate] = useState<MealEstimate | null>(null);
   const mealPhotoInput = useRef<HTMLInputElement>(null);
   const [banner, setBanner] = useState<string | null>(null);
@@ -309,7 +312,8 @@ export default function AddFood() {
     }
   }
 
-  async function readMealPhoto(file: File) {
+  async function readMealPhoto(file: Blob) {
+    setShootingMeal(false);
     setMealPhoto('reading');
     setBanner(null);
     try {
@@ -436,7 +440,7 @@ export default function AddFood() {
           type="button"
           aria-label="Photograph a meal"
           disabled={mealPhoto === 'reading'}
-          onClick={() => mealPhotoInput.current?.click()}
+          onClick={() => setShootingMeal(true)}
           className="flex h-10 w-10 items-center justify-center rounded-xl border border-line bg-card text-accent disabled:opacity-50"
         >
           <CameraIcon className="h-5 w-5" />
@@ -567,6 +571,22 @@ export default function AddFood() {
               setTab('create');
             }}
             onClose={() => setScanning(false)}
+          />
+        </Suspense>
+      )}
+
+      {shootingMeal && (
+        <Suspense fallback={null}>
+          <CameraCapture
+            facing="environment"
+            title="Photograph your meal"
+            hint="Get the whole plate in frame, from above if you can."
+            onCapture={(photo) => void readMealPhoto(photo)}
+            onClose={() => setShootingMeal(false)}
+            onPickFile={() => {
+              setShootingMeal(false);
+              mealPhotoInput.current?.click();
+            }}
           />
         </Suspense>
       )}

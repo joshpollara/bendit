@@ -1,10 +1,13 @@
-import { useRef, useState } from 'react';
+import { lazy, Suspense, useRef, useState } from 'react';
 import { api } from '../lib/api';
 import { rescale } from '../lib/labelParse';
 import { readLabel, type LabelIssue, type LabelReading, type ReadStage } from '../lib/labelRead';
 import { formatCalories } from '../lib/units';
 import type { Food } from '../types';
 import { CameraIcon } from './Icons';
+
+// Only loaded when the camera is actually opened.
+const CameraCapture = lazy(() => import('./CameraCapture'));
 
 // One form for creating and editing a food, including reading one off a
 // photographed label.
@@ -55,6 +58,7 @@ export default function FoodForm({
   // What the check found, so the fields in question can be pointed at rather
   // than the user re-reading the whole packet.
   const [issues, setIssues] = useState<LabelIssue[]>([]);
+  const [shooting, setShooting] = useState(false);
   // The servings a scanned label offered — the printed portion, 100 g, and the
   // whole pack. Kept so saving keeps them too, which is what lets an entry be
   // rescaled later to "half the packet".
@@ -77,7 +81,8 @@ export default function FoodForm({
     savedCalories >= 0 &&
     (basis === 'serving' || gramsValid);
 
-  async function scanFromPhoto(file: File) {
+  async function scanFromPhoto(file: Blob) {
+    setShooting(false);
     setScanState('sending');
     setScanError(null);
     setScanNote(null);
@@ -212,6 +217,22 @@ export default function FoodForm({
         </p>
       )}
 
+      {shooting && (
+        <Suspense fallback={null}>
+          <CameraCapture
+            facing="environment"
+            title="Photograph the label"
+            hint="Fill the frame with the nutrition panel, square on."
+            onCapture={(photo) => void scanFromPhoto(photo)}
+            onClose={() => setShooting(false)}
+            onPickFile={() => {
+              setShooting(false);
+              photoInput.current?.click();
+            }}
+          />
+        </Suspense>
+      )}
+
       <input
         ref={photoInput}
         type="file"
@@ -227,7 +248,7 @@ export default function FoodForm({
       <button
         type="button"
         disabled={scanState !== 'idle'}
-        onClick={() => photoInput.current?.click()}
+        onClick={() => setShooting(true)}
         className="flex items-center justify-center gap-2 rounded-xl border border-accent py-2.5 text-sm font-semibold text-accent disabled:opacity-60"
       >
         <CameraIcon className="h-4 w-4" />

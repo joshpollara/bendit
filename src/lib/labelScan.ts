@@ -65,7 +65,7 @@ function loadService(): Promise<PaddleService> {
   return servicePromise;
 }
 
-function fileToCanvas(file: File): Promise<HTMLCanvasElement> {
+function fileToCanvas(file: Blob): Promise<HTMLCanvasElement> {
   return new Promise((resolve, reject) => {
     const url = URL.createObjectURL(file);
     const img = new Image();
@@ -95,13 +95,15 @@ function fileToCanvas(file: File): Promise<HTMLCanvasElement> {
 }
 
 /**
- * Runs OCR and parses the result. `onStage` reports coarse progress — the
+ * Runs OCR and parses the result. Takes a Blob rather than a File: a photo
+ * captured in the app has no filename, and nothing here ever wanted one.
+ * `onStage` reports coarse progress — the
  * first scan of a session loads ~20MB of engine and models (cached by the
  * browser afterwards), which deserves a different message than the read
  * itself.
  */
 export async function scanLabel(
-  file: File,
+  file: Blob,
   onStage?: (stage: 'loading' | 'reading') => void,
 ): Promise<ScanResult> {
   onStage?.(servicePromise ? 'reading' : 'loading');
