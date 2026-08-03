@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { parseLabel, rescale } from './labelParse';
+import { energyCheck, parseLabel, rescale } from './labelParse';
 
 // These fixtures are what OCR actually hands back: lowercase-ish, ragged
 // spacing, columns flattened onto one line, the odd letter/digit confusion.
@@ -219,6 +219,24 @@ describe('parseLabel — implausible values are dropped, not guessed', () => {
 
   it('keeps a number that does carry its unit', () => {
     expect(parseLabel('per 100 g\nZout 0,45g\nEiwitten 19 g').protein).toBe(19);
+  });
+});
+
+describe('energyCheck', () => {
+  it('accepts labels whose macros add up', () => {
+    // Oats: 4·5 + 4·27 + 9·3 = 155 ≈ 150.
+    expect(energyCheck({ calories: 150, protein: 5, carbs: 27, fat: 3 })).toBe('consistent');
+    // The Dutch panel: 4·8.6 + 4·48.2 + 9·28.5 = 483.7 ≈ 502.
+    expect(energyCheck({ calories: 502, protein: 8.6, carbs: 48.2, fat: 28.5 })).toBe('consistent');
+  });
+
+  it('flags the classic OCR misread', () => {
+    // "3g" fat read as 39: 4·5 + 4·27 + 9·39 = 479 vs stated 150.
+    expect(energyCheck({ calories: 150, protein: 5, carbs: 27, fat: 39 })).toBe('inconsistent');
+  });
+
+  it('stays quiet when a value is missing', () => {
+    expect(energyCheck({ calories: 150, protein: null, carbs: 27, fat: 3 })).toBe('unknown');
   });
 });
 

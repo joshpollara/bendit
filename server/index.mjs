@@ -2,6 +2,7 @@ import crypto from 'node:crypto';
 import fs from 'node:fs';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
+import compression from 'compression';
 import Database from 'better-sqlite3';
 import express from 'express';
 
@@ -83,6 +84,14 @@ if (seedCount === 0) {
 // ——— app & auth ———
 
 const app = express();
+// The OCR runtime (wasm ~13MB) and its models (~6MB) compress well and are
+// too big to send raw to a phone. Compress .ort model files too — the default
+// filter skips application/octet-stream.
+app.use(
+  compression({
+    filter: (req, res) => req.path.endsWith('.ort') || compression.filter(req, res),
+  }),
+);
 app.use(express.json());
 
 const AUTH_PASS = process.env.BASIC_AUTH_PASSWORD;

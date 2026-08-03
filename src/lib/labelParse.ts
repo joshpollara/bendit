@@ -200,6 +200,29 @@ export function parseLabel(text: string): ParsedLabel {
   };
 }
 
+export type EnergyCheck = 'consistent' | 'inconsistent' | 'unknown';
+
+/**
+ * Cross-checks stated calories against the Atwater factors (4 kcal/g protein,
+ * 4 kcal/g carbohydrate, 9 kcal/g fat) — the identity every printed label
+ * roughly satisfies. A scan that fails it almost certainly misread a number.
+ * The tolerance is generous because fibre, sugar alcohols, and rounding all
+ * pull the true figure off the ideal sum.
+ */
+export function energyCheck(p: {
+  calories: number | null;
+  protein: number | null;
+  carbs: number | null;
+  fat: number | null;
+}): EnergyCheck {
+  if (p.calories == null || p.protein == null || p.carbs == null || p.fat == null) {
+    return 'unknown';
+  }
+  const computed = 4 * p.protein + 4 * p.carbs + 9 * p.fat;
+  const tolerance = Math.max(25, 0.2 * p.calories);
+  return Math.abs(computed - p.calories) <= tolerance ? 'consistent' : 'inconsistent';
+}
+
 /** Scale per-100g (or per-100ml) values to the grams the user actually eats. */
 export function rescale(value: number | null, fromGrams: number, toGrams: number): number | null {
   if (value == null || !fromGrams || !toGrams) return null;

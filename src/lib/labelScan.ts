@@ -1,21 +1,71 @@
 import { parseLabel, type ParsedLabel } from './labelParse';
+import { itemsToText, type OcrItem } from './ocrRows';
 
-// Reads a nutrition panel from a photo, entirely on-device. Tesseract's
-// weakness is small, low-contrast, skewed text, so the preprocessing below
-// matters as much as the OCR call itself.
+// Reads a nutrition panel from a photo, entirely on-device.
+//
+// Engine: PP-OCRv6 via ppu-paddle-ocr + ONNX Runtime WASM. Chosen over
+// tesseract.js after a head-to-head on rendered US and Dutch panels (clean,
+// tilted, blurred): equal field accuracy overall, but Paddle made zero
+// character-level errors where Tesseract systematically read the unit "g" as
+// a digit 9, and Paddle's failures were blanks rather than wrong numbers.
+// Its one weakness — scrambling rows on tilted photos — is fixed by the
+// geometry-based row reconstruction in ocrRows.ts.
+//
+// Everything is served from our own origin: models from /ocr/, the ORT wasm
+// as a build asset. No third-party requests, nothing uploaded.
 
-// Tesseract wants roughly 30px-tall glyphs. Big camera photos come down to
-// MAX_EDGE; small images (a crop, a screenshot) are scaled *up* to MIN_EDGE,
-// which measurably improves how often the unit "g" survives as a letter.
-const MAX_EDGE = 2000;
-const MIN_EDGE = 1500;
+// Vite turns these into hashed asset URLs at build time. Direct file paths
+// because the package's exports map doesn't expose its dist assets.
+import ortWasmUrl from '../../node_modules/onnxruntime-web/dist/ort-wasm-simd-threaded.wasm?url';
+import ortMjsUrl from '../../node_modules/onnxruntime-web/dist/ort-wasm-simd-threaded.mjs?url';
 
-/**
- * Downscale to a workable size, then flatten to high-contrast greyscale.
- * Package photos are glossy and unevenly lit; a plain threshold destroys text
- * in shadow, so this stretches contrast around the image's own mean instead.
- */
-export function preprocess(file: File): Promise<Blob> {
+const MODEL_URLS = {
+  detection: '/ocr/PP-OCRv6_tiny_det.ort',
+  recognition: '/ocr/PP-OCRv6_tiny_rec.ort',
+  charactersDictionary: '/ocr/ppocrv6_tiny_dict.txt',
+};
+
+// Detection downsizes internally, but recognition crops from the canvas we
+// hand over — so cap huge camera photos for memory, and gently upscale tiny
+// images (screenshots, crops) so the crops keep enough pixels per glyph.
+const MAX_EDGE = 2200;
+const MIN_EDGE = 1000;
+
+export interface ScanResult extends ParsedLabel {
+  /** Reconstructed OCR text, shown when the user wants to see what was read. */
+  text: string;
+}
+
+interface PaddleService {
+  recognize(
+    image: HTMLCanvasElement,
+    options: { flatten: true },
+  ): Promise<{ results: OcrItem[]; confidence: number }>;
+}
+
+// One engine instance for the session: models stay warm, so a re-scan after
+// adjusting the photo is quick.
+let servicePromise: Promise<PaddleService> | null = null;
+
+function loadService(): Promise<PaddleService> {
+  servicePromise ??= (async () => {
+    // The OCR stack is multi-megabyte; it loads only when a scan starts.
+    const [{ PaddleOcrService }, ort] = await Promise.all([
+      import('ppu-paddle-ocr/web'),
+      import('onnxruntime-web'),
+    ]);
+    ort.env.wasm.wasmPaths = { wasm: ortWasmUrl, mjs: ortMjsUrl };
+    const service = new PaddleOcrService({
+      model: MODEL_URLS,
+      session: { executionProviders: ['wasm'] },
+    });
+    await service.initialize();
+    return service as unknown as PaddleService;
+  })();
+  return servicePromise;
+}
+
+function fileToCanvas(file: File): Promise<HTMLCanvasElement> {
   return new Promise((resolve, reject) => {
     const url = URL.createObjectURL(file);
     const img = new Image();
@@ -23,35 +73,18 @@ export function preprocess(file: File): Promise<Blob> {
       URL.revokeObjectURL(url);
       const longEdge = Math.max(img.width, img.height);
       const scale =
-        longEdge > MAX_EDGE ? MAX_EDGE / longEdge : longEdge < MIN_EDGE ? Math.min(3, MIN_EDGE / longEdge) : 1;
+        longEdge > MAX_EDGE
+          ? MAX_EDGE / longEdge
+          : longEdge < MIN_EDGE
+            ? Math.min(3, MIN_EDGE / longEdge)
+            : 1;
       const canvas = document.createElement('canvas');
       canvas.width = Math.round(img.width * scale);
       canvas.height = Math.round(img.height * scale);
-      const ctx = canvas.getContext('2d', { willReadFrequently: true });
+      const ctx = canvas.getContext('2d');
       if (!ctx) return reject(new Error('Could not process the photo.'));
       ctx.drawImage(img, 0, 0, canvas.width, canvas.height);
-
-      const image = ctx.getImageData(0, 0, canvas.width, canvas.height);
-      const px = image.data;
-      let sum = 0;
-      for (let i = 0; i < px.length; i += 4) {
-        const grey = 0.299 * px[i] + 0.587 * px[i + 1] + 0.114 * px[i + 2];
-        px[i] = px[i + 1] = px[i + 2] = grey;
-        sum += grey;
-      }
-      const mean = sum / (px.length / 4);
-      // Push each pixel away from the mean: dark ink darker, paper whiter.
-      const CONTRAST = 1.8;
-      for (let i = 0; i < px.length; i += 4) {
-        const v = Math.max(0, Math.min(255, (px[i] - mean) * CONTRAST + mean));
-        px[i] = px[i + 1] = px[i + 2] = v;
-      }
-      ctx.putImageData(image, 0, 0);
-
-      canvas.toBlob(
-        (blob) => (blob ? resolve(blob) : reject(new Error('Could not process the photo.'))),
-        'image/png',
-      );
+      resolve(canvas);
     };
     img.onerror = () => {
       URL.revokeObjectURL(url);
@@ -61,34 +94,20 @@ export function preprocess(file: File): Promise<Blob> {
   });
 }
 
-export interface ScanResult extends ParsedLabel {
-  /** Raw OCR text, shown when parsing finds nothing so the user can see why. */
-  text: string;
-}
-
 /**
- * Runs OCR and parses the result. `onProgress` receives 0–1; the first scan
- * downloads the language data (~4MB, then cached by the browser), so progress
- * matters more here than in a typical async call.
+ * Runs OCR and parses the result. `onStage` reports coarse progress — the
+ * first scan of a session loads ~20MB of engine and models (cached by the
+ * browser afterwards), which deserves a different message than the read
+ * itself.
  */
 export async function scanLabel(
   file: File,
-  onProgress?: (fraction: number) => void,
+  onStage?: (stage: 'loading' | 'reading') => void,
 ): Promise<ScanResult> {
-  const image = await preprocess(file);
-  // tesseract.js is multi-megabyte; keep it out of the app's main bundle.
-  const { createWorker } = await import('tesseract.js');
-  const worker = await createWorker('eng+nld', 1, {
-    logger: (m: { status: string; progress: number }) => {
-      if (m.status === 'recognizing text') onProgress?.(m.progress);
-    },
-  });
-  try {
-    const {
-      data: { text },
-    } = await worker.recognize(image);
-    return { ...parseLabel(text), text };
-  } finally {
-    await worker.terminate();
-  }
+  onStage?.(servicePromise ? 'reading' : 'loading');
+  const [service, canvas] = await Promise.all([loadService(), fileToCanvas(file)]);
+  onStage?.('reading');
+  const { results } = await service.recognize(canvas, { flatten: true });
+  const text = itemsToText(results);
+  return { ...parseLabel(text), text };
 }

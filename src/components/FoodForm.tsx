@@ -1,6 +1,6 @@
 import { useRef, useState } from 'react';
 import { api } from '../lib/api';
-import { rescale } from '../lib/labelParse';
+import { energyCheck, rescale } from '../lib/labelParse';
 import { scanLabel } from '../lib/labelScan';
 import { formatCalories } from '../lib/units';
 import type { Food } from '../types';
@@ -41,8 +41,7 @@ export default function FoodForm({
   const [fat, setFat] = useState(str(initial?.fat));
   const [basis, setBasis] = useState<Basis>('serving');
 
-  const [scanState, setScanState] = useState<'idle' | 'scanning'>('idle');
-  const [progress, setProgress] = useState(0);
+  const [scanState, setScanState] = useState<'idle' | 'loading' | 'reading'>('idle');
   const [scanNote, setScanNote] = useState<string | null>(null);
   const [scanError, setScanError] = useState<string | null>(null);
   const [scanText, setScanText] = useState<string | null>(null);
@@ -65,12 +64,11 @@ export default function FoodForm({
     (basis === 'serving' || gramsValid);
 
   async function readLabel(file: File) {
-    setScanState('scanning');
-    setProgress(0);
+    setScanState('loading');
     setScanError(null);
     setScanNote(null);
     try {
-      const r = await scanLabel(file, setProgress);
+      const r = await scanLabel(file, setScanState);
       setScanText(r.text);
       if (r.found.length === 0) {
         setScanError(
@@ -90,19 +88,29 @@ export default function FoodForm({
         // available guess at a real serving; otherwise start at 100 g.
         setServingGrams(str(r.servingGrams ?? 100));
         setScanNote(
-          `Read per 100 ${r.basis === '100ml' ? 'ml' : 'g'}. Set the serving weight below — everything rescales to it. Check the numbers.`,
+          `Read per 100 ${r.basis === '100ml' ? 'ml' : 'g'}. Set the serving weight below — everything rescales to it.${checkSuffix(r)}`,
         );
       } else {
         setBasis('serving');
         if (r.servingLabel) setServingLabel(r.servingLabel);
         if (r.servingGrams != null) setServingGrams(str(r.servingGrams));
-        setScanNote(`Read ${r.found.join(', ')} from your photo. Check the values before saving.`);
+        setScanNote(`Read ${r.found.join(', ')} from your photo.${checkSuffix(r)} Check the values before saving.`);
       }
     } catch (e) {
       setScanError(e instanceof Error ? e.message : "Couldn't read that photo.");
     } finally {
       setScanState('idle');
     }
+  }
+
+  // The label's own arithmetic: calories ≈ 4·protein + 4·carbs + 9·fat.
+  // A failed check almost always means one number was misread.
+  function checkSuffix(r: { calories: number | null; protein: number | null; carbs: number | null; fat: number | null }) {
+    const check = energyCheck(r);
+    if (check === 'consistent') return ' The numbers cross-check.';
+    if (check === 'inconsistent')
+      return " Careful — protein, carbs and fat don't add up to the calories, so one value was likely misread.";
+    return '';
   }
 
   async function save() {
@@ -149,14 +157,16 @@ export default function FoodForm({
       />
       <button
         type="button"
-        disabled={scanState === 'scanning'}
+        disabled={scanState !== 'idle'}
         onClick={() => photoInput.current?.click()}
         className="flex items-center justify-center gap-2 rounded-xl border border-accent py-2.5 text-sm font-semibold text-accent disabled:opacity-60"
       >
         <CameraIcon className="h-4 w-4" />
-        {scanState === 'scanning'
-          ? `Reading label… ${Math.round(progress * 100)}%`
-          : 'Scan nutrition label'}
+        {scanState === 'loading'
+          ? 'Preparing the reader…'
+          : scanState === 'reading'
+            ? 'Reading label…'
+            : 'Scan nutrition label'}
       </button>
       <p className="-mt-1 text-center text-xs text-ink-muted">
         Fill the frame with the panel. Reading happens on your phone — nothing is uploaded.
