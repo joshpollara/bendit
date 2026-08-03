@@ -8,6 +8,7 @@ import { formatCalories } from '../lib/units';
 import { STRINGS } from '../lib/strings';
 import { useUI } from '../store/ui';
 import { MEAL_LABELS, MEALS, type Meal, type Profile } from '../types';
+import EntrySheet from '../components/EntrySheet';
 import {
   CheckIcon,
   ChevronDownIcon,
@@ -121,8 +122,16 @@ function MealSection({
   yesterdayCount: number;
 }) {
   const [open, setOpen] = useState(true);
+  const [editing, setEditing] = useState<JoinedEntry | null>(null);
   const bump = useUI((s) => s.bump);
   const subtotal = entries.reduce((sum, e) => sum + e.caloriesCached, 0);
+
+  async function saveAsMeal() {
+    const name = window.prompt('Save this meal as:', MEAL_LABELS[meal]);
+    if (!name?.trim()) return;
+    await api.saveMealAsTemplate(name.trim(), date, meal);
+    bump();
+  }
 
   async function copyYesterday() {
     const yesterday = shiftDay(date, -1);
@@ -198,7 +207,12 @@ function MealSection({
                   key={e.id}
                   className="flex items-center gap-3 border-b border-line px-4 py-2.5 last:border-b-0"
                 >
-                  <div className="min-w-0 flex-1">
+                  <button
+                    type="button"
+                    onClick={() => setEditing(e)}
+                    aria-label={`Edit ${e.food?.name ?? e.label ?? 'entry'}`}
+                    className="min-w-0 flex-1 text-left"
+                  >
                     <p className="truncate text-sm font-medium">
                       {e.food?.name ?? e.label ?? 'Deleted food'}
                     </p>
@@ -207,7 +221,7 @@ function MealSection({
                         ? `${e.servings} × ${e.food.servingLabel}${e.food.brand ? ` · ${e.food.brand}` : ''}`
                         : 'Calories only'}
                     </p>
-                  </div>
+                  </button>
                   <span className="text-sm font-medium tabular-nums">{formatCalories(e.caloriesCached)}</span>
                   <button
                     type="button"
@@ -221,7 +235,27 @@ function MealSection({
               ))}
             </ul>
           )}
+          {entries.length > 0 && (
+            <button
+              type="button"
+              onClick={saveAsMeal}
+              className="w-full border-t border-line py-2 text-xs font-medium text-accent hover:bg-surface"
+            >
+              Save as a meal
+            </button>
+          )}
         </div>
+      )}
+
+      {editing && (
+        <EntrySheet
+          entry={editing}
+          onClose={() => setEditing(null)}
+          onChanged={() => {
+            setEditing(null);
+            bump();
+          }}
+        />
       )}
     </section>
   );

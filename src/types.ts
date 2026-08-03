@@ -14,6 +14,24 @@ export interface Profile {
   weeklyRateKg: number; // 0.25, 0.5, 0.75, 1.0 kg/week (loss = positive)
   units: Units;
   createdAt: string;
+  /** Daily protein goal in grams; unset means protein isn't being tracked. */
+  proteinTargetG?: number | null;
+  /** 'formula' = Mifflin-St Jeor; 'measured' = expenditure from your own data. */
+  budgetSource?: 'formula' | 'measured';
+  measuredTdee?: number | null;
+  /** Local hour (0-23) for the evening reminder; null = no reminder. */
+  reminderHour?: number | null;
+  timezone?: string | null;
+}
+
+export const MEASUREMENT_SITES = ['waist', 'hips', 'chest', 'thigh', 'arm', 'neck'] as const;
+export type MeasurementSite = (typeof MEASUREMENT_SITES)[number];
+
+export interface Measurement {
+  id: string;
+  date: string;
+  site: MeasurementSite;
+  valueCm: number;
 }
 
 export interface Food {

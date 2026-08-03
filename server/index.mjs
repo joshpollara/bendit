@@ -53,7 +53,42 @@ CREATE TABLE IF NOT EXISTS photos (
   id TEXT PRIMARY KEY, date TEXT NOT NULL, createdAt TEXT NOT NULL
 );
 CREATE INDEX IF NOT EXISTS idx_photos_date ON photos(date);
+-- A saved meal: a named bundle of items logged together in one tap.
+CREATE TABLE IF NOT EXISTS meal_templates (
+  id TEXT PRIMARY KEY, name TEXT NOT NULL, createdAt TEXT NOT NULL
+);
+-- Items mirror food_log: a food reference, or a label-only calorie amount.
+CREATE TABLE IF NOT EXISTS meal_template_items (
+  id TEXT PRIMARY KEY, templateId TEXT NOT NULL, foodId TEXT, servings REAL NOT NULL,
+  caloriesCached REAL NOT NULL, label TEXT, position INTEGER NOT NULL
+);
+CREATE INDEX IF NOT EXISTS idx_tpl_items ON meal_template_items(templateId);
+CREATE TABLE IF NOT EXISTS measurements (
+  id TEXT PRIMARY KEY, date TEXT NOT NULL, site TEXT NOT NULL, valueCm REAL NOT NULL,
+  UNIQUE(date, site)
+);
+CREATE TABLE IF NOT EXISTS push_subscriptions (
+  endpoint TEXT PRIMARY KEY, p256dh TEXT NOT NULL, auth TEXT NOT NULL, createdAt TEXT NOT NULL
+);
 `);
+
+// Columns added after the first release. SQLite only supports ADD COLUMN, which
+// is all these need — every one is nullable or defaulted.
+function ensureColumns(table, columns) {
+  const have = new Set(db.prepare(`PRAGMA table_info(${table})`).all().map((c) => c.name));
+  for (const [name, type] of Object.entries(columns)) {
+    if (!have.has(name)) db.exec(`ALTER TABLE ${table} ADD COLUMN ${name} ${type}`);
+  }
+}
+
+ensureColumns('profile', {
+  proteinTargetG: 'REAL',
+  // 'formula' (Mifflin-St Jeor) or 'measured' (from logged intake vs weight trend)
+  budgetSource: "TEXT NOT NULL DEFAULT 'formula'",
+  measuredTdee: 'REAL',
+  reminderHour: 'INTEGER',
+  timezone: 'TEXT',
+});
 
 // Progress photos live next to the database — on Fly that's the persistent
 // volume, so they survive deploys like everything else.
@@ -149,6 +184,13 @@ app.use((req, res, next) => {
 
 const newId = () => crypto.randomUUID();
 
+/** Only the fields a client is allowed to change, and only those it sent. */
+function pick(body, keys) {
+  const out = {};
+  for (const key of keys) if (body?.[key] !== undefined) out[key] = body[key];
+  return out;
+}
+
 const foodColumns =
   'f.id AS f_id, f.name AS f_name, f.brand AS f_brand, f.barcode AS f_barcode, ' +
   'f.servingLabel AS f_servingLabel, f.servingGrams AS f_servingGrams, ' +
@@ -195,10 +237,20 @@ app.get('/api/profile', (_req, res) => {
 });
 
 app.put('/api/profile', (req, res) => {
-  const p = { ...req.body, id: PROFILE_ID };
+  const p = {
+    proteinTargetG: null,
+    budgetSource: 'formula',
+    measuredTdee: null,
+    reminderHour: null,
+    timezone: null,
+    ...req.body,
+    id: PROFILE_ID,
+  };
   db.prepare(`INSERT OR REPLACE INTO profile
-    (id, sex, birthDate, heightCm, startWeightKg, goalWeightKg, activityLevel, weeklyRateKg, units, createdAt)
-    VALUES (@id, @sex, @birthDate, @heightCm, @startWeightKg, @goalWeightKg, @activityLevel, @weeklyRateKg, @units, @createdAt)`).run(p);
+    (id, sex, birthDate, heightCm, startWeightKg, goalWeightKg, activityLevel, weeklyRateKg, units, createdAt,
+     proteinTargetG, budgetSource, measuredTdee, reminderHour, timezone)
+    VALUES (@id, @sex, @birthDate, @heightCm, @startWeightKg, @goalWeightKg, @activityLevel, @weeklyRateKg, @units, @createdAt,
+     @proteinTargetG, @budgetSource, @measuredTdee, @reminderHour, @timezone)`).run(p);
   res.json(p);
 });
 
@@ -387,6 +439,169 @@ app.delete('/api/food-log/:id', (req, res) => {
   res.json({ ok: true });
 });
 
+// Editing a logged entry in place, rather than delete-and-re-add.
+app.patch('/api/food-log/:id', (req, res) => {
+  const existing = db.prepare('SELECT * FROM food_log WHERE id = ?').get(req.params.id);
+  if (!existing) return res.status(404).json({ error: 'not found' });
+  const e = {
+    ...existing,
+    ...pick(req.body, ['meal', 'servings', 'caloriesCached', 'label']),
+    id: existing.id,
+  };
+  db.prepare(`UPDATE food_log SET meal = @meal, servings = @servings,
+    caloriesCached = @caloriesCached, label = @label WHERE id = @id`).run(e);
+  res.json(e);
+});
+
+// ——— saved meals ———
+
+const templateItems = db.prepare(
+  `SELECT i.*, ${foodColumns} FROM meal_template_items i
+   LEFT JOIN foods f ON f.id = i.foodId WHERE i.templateId = ? ORDER BY i.position`,
+);
+
+function templateWithItems(row) {
+  return {
+    ...row,
+    items: templateItems.all(row.id).map((i) => ({
+      id: i.id,
+      foodId: i.foodId,
+      servings: i.servings,
+      caloriesCached: i.caloriesCached,
+      label: i.label ?? undefined,
+      food: rowFood(i),
+    })),
+  };
+}
+
+app.get('/api/meal-templates', (_req, res) => {
+  const rows = db.prepare('SELECT * FROM meal_templates ORDER BY name COLLATE NOCASE').all();
+  res.json(rows.map(templateWithItems));
+});
+
+const insertTemplate = db.prepare(
+  'INSERT INTO meal_templates (id, name, createdAt) VALUES (@id, @name, @createdAt)',
+);
+const insertTemplateItem = db.prepare(
+  `INSERT INTO meal_template_items (id, templateId, foodId, servings, caloriesCached, label, position)
+   VALUES (@id, @templateId, @foodId, @servings, @caloriesCached, @label, @position)`,
+);
+
+function createTemplate(name, items) {
+  const template = { id: newId(), name, createdAt: new Date().toISOString() };
+  db.transaction(() => {
+    insertTemplate.run(template);
+    items.forEach((item, position) =>
+      insertTemplateItem.run({
+        id: newId(),
+        templateId: template.id,
+        foodId: item.foodId ?? null,
+        servings: item.servings ?? 1,
+        caloriesCached: Math.round(item.caloriesCached ?? 0),
+        label: item.label ?? null,
+        position,
+      }),
+    );
+  })();
+  return template;
+}
+
+app.post('/api/meal-templates', (req, res) => {
+  const { name, items } = req.body ?? {};
+  if (!name?.trim()) return res.status(400).json({ error: 'name required' });
+  if (!Array.isArray(items) || items.length === 0) {
+    return res.status(400).json({ error: 'at least one item required' });
+  }
+  const template = createTemplate(name.trim(), items);
+  res.json(templateWithItems(db.prepare('SELECT * FROM meal_templates WHERE id = ?').get(template.id)));
+});
+
+// The everyday path: turn what you just logged into a reusable meal.
+app.post('/api/meal-templates/from-day', (req, res) => {
+  const { name, date, meal } = req.body ?? {};
+  if (!name?.trim()) return res.status(400).json({ error: 'name required' });
+  const entries = db
+    .prepare('SELECT * FROM food_log WHERE date = ? AND meal = ? ORDER BY rowid')
+    .all(date, meal);
+  if (entries.length === 0) return res.status(400).json({ error: 'nothing logged for that meal' });
+  const template = createTemplate(name.trim(), entries);
+  res.json(templateWithItems(db.prepare('SELECT * FROM meal_templates WHERE id = ?').get(template.id)));
+});
+
+app.post('/api/meal-templates/:id/log', (req, res) => {
+  const { date, meal } = req.body ?? {};
+  const items = templateItems.all(req.params.id);
+  if (items.length === 0) return res.status(404).json({ error: 'not found' });
+  const insert = db.prepare(`INSERT INTO food_log (id, date, meal, foodId, servings, caloriesCached, label)
+    VALUES (@id, @date, @meal, @foodId, @servings, @caloriesCached, @label)`);
+  db.transaction(() => {
+    for (const item of items) {
+      insert.run({
+        id: newId(),
+        date,
+        meal,
+        foodId: item.foodId,
+        servings: item.servings,
+        caloriesCached: item.caloriesCached,
+        label: item.label,
+      });
+    }
+  })();
+  res.json({ ok: true, count: items.length });
+});
+
+// A recipe is a saved meal divided into portions: sum the ingredients, split by
+// how many servings it makes, and store that as an ordinary custom food.
+app.post('/api/meal-templates/:id/as-food', (req, res) => {
+  const { name, servings } = req.body ?? {};
+  const makes = Number(servings);
+  if (!name?.trim()) return res.status(400).json({ error: 'name required' });
+  if (!Number.isFinite(makes) || makes <= 0) return res.status(400).json({ error: 'servings required' });
+  const items = templateItems.all(req.params.id);
+  if (items.length === 0) return res.status(404).json({ error: 'not found' });
+
+  const total = { calories: 0, protein: 0, carbs: 0, fat: 0, grams: 0 };
+  let macrosKnown = true;
+  for (const item of items) {
+    total.calories += item.caloriesCached;
+    const food = rowFood(item);
+    if (!food) {
+      macrosKnown = false; // a label-only item contributes calories and nothing else
+      continue;
+    }
+    total.protein += (food.protein ?? 0) * item.servings;
+    total.carbs += (food.carbs ?? 0) * item.servings;
+    total.fat += (food.fat ?? 0) * item.servings;
+    total.grams += (food.servingGrams ?? 0) * item.servings;
+    if (food.protein == null && food.carbs == null && food.fat == null) macrosKnown = false;
+  }
+
+  const per = (v) => Math.round((v / makes) * 10) / 10;
+  const food = {
+    id: `custom-${newId()}`,
+    name: name.trim(),
+    brand: null,
+    barcode: null,
+    servingLabel: makes === 1 ? '1 recipe' : `1 of ${makes} servings`,
+    servingGrams: total.grams > 0 ? per(total.grams) : null,
+    caloriesPerServing: Math.round(total.calories / makes),
+    protein: macrosKnown ? per(total.protein) : null,
+    carbs: macrosKnown ? per(total.carbs) : null,
+    fat: macrosKnown ? per(total.fat) : null,
+    source: 'custom',
+  };
+  saveFood(food);
+  res.json(food);
+});
+
+app.delete('/api/meal-templates/:id', (req, res) => {
+  db.transaction(() => {
+    db.prepare('DELETE FROM meal_template_items WHERE templateId = ?').run(req.params.id);
+    db.prepare('DELETE FROM meal_templates WHERE id = ?').run(req.params.id);
+  })();
+  res.json({ ok: true });
+});
+
 app.post('/api/exercise', (req, res) => {
   const e = { id: newId(), ...req.body };
   db.prepare(`INSERT INTO exercise_log (id, date, name, minutes, caloriesBurned)
@@ -480,6 +695,9 @@ app.delete('/api/all', (_req, res) => {
     db.prepare('DELETE FROM exercise_log').run();
     db.prepare('DELETE FROM weights').run();
     db.prepare('DELETE FROM day_done').run();
+    db.prepare('DELETE FROM meal_template_items').run();
+    db.prepare('DELETE FROM meal_templates').run();
+    db.prepare('DELETE FROM measurements').run();
     for (const row of db.prepare('SELECT id FROM photos').all()) {
       fs.rmSync(photoPath(row.id), { force: true });
     }

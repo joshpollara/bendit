@@ -1,6 +1,6 @@
 import { lazy, Suspense, useEffect, useRef, useState } from 'react';
 import { useNavigate, useSearchParams } from 'react-router-dom';
-import { api } from '../lib/api';
+import { api, type MealTemplate } from '../lib/api';
 import { useData } from '../lib/useData';
 import { todayStr } from '../lib/dates';
 import { lookupBarcodeRemote, searchOpenFoodFacts } from '../lib/openfoodfacts';
@@ -10,12 +10,12 @@ import { useUI } from '../store/ui';
 import { MEALS, MEAL_LABELS, type Food, type Meal } from '../types';
 import ServingSheet from '../components/ServingSheet';
 import FoodForm from '../components/FoodForm';
-import { BarcodeIcon, ChevronLeftIcon, SearchIcon } from '../components/Icons';
+import { BarcodeIcon, ChevronLeftIcon, SearchIcon, TrashIcon } from '../components/Icons';
 
 // zxing is heavy; only load it when the user actually opens the scanner.
 const BarcodeScanner = lazy(() => import('../components/BarcodeScanner'));
 
-type Tab = 'quick' | 'search' | 'recent' | 'mine' | 'create';
+type Tab = 'quick' | 'search' | 'recent' | 'meals' | 'mine' | 'create';
 
 function defaultMeal(): Meal {
   const h = new Date().getHours();
@@ -56,6 +56,87 @@ function FoodRow({ food, onPick }: { food: Food; onPick: (f: Food) => void }) {
         {formatCalories(food.caloriesPerServing)}
       </span>
     </button>
+  );
+}
+
+// Saved meals: one tap logs every item in the bundle. A saved meal can also be
+// turned into a single food, which is what a recipe is — ingredients divided
+// into portions.
+function SavedMeals({
+  templates,
+  onLog,
+  onChanged,
+}: {
+  templates: MealTemplate[] | undefined;
+  onLog: (template: MealTemplate) => void;
+  onChanged: () => void;
+}) {
+  if (templates === undefined) {
+    return <p className="px-4 py-6 text-center text-sm text-ink-muted">Loading…</p>;
+  }
+  if (templates.length === 0) {
+    return (
+      <p className="px-4 py-6 text-center text-sm text-ink-muted">
+        On the Budget screen, tap "Save as a meal" under anything you've logged, and it shows up
+        here to log again in one tap.
+      </p>
+    );
+  }
+
+  async function asRecipe(template: MealTemplate) {
+    const servings = window.prompt(`"${template.name}" makes how many servings?`, '1');
+    const makes = Number(servings);
+    if (!servings || !Number.isFinite(makes) || makes <= 0) return;
+    const name = window.prompt('Save the recipe as:', template.name);
+    if (!name?.trim()) return;
+    const food = await api.mealTemplateAsFood(template.id, name.trim(), makes);
+    onChanged();
+    window.alert(`Saved "${food.name}" — ${food.caloriesPerServing} cal per serving.`);
+  }
+
+  async function remove(template: MealTemplate) {
+    if (!window.confirm(`Delete the saved meal "${template.name}"?`)) return;
+    await api.deleteMealTemplate(template.id);
+    onChanged();
+  }
+
+  return (
+    <ul>
+      {templates.map((t) => {
+        const calories = t.items.reduce((sum, i) => sum + i.caloriesCached, 0);
+        return (
+          <li key={t.id} className="border-b border-line last:border-b-0">
+            <div className="flex items-center gap-3 px-4 py-3">
+              <button type="button" onClick={() => onLog(t)} className="min-w-0 flex-1 text-left">
+                <p className="truncate text-sm font-medium">{t.name}</p>
+                <p className="truncate text-xs text-ink-muted">
+                  {t.items.length} item{t.items.length === 1 ? '' : 's'} ·{' '}
+                  {t.items.map((i) => i.food?.name ?? i.label ?? 'item').join(', ')}
+                </p>
+              </button>
+              <span className="text-sm font-medium tabular-nums text-ink-secondary">
+                {formatCalories(calories)}
+              </span>
+              <button
+                type="button"
+                aria-label={`Delete ${t.name}`}
+                onClick={() => remove(t)}
+                className="rounded-full p-1.5 text-ink-muted hover:bg-surface hover:text-over"
+              >
+                <TrashIcon className="h-4 w-4" />
+              </button>
+            </div>
+            <button
+              type="button"
+              onClick={() => asRecipe(t)}
+              className="px-4 pb-2 text-xs font-medium text-accent"
+            >
+              Save as a recipe food
+            </button>
+          </li>
+        );
+      })}
+    </ul>
   );
 }
 
@@ -226,6 +307,15 @@ export default function AddFood() {
     navigate('/');
   }
 
+  const templates = useData(() => api.mealTemplates(), []);
+
+  async function logTemplate(template: MealTemplate) {
+    await api.logMealTemplate(template.id, date, meal);
+    bump();
+    setDate(date);
+    navigate('/');
+  }
+
   const recents = useData(() => api.recentFoods(), []);
   const mine = useData(() => api.customFoods(), []);
 
@@ -246,8 +336,9 @@ export default function AddFood() {
     { key: 'quick', label: 'Quick' },
     { key: 'search', label: 'Search' },
     { key: 'recent', label: 'Recent' },
+    { key: 'meals', label: 'Meals' },
     { key: 'mine', label: 'Mine' },
-    { key: 'create', label: 'Create' },
+    { key: 'create', label: 'New' },
   ];
 
   const showLocal = local ?? [];
@@ -295,7 +386,7 @@ export default function AddFood() {
         <p className="mx-4 mt-3 rounded-xl bg-over-soft px-3 py-2.5 text-sm text-over">{banner}</p>
       )}
 
-      <div className="mx-4 mt-3 grid grid-cols-5 rounded-xl bg-card p-1 text-center text-xs font-semibold">
+      <div className="mx-4 mt-3 grid grid-cols-6 rounded-xl bg-card p-1 text-center text-[11px] font-semibold">
         {tabs.map((t) => (
           <button
             key={t.key}
@@ -360,6 +451,10 @@ export default function AddFood() {
           ) : (
             recents!.map((f) => <FoodRow key={f.id} food={f} onPick={setSelected} />)
           ))}
+
+        {tab === 'meals' && (
+          <SavedMeals templates={templates} onLog={logTemplate} onChanged={bump} />
+        )}
 
         {tab === 'mine' &&
           ((mine?.length ?? 0) === 0 ? (

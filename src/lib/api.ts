@@ -1,4 +1,13 @@
-import type { ExerciseEntry, Food, FoodLogEntry, Meal, Profile, WeightEntry } from '../types';
+import type {
+  ExerciseEntry,
+  Food,
+  FoodLogEntry,
+  Meal,
+  Measurement,
+  MeasurementSite,
+  Profile,
+  WeightEntry,
+} from '../types';
 import type { DayTotals } from './report';
 
 // Thin client for the server API. The server owns the SQLite database; the
@@ -28,6 +37,22 @@ export interface DayData {
   yesterdayMealCounts: Partial<Record<Meal, number>>;
   /** The user has declared logging finished for this day. */
   done: boolean;
+}
+
+export interface MealTemplateItem {
+  id: string;
+  foodId: string | null;
+  servings: number;
+  caloriesCached: number;
+  label?: string;
+  food?: Food;
+}
+
+export interface MealTemplate {
+  id: string;
+  name: string;
+  createdAt: string;
+  items: MealTemplateItem[];
 }
 
 export interface ProgressPhoto {
@@ -69,6 +94,27 @@ export const api = {
 
   addLogEntry: (e: Omit<FoodLogEntry, 'id'>) => post('/api/food-log', e),
   deleteLogEntry: (id: string) => j<unknown>(`/api/food-log/${id}`, { method: 'DELETE' }),
+
+  updateLogEntry: (
+    id: string,
+    changes: Partial<Pick<FoodLogEntry, 'meal' | 'servings' | 'caloriesCached' | 'label'>>,
+  ) => post(`/api/food-log/${id}`, changes, 'PATCH'),
+
+  mealTemplates: () => j<MealTemplate[]>('/api/meal-templates'),
+  createMealTemplate: (name: string, items: Omit<MealTemplateItem, 'id' | 'food'>[]) =>
+    post('/api/meal-templates', { name, items }) as Promise<unknown>,
+  saveMealAsTemplate: (name: string, date: string, meal: Meal) =>
+    post('/api/meal-templates/from-day', { name, date, meal }),
+  logMealTemplate: (id: string, date: string, meal: Meal) =>
+    post(`/api/meal-templates/${id}/log`, { date, meal }),
+  mealTemplateAsFood: (id: string, name: string, servings: number) =>
+    post(`/api/meal-templates/${id}/as-food`, { name, servings }) as Promise<Food>,
+  deleteMealTemplate: (id: string) => j<unknown>(`/api/meal-templates/${id}`, { method: 'DELETE' }),
+
+  listMeasurements: () => j<Measurement[]>('/api/measurements'),
+  putMeasurement: (m: { date: string; site: MeasurementSite; valueCm: number }) =>
+    post('/api/measurements', m, 'PUT'),
+  deleteMeasurement: (id: string) => j<unknown>(`/api/measurements/${id}`, { method: 'DELETE' }),
 
   addExercise: (e: Omit<ExerciseEntry, 'id'>) => post('/api/exercise', e),
   deleteExercise: (id: string) => j<unknown>(`/api/exercise/${id}`, { method: 'DELETE' }),
