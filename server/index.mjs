@@ -557,6 +557,21 @@ app.get('/api/recents', (_req, res) => {
   );
 });
 
+// Quick adds have no food behind them, so they can never show up in /api/recents.
+// Their labels are the next best handle: the ten you've typed most recently.
+app.get('/api/recent-quick-adds', (_req, res) => {
+  res.json(
+    db
+      .prepare(`SELECT label, caloriesCached AS calories, MAX(rowid) AS r
+                FROM food_log
+                WHERE foodId IS NULL AND label IS NOT NULL AND label != ''
+                GROUP BY label COLLATE NOCASE
+                ORDER BY r DESC LIMIT 10`)
+      .all()
+      .map(({ label, calories }) => ({ label, calories: Math.round(calories) })),
+  );
+});
+
 app.post('/api/food-log', (req, res) => {
   const e = { id: newId(), foodId: null, label: null, servings: 1, ...req.body };
   db.prepare(`INSERT INTO food_log (id, date, meal, foodId, servings, caloriesCached, label)
@@ -739,6 +754,16 @@ app.post('/api/exercise', (req, res) => {
   res.json(e);
 });
 
+app.patch('/api/exercise/:id', (req, res) => {
+  const existing = db.prepare('SELECT * FROM exercise_log WHERE id = ?').get(req.params.id);
+  if (!existing) return res.status(404).json({ error: 'not found' });
+  const e = { ...existing, ...pick(req.body, ['name', 'minutes', 'caloriesBurned']), id: existing.id };
+  db.prepare(
+    'UPDATE exercise_log SET name = @name, minutes = @minutes, caloriesBurned = @caloriesBurned WHERE id = @id',
+  ).run(e);
+  res.json(e);
+});
+
 app.delete('/api/exercise/:id', (req, res) => {
   db.prepare('DELETE FROM exercise_log WHERE id = ?').run(req.params.id);
   res.json({ ok: true });
@@ -808,6 +833,14 @@ app.get('/api/photos/:id/image', (req, res) => {
   if (!row) return;
   res.set('Cache-Control', 'private, max-age=31536000, immutable'); // content never changes
   res.sendFile(photoPath(row.id));
+});
+
+app.patch('/api/photos/:id', (req, res) => {
+  const row = knownPhoto(req, res);
+  if (!row) return;
+  if (!isDate(req.body?.date)) return res.status(400).json({ error: 'bad date' });
+  db.prepare('UPDATE photos SET date = ? WHERE id = ?').run(req.body.date, row.id);
+  res.json({ ...row, date: req.body.date });
 });
 
 app.delete('/api/photos/:id', (req, res) => {

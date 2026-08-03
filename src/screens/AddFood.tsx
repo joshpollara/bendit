@@ -152,6 +152,9 @@ function QuickAddForm({
   const [calories, setCalories] = useState('');
   const [label, setLabel] = useState('');
   const [meal, setMeal] = useState<Meal>(initialMeal);
+  // Quick adds never reach the Recent tab — they have no food behind them — so
+  // the ones you've typed before come back here instead.
+  const recent = useData(() => api.recentQuickAdds(), []);
 
   const value = Number(calories);
   const valid = calories.trim() !== '' && Number.isFinite(value) && value > 0;
@@ -186,6 +189,24 @@ function QuickAddForm({
         value={label}
         onChange={(e) => setLabel(e.target.value)}
       />
+
+      {(recent?.length ?? 0) > 0 && (
+        <div className="flex flex-wrap gap-1.5">
+          {recent!.map((r) => (
+            <button
+              key={r.label}
+              type="button"
+              onClick={() => {
+                setLabel(r.label);
+                setCalories(String(r.calories));
+              }}
+              className="rounded-full border border-line px-3 py-1.5 text-xs text-ink-secondary hover:bg-surface"
+            >
+              {r.label} · {r.calories}
+            </button>
+          ))}
+        </div>
+      )}
 
       <div className="grid grid-cols-4 gap-2">
         {MEALS.map((m) => (

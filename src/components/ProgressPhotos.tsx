@@ -17,12 +17,14 @@ function Viewer({
   onIndex,
   onClose,
   onDelete,
+  onRedate,
 }: {
   photos: ProgressPhoto[];
   index: number;
   onIndex: (i: number) => void;
   onClose: () => void;
   onDelete: (photo: ProgressPhoto) => void;
+  onRedate: (photo: ProgressPhoto) => void;
 }) {
   const photo = photos[index];
   return (
@@ -42,6 +44,17 @@ function Viewer({
             className="rounded-full p-2 text-white/70 hover:text-white"
           >
             <TrashIcon className="h-5 w-5" />
+          </button>
+          <button
+            type="button"
+            aria-label="Change the date"
+            onClick={(e) => {
+              e.stopPropagation();
+              onRedate(photo);
+            }}
+            className="rounded-full px-2 py-2 text-xs font-medium text-white/70 hover:text-white"
+          >
+            Date
           </button>
           <button type="button" aria-label="Close" className="rounded-full p-2 text-white">
             <XIcon className="h-5 w-5" />
@@ -160,6 +173,14 @@ export default function ProgressPhotos() {
     }
   }
 
+  // A photo taken yesterday but added today should say yesterday.
+  async function redate(photo: ProgressPhoto) {
+    const next = window.prompt('Date for this photo (YYYY-MM-DD):', photo.date);
+    if (!next || !/^\d{4}-\d{2}-\d{2}$/.test(next)) return;
+    await api.setPhotoDate(photo.id, next);
+    bump();
+  }
+
   async function remove(photo: ProgressPhoto) {
     if (!window.confirm(`Delete the photo from ${shortDate(photo.date)}?`)) return;
     await api.deletePhoto(photo.id);
@@ -262,6 +283,7 @@ export default function ProgressPhotos() {
           onIndex={setViewing}
           onClose={() => setViewing(null)}
           onDelete={remove}
+          onRedate={redate}
         />
       )}
     </section>

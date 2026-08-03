@@ -7,8 +7,9 @@ import { dayLabel, shiftDay, todayStr } from '../lib/dates';
 import { formatCalories } from '../lib/units';
 import { STRINGS } from '../lib/strings';
 import { useUI } from '../store/ui';
-import { MEAL_LABELS, MEALS, type Meal, type Profile } from '../types';
+import { MEAL_LABELS, MEALS, type ExerciseEntry, type Meal, type Profile } from '../types';
 import EntrySheet from '../components/EntrySheet';
+import ExerciseSheet from '../components/ExerciseSheet';
 import {
   CheckIcon,
   ChevronDownIcon,
@@ -390,6 +391,7 @@ export default function Today({ profile }: { profile: Profile }) {
   const bump = useUI((s) => s.bump);
 
   const day = useData(() => api.getDay(date, shiftDay(date, -1)), [date]);
+  const [editingExercise, setEditingExercise] = useState<ExerciseEntry | null>(null);
 
   const joined = day?.entries ?? [];
   const exercises = day?.exercises ?? [];
@@ -450,10 +452,15 @@ export default function Today({ profile }: { profile: Profile }) {
                   key={e.id}
                   className="flex items-center gap-3 border-b border-line px-4 py-2.5 last:border-b-0"
                 >
-                  <div className="min-w-0 flex-1">
+                  <button
+                    type="button"
+                    onClick={() => setEditingExercise(e)}
+                    aria-label={`Edit ${e.name}`}
+                    className="min-w-0 flex-1 text-left"
+                  >
                     <p className="truncate text-sm font-medium">{e.name}</p>
                     <p className="text-xs text-ink-muted">{e.minutes} min</p>
-                  </div>
+                  </button>
                   <span className="text-sm font-medium tabular-nums text-good">
                     +{formatCalories(e.caloriesBurned)}
                   </span>
@@ -471,6 +478,17 @@ export default function Today({ profile }: { profile: Profile }) {
           )}
         </div>
       </section>
+
+      {editingExercise && (
+        <ExerciseSheet
+          entry={editingExercise}
+          onClose={() => setEditingExercise(null)}
+          onChanged={() => {
+            setEditingExercise(null);
+            bump();
+          }}
+        />
+      )}
 
       {day && <DayDone date={date} done={day.done} left={left} />}
     </div>

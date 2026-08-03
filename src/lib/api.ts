@@ -148,7 +148,13 @@ export const api = {
     post('/api/measurements', m, 'PUT'),
   deleteMeasurement: (id: string) => j<unknown>(`/api/measurements/${id}`, { method: 'DELETE' }),
 
+  recentQuickAdds: () => j<{ label: string; calories: number }[]>('/api/recent-quick-adds'),
+
   addExercise: (e: Omit<ExerciseEntry, 'id'>) => post('/api/exercise', e),
+  updateExercise: (
+    id: string,
+    changes: Partial<Pick<ExerciseEntry, 'name' | 'minutes' | 'caloriesBurned'>>,
+  ) => post(`/api/exercise/${id}`, changes, 'PATCH'),
   deleteExercise: (id: string) => j<unknown>(`/api/exercise/${id}`, { method: 'DELETE' }),
 
   getReport: (from?: string) =>
@@ -179,6 +185,8 @@ export const api = {
     return res.json() as Promise<ProgressPhoto>;
   },
   photoUrl: (id: string) => `/api/photos/${encodeURIComponent(id)}/image`,
+  setPhotoDate: (id: string, date: string) =>
+    post(`/api/photos/${encodeURIComponent(id)}`, { date }, 'PATCH'),
   deletePhoto: (id: string) => j<unknown>(`/api/photos/${encodeURIComponent(id)}`, { method: 'DELETE' }),
 
   resetAll: () => j<unknown>('/api/all', { method: 'DELETE' }),

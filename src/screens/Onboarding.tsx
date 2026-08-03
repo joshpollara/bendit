@@ -1,7 +1,7 @@
 import { useState } from 'react';
 import { api } from '../lib/api';
 import { useUI } from '../store/ui';
-import { computeBudget } from '../lib/budget';
+import { computeBudget, suggestedProteinG } from '../lib/budget';
 import { todayStr } from '../lib/dates';
 import { cmToFtIn, formatCalories, ftInToCm, kgToLb, lbToKg } from '../lib/units';
 import { STRINGS } from '../lib/strings';
@@ -16,7 +16,9 @@ const ACTIVITY_OPTIONS: { value: ActivityLevel; title: string; sub: string }[] =
   { value: 'very_active', title: 'Extra active', sub: 'Physical job plus training' },
 ];
 
-const STEPS = ['welcome', 'sex', 'birth', 'height', 'weight', 'goal', 'rate', 'activity', 'reveal'] as const;
+const STEPS = [
+  'welcome', 'sex', 'birth', 'height', 'weight', 'goal', 'rate', 'activity', 'protein', 'reveal',
+] as const;
 type Step = (typeof STEPS)[number];
 
 const bigButton =
@@ -36,6 +38,7 @@ export default function Onboarding() {
   const [goalInput, setGoalInput] = useState('165');
   const [rateIndex, setRateIndex] = useState(1);
   const [activity, setActivity] = useState<ActivityLevel | null>(null);
+  const [proteinTarget, setProteinTarget] = useState<number | null>(null);
 
   const step: Step = STEPS[stepIndex];
   const next = () => setStepIndex((i) => Math.min(i + 1, STEPS.length - 1));
@@ -89,6 +92,7 @@ export default function Onboarding() {
       ...draft,
       goalWeightKg,
       units,
+      proteinTargetG: proteinTarget,
       createdAt: new Date().toISOString(),
     });
     await api.putWeight({ date: todayStr(), weightKg: draft.startWeightKg });
@@ -246,6 +250,44 @@ export default function Onboarding() {
         </div>
       )}
 
+      {step === 'protein' && (
+        <div className="flex flex-1 flex-col gap-3">
+          <h2 className="text-2xl font-bold">Track protein too?</h2>
+          <p className="mb-2 text-sm text-ink-muted">
+            Eating enough protein while losing weight is what keeps the loss from coming out of your
+            muscle. Optional — you can change or turn this off later.
+          </p>
+          {goalWeightKg && (
+            <button
+              type="button"
+              onClick={() => {
+                setProteinTarget(suggestedProteinG(goalWeightKg));
+                next();
+              }}
+              className={choice(proteinTarget != null)}
+            >
+              <span className="block font-semibold">
+                Yes — aim for {suggestedProteinG(goalWeightKg)} g a day
+              </span>
+              <span className="block text-xs text-ink-muted">
+                1.6 g per kg of your goal weight, the usual recommendation in a deficit
+              </span>
+            </button>
+          )}
+          <button
+            type="button"
+            onClick={() => {
+              setProteinTarget(null);
+              next();
+            }}
+            className={choice(false)}
+          >
+            <span className="block font-semibold">Just calories</span>
+            <span className="block text-xs text-ink-muted">Keep it to one number a day</span>
+          </button>
+        </div>
+      )}
+
       {step === 'reveal' && result && (
         <div className="flex flex-1 flex-col items-center justify-center gap-4 text-center">
           <p className="text-sm font-medium uppercase tracking-wide text-ink-muted">
@@ -264,6 +306,9 @@ export default function Onboarding() {
           <button type="button" onClick={finish} className={`${bigButton} mt-4`}>
             Start Tracking
           </button>
+          <p className="text-xs text-ink-muted">
+            In More you can switch to dark mode, set an evening reminder, and download a backup.
+          </p>
         </div>
       )}
 
