@@ -27,6 +27,8 @@ const GENERIC_GRAMS = {
   stick: 113, // a stick of butter
   sprig: 2,
   can: 400,
+  rasher: 25,
+  stalk: 40, // a celery stick
 };
 
 /** How sure the weight is, and where it came from. */
@@ -52,6 +54,8 @@ function portionFor(servings, unit, size) {
     slice: ['slice'],
     clove: ['clove'],
     stick: ['stick'],
+    stalk: ['stalk', 'stick'],
+    rasher: ['rasher', 'slice'],
     can: ['can', 'tin'],
     'fl oz': ['fl oz'],
   }[unit];

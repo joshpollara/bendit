@@ -134,4 +134,50 @@ TASKS.meal = {
   },
 };
 
+/**
+ * A recipe, read from a photograph of a page or from the text of one that
+ * published no structured data.
+ *
+ * The model transcribes and counts; it does not weigh or price. Ingredient
+ * lines come back as written, because the parser turns "1½ cups" into grams
+ * more reliably than any prose about it, and the calories come from the food
+ * database as they do everywhere else.
+ */
+TASKS.recipe = {
+  version: '1',
+  prompt: [
+    'You are reading a recipe, either from a photograph of a page or from the text of a web page.',
+    '',
+    'Return:',
+    '  • name — what the recipe is called.',
+    '  • ingredients — every ingredient line, exactly as written, in order. Keep the',
+    '    quantities and units as printed: "1½ cups plain flour", not "flour".',
+    '  • instructions — the method, one step per line, or null if there is none.',
+    '  • servings — how many portions it makes, if the recipe says so.',
+    '  • servingsStated — true only if the recipe actually says. If it does not,',
+    '    estimate from the quantities and set this false.',
+    '  • servingsReasoning — one short sentence on where the number came from.',
+    '',
+    'Do not give calories or any other nutrition figure. Those are looked up from the',
+    'ingredients, not taken from you.',
+    'Ignore anything that is not the recipe: adverts, comments, the writer’s holiday.',
+  ].join('\n'),
+  schema: {
+    type: 'object',
+    properties: {
+      name: { type: 'string' },
+      ingredients: {
+        type: 'array',
+        description: 'Ingredient lines, as written',
+        items: { type: 'string' },
+      },
+      instructions: { type: 'string', nullable: true },
+      servings: { type: 'number', nullable: true, description: 'Portions the recipe makes' },
+      servingsStated: { type: 'boolean', description: 'True only if the recipe says so itself' },
+      servingsReasoning: { type: 'string', nullable: true },
+    },
+    required: ['name', 'ingredients', 'servingsStated'],
+  },
+};
+
 export const getTask = (name) => TASKS[name] ?? null;

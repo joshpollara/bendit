@@ -21,6 +21,13 @@ import {
   createLabelValidateHandler,
 } from './lib/labelRoute.mjs';
 import { createMealEstimateHandler } from './lib/mealRoute.mjs';
+import {
+  createRecipeFromPhotoHandler,
+  createRecipeFromUrlHandler,
+  createRecipePriceHandler,
+  createRecipeRoutes,
+} from './lib/recipeRoute.mjs';
+import { createRecipeTables } from './lib/recipeStore.mjs';
 import { createVisionExtractHandler } from './lib/visionRoute.mjs';
 import webpush from 'web-push';
 import Database from 'better-sqlite3';
@@ -92,6 +99,7 @@ CREATE TABLE IF NOT EXISTS push_subscriptions (
 `);
 
 createUsersTable(db);
+createRecipeTables(db);
 
 // Columns added after the first release. SQLite only supports ADD COLUMN, which
 // is all these need — every one is nullable or defaulted.
@@ -357,7 +365,12 @@ app.use(
 // this exemption a real photo is rejected here and the caller gets Express's
 // HTML error page instead of the endpoint's typed JSON. Those routes install
 // their own parser with a limit that fits.
-const IMAGE_ROUTES = new Set(['/api/vision/extract', '/api/labels/extract', '/api/meals/estimate']);
+const IMAGE_ROUTES = new Set([
+  '/api/vision/extract',
+  '/api/labels/extract',
+  '/api/meals/estimate',
+  '/api/recipes/from-photo',
+]);
 const parseJson = express.json();
 app.use((req, res, next) => (IMAGE_ROUTES.has(req.path) ? next() : parseJson(req, res, next)));
 
@@ -1245,6 +1258,24 @@ app.post('/api/labels/validate', express.json(), createLabelValidateHandler());
 // from the foods table, looked up by the same search the picker uses.
 
 app.post('/api/meals/estimate', bigJson, createMealEstimateHandler({ db, visionHandler }));
+
+// ——— recipes ———
+//
+// A recipe is a list of written lines and a number of servings. Saving one also
+// writes the food for a single serving, which is what gets logged. Recipes are
+// visible to everyone here; editing stays with whoever added it.
+
+const recipes = createRecipeRoutes({ db, saveFood });
+
+app.get('/api/recipes', recipes.list);
+app.get('/api/recipes/:id', recipes.read);
+app.post('/api/recipes', recipes.save);
+app.put('/api/recipes/:id', recipes.save);
+app.delete('/api/recipes/:id', recipes.remove);
+
+app.post('/api/recipes/price', createRecipePriceHandler({ db }));
+app.post('/api/recipes/from-url', createRecipeFromUrlHandler({ db, visionHandler }));
+app.post('/api/recipes/from-photo', bigJson, createRecipeFromPhotoHandler({ db, visionHandler }));
 
 // ——— progress photos ———
 

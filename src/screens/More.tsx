@@ -323,6 +323,12 @@ export default function More({ profile }: { profile: Profile }) {
         >
           Manage foods
         </Link>
+        <Link
+          to="/recipes"
+          className="mt-2 block w-full rounded-xl border border-line py-2.5 text-center text-sm font-semibold text-accent"
+        >
+          Recipes
+        </Link>
       </section>
 
       <section className={card}>

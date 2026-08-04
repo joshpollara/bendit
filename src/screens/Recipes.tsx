@@ -1,0 +1,230 @@
+import { lazy, Suspense, useRef, useState } from 'react';
+import { api, type Recipe, type RecipeDraft } from '../lib/api';
+import { useData } from '../lib/useData';
+import { resizeForModel } from '../lib/vision';
+import { formatCalories } from '../lib/units';
+import { CameraIcon, TrashIcon } from '../components/Icons';
+import RecipeEditor from '../components/RecipeEditor';
+
+const CameraCapture = lazy(() => import('../components/CameraCapture'));
+
+// Recipes, and what one serving of each comes to.
+//
+// Everything here is shared: a recipe anyone adds is a recipe everyone can see
+// and log. Editing stays with whoever added it.
+
+const card = 'rounded-2xl border border-line bg-card p-4 shadow-sm';
+
+export default function Recipes() {
+  const [reload, setReload] = useState(0);
+  const recipes = useData(() => api.recipes(), [reload]);
+  const [draft, setDraft] = useState<{ draft: RecipeDraft; id?: string } | null>(null);
+  const [url, setUrl] = useState('');
+  const [busy, setBusy] = useState<'url' | 'photo' | null>(null);
+  const [error, setError] = useState<string | null>(null);
+  const [shooting, setShooting] = useState(false);
+  const fileInput = useRef<HTMLInputElement>(null);
+
+  async function fromUrl() {
+    if (!url.trim()) return;
+    setBusy('url');
+    setError(null);
+    try {
+      setDraft({ draft: await api.recipeFromUrl(url.trim()) });
+      setUrl('');
+    } catch (e) {
+      setError(e instanceof Error ? e.message : "Couldn't read that page.");
+    } finally {
+      setBusy(null);
+    }
+  }
+
+  async function fromPhoto(photo: Blob) {
+    setShooting(false);
+    setBusy('photo');
+    setError(null);
+    try {
+      setDraft({ draft: await api.recipeFromPhoto(await resizeForModel(photo)) });
+    } catch (e) {
+      setError(e instanceof Error ? e.message : "Couldn't read that photo.");
+    } finally {
+      setBusy(null);
+    }
+  }
+
+  function blank() {
+    setDraft({
+      draft: {
+        name: '',
+        servings: 4,
+        servingsStated: true,
+        ingredients: [],
+        total: { grams: null, calories: null },
+        perServing: { grams: null, calories: null, protein: null, carbs: null, fat: null },
+        unresolved: [],
+        approximate: [],
+        sourceType: 'manual',
+      },
+    });
+  }
+
+  async function edit(recipe: Recipe) {
+    setDraft({
+      id: recipe.id,
+      draft: {
+        name: recipe.name,
+        servings: recipe.servings,
+        servingsStated: recipe.servingsStated,
+        ingredients: recipe.ingredients,
+        instructions: recipe.instructions,
+        notes: recipe.notes,
+        sourceType: (recipe.sourceType as 'url' | 'photo' | 'manual') ?? 'manual',
+        sourceUrl: recipe.sourceUrl,
+        total: { grams: recipe.total.grams, calories: recipe.total.calories },
+        perServing: {
+          grams: recipe.perServing.grams,
+          calories: recipe.perServing.calories,
+          protein: null,
+          carbs: null,
+          fat: null,
+        },
+        unresolved: [],
+        approximate: [],
+      },
+    });
+  }
+
+  async function remove(recipe: Recipe) {
+    if (!window.confirm(`Delete "${recipe.name}"?`)) return;
+    await api.deleteRecipe(recipe.id);
+    setReload((n) => n + 1);
+  }
+
+  if (draft) {
+    return (
+      <RecipeEditor
+        initial={draft.draft}
+        recipeId={draft.id}
+        onClose={() => setDraft(null)}
+        onSaved={() => {
+          setDraft(null);
+          setReload((n) => n + 1);
+        }}
+      />
+    );
+  }
+
+  return (
+    <div className="mx-auto flex w-full max-w-3xl flex-col gap-3 px-4 py-4">
+      <h1 className="text-xl font-semibold">Recipes</h1>
+
+      <section className={card}>
+        <div className="flex gap-2">
+          <input
+            className="flex-1 rounded-xl border border-line bg-card px-3 py-2.5 text-sm"
+            placeholder="Paste a recipe link"
+            inputMode="url"
+            value={url}
+            onChange={(e) => setUrl(e.target.value)}
+            onKeyDown={(e) => e.key === 'Enter' && void fromUrl()}
+          />
+          <button
+            type="button"
+            disabled={!url.trim() || busy !== null}
+            onClick={() => void fromUrl()}
+            className="rounded-xl bg-accent px-4 py-2.5 text-sm font-semibold text-white disabled:opacity-40"
+          >
+            {busy === 'url' ? 'Reading…' : 'Read'}
+          </button>
+        </div>
+
+        <div className="mt-2 flex gap-2">
+          <button
+            type="button"
+            disabled={busy !== null}
+            onClick={() => setShooting(true)}
+            className="flex flex-1 items-center justify-center gap-2 rounded-xl border border-accent py-2.5 text-sm font-semibold text-accent disabled:opacity-50"
+          >
+            <CameraIcon className="h-4 w-4" />
+            {busy === 'photo' ? 'Reading…' : 'Photograph a page'}
+          </button>
+          <button
+            type="button"
+            onClick={blank}
+            className="rounded-xl border border-line px-4 py-2.5 text-sm font-semibold text-ink-secondary"
+          >
+            Type it in
+          </button>
+        </div>
+
+        <input
+          ref={fileInput}
+          type="file"
+          accept="image/*"
+          className="hidden"
+          onChange={(e) => {
+            const file = e.target.files?.[0];
+            e.target.value = '';
+            if (file) void fromPhoto(file);
+          }}
+        />
+
+        {error && (
+          <p className="mt-2 rounded-xl bg-over-soft px-3 py-2 text-xs text-over">{error}</p>
+        )}
+      </section>
+
+      {recipes?.length === 0 && (
+        <p className="px-1 py-6 text-center text-sm text-ink-muted">No recipes yet.</p>
+      )}
+
+      <ul className="flex flex-col gap-2">
+        {recipes?.map((recipe) => (
+          <li key={recipe.id} className={card}>
+            <div className="flex items-start gap-3">
+              <button type="button" onClick={() => void edit(recipe)} className="min-w-0 flex-1 text-left">
+                <p className="truncate font-medium">{recipe.name}</p>
+                <p className="truncate text-xs text-ink-muted">
+                  {recipe.servings} servings · {recipe.ingredients.length} ingredients
+                  {recipe.author ? ` · ${recipe.author}` : ''}
+                </p>
+              </button>
+              <div className="text-right">
+                <p className="text-sm font-semibold tabular-nums">
+                  {recipe.perServing.calories == null
+                    ? '—'
+                    : `${formatCalories(recipe.perServing.calories)} cal`}
+                </p>
+                <p className="text-[11px] text-ink-muted">per serving</p>
+              </div>
+              <button
+                type="button"
+                aria-label={`Delete ${recipe.name}`}
+                onClick={() => void remove(recipe)}
+                className="rounded-full p-1.5 text-ink-muted hover:bg-surface hover:text-over"
+              >
+                <TrashIcon className="h-4 w-4" />
+              </button>
+            </div>
+          </li>
+        ))}
+      </ul>
+
+      {shooting && (
+        <Suspense fallback={null}>
+          <CameraCapture
+            facing="environment"
+            title="Photograph the recipe"
+            hint="Get the ingredients list in frame."
+            onCapture={(photo) => void fromPhoto(photo)}
+            onClose={() => setShooting(false)}
+            onPickFile={() => {
+              setShooting(false);
+              fileInput.current?.click();
+            }}
+          />
+        </Suspense>
+      )}
+    </div>
+  );
+}

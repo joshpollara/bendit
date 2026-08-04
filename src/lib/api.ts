@@ -63,6 +63,68 @@ export interface MealTemplate {
   items: MealTemplateItem[];
 }
 
+export interface RecipeIngredient {
+  id?: string;
+  raw: string;
+  name?: string | null;
+  quantity?: number | null;
+  unit?: string | null;
+  grams: number | null;
+  weighedBy?: string | null;
+  reason?: string | null;
+  foodId?: string | null;
+  food?: { id: string; name: string; brand: string | null; source: string; kcal100: number | null } | null;
+  calories?: number | null;
+  nutrition?: { calories: number; protein: number | null; carbs: number | null; fat: number | null } | null;
+}
+
+export interface RecipeInput {
+  name: string;
+  servings: number;
+  servingsStated?: boolean;
+  ingredients: string[];
+  instructions?: string | null;
+  notes?: string | null;
+  sourceType?: 'url' | 'photo' | 'manual';
+  sourceUrl?: string | null;
+}
+
+/** What a read recipe looks like before it is saved. */
+export interface RecipeDraft {
+  name?: string;
+  servings: number;
+  servingsStated?: boolean;
+  servingsReasoning?: string | null;
+  ingredients: RecipeIngredient[];
+  instructions?: string | null;
+  notes?: string | null;
+  sourceType?: 'url' | 'photo' | 'manual';
+  sourceUrl?: string | null;
+  /** 'page' when the site published its own data and no model was needed. */
+  readBy?: 'page' | 'model';
+  total: { grams: number | null; calories: number | null };
+  perServing: { grams: number | null; calories: number | null; protein: number | null; carbs: number | null; fat: number | null };
+  unresolved: string[];
+  approximate: string[];
+}
+
+export interface Recipe {
+  id: string;
+  name: string;
+  servings: number;
+  servingsStated: boolean;
+  sourceType: string | null;
+  sourceUrl: string | null;
+  instructions: string | null;
+  notes: string | null;
+  author: string | null;
+  createdBy: string;
+  ingredients: RecipeIngredient[];
+  food: Food | null;
+  total: { grams: number; calories: number };
+  perServing: { calories: number | null; grams: number | null };
+}
+
 export interface ProgressPhoto {
   id: string;
   date: string;
@@ -163,6 +225,17 @@ export const api = {
     id: string,
     changes: Partial<Pick<FoodLogEntry, 'meal' | 'servings' | 'caloriesCached' | 'label'>>,
   ) => post(`/api/food-log/${id}`, changes, 'PATCH'),
+
+  recipes: () => j<Recipe[]>('/api/recipes'),
+  recipe: (id: string) => j<Recipe>(`/api/recipes/${id}`),
+  recipeFromUrl: (url: string) => post('/api/recipes/from-url', { url }) as Promise<RecipeDraft>,
+  recipeFromPhoto: (image: string) =>
+    post('/api/recipes/from-photo', { image, mimeType: 'image/jpeg' }) as Promise<RecipeDraft>,
+  priceRecipe: (ingredients: string[], servings: number) =>
+    post('/api/recipes/price', { ingredients, servings }) as Promise<RecipeDraft>,
+  saveRecipe: (recipe: RecipeInput, id?: string) =>
+    (id ? post(`/api/recipes/${id}`, recipe, 'PUT') : post('/api/recipes', recipe)) as Promise<Recipe>,
+  deleteRecipe: (id: string) => j<unknown>(`/api/recipes/${id}`, { method: 'DELETE' }),
 
   mealTemplates: () => j<MealTemplate[]>('/api/meal-templates'),
   createMealTemplate: (name: string, items: Omit<MealTemplateItem, 'id' | 'food'>[]) =>

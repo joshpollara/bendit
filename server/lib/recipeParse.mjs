@@ -34,6 +34,8 @@ const UNITS = {
   handful: ['handful', 'handfuls'],
   stick: ['stick', 'sticks'],
   sprig: ['sprig', 'sprigs'],
+  rasher: ['rasher', 'rashers'],
+  stalk: ['stalk', 'stalks', 'stick', 'sticks'],
 };
 
 const UNIT_BY_SPELLING = new Map();
@@ -120,8 +122,15 @@ export function parseIngredient(line) {
   // Leading list marks, and a trailing note after the last comma.
   let text = raw.replace(/^[-•*•]\s*/, '').trim();
 
-  const { quantity, rest: afterQuantity } = readQuantity(text);
-  let working = afterQuantity;
+  let { quantity, rest: working } = readQuantity(text);
+
+  // "2 x 400g tins" is two of a 400g tin, which is 800g of tomatoes.
+  const multiplied = /^x\s*(\d+(?:[.,]\d+)?)\s*(g|gr|grams?|kg|ml|l)\b\.?/i.exec(working);
+  if (multiplied && quantity != null) {
+    const each = Number(multiplied[1].replace(',', '.'));
+    const unit = UNIT_BY_SPELLING.get(multiplied[2].toLowerCase());
+    return finish(raw, quantity * each, unit, null, working.slice(multiplied[0].length).trim());
+  }
 
   // A parenthesised weight is the precise version of the same amount:
   // "1 (400g) tin chopped tomatoes", "2 tablespoons (30 ml) olive oil".
@@ -152,24 +161,60 @@ export function parseIngredient(line) {
   rest = rest.replace(/^of\s+/i, '').trim();
 
   const notes = [];
-  const name = rest
+  rest = rest
     .replace(PREPARATION, (match) => {
       notes.push(match.trim());
       return ' ';
     })
-    .replace(/\s*,\s*$/, '')
     .replace(/[,;]\s*$/, '')
     .replace(/\s+/g, ' ')
     .trim();
 
+  // Recipes write the measure after the food as readily as before it: "2 celery
+  // sticks", "2 garlic cloves", "4 bacon rashers". Left in the name those match
+  // nothing — the database has celery, not celery sticks. Preparation has to be
+  // off the end first, or the last word is "chopped".
+  if (!unit) {
+    const trailing = /^(.*?)\s+([a-zà-ÿ]+)$/i.exec(rest);
+    const candidate = trailing && UNIT_BY_SPELLING.get(trailing[2].toLowerCase());
+    if (candidate && trailing[1].trim()) {
+      unit = candidate;
+      rest = trailing[1].trim();
+    }
+  }
+
+  return finish(
+    raw,
+    parenthesised ? parenthesised.quantity : quantity,
+    parenthesised ? parenthesised.unit : unit,
+    size,
+    rest,
+    notes.join(', ') || null,
+  );
+}
+
+/** Packaging, which is not the food and only spoils the match. */
+const CONTAINERS = /^(tins?|cans?|jars?|packs?|packets?|boxes|bags?|bottles?|punnets?)\s+/i;
+
+/** The parsed shape, with the food name tidied the same way on every path. */
+function finish(raw, quantity, unit, size, name, note = null) {
+  const notes = [];
+  const cleaned = String(name ?? '')
+    .replace(PREPARATION, (match) => {
+      notes.push(match.trim());
+      return ' ';
+    })
+    .replace(/[,;]\s*$/, '')
+    .replace(CONTAINERS, '')
+    .replace(/\s+/g, ' ')
+    .trim();
   return {
     raw,
-    // The parenthesised weight wins: it is the same amount said exactly.
-    quantity: parenthesised ? parenthesised.quantity : quantity,
-    unit: parenthesised ? parenthesised.unit : unit,
-    size,
-    name: name.replace(/^and\s+/i, '').trim(),
-    note: notes.join(', ') || null,
+    quantity,
+    unit,
+    size: size ?? null,
+    name: cleaned.replace(/^and\s+/i, '').trim(),
+    note: note ?? (notes.join(', ') || null),
   };
 }
 

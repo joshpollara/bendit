@@ -94,7 +94,7 @@ export function createVisionProvider({
 } = {}) {
   const configured = Boolean(apiKey);
 
-  async function callOnce({ imageBase64, mimeType, prompt, schema }) {
+  async function callOnce({ imageBase64, mimeType, prompt, schema, text }) {
     const controller = new AbortController();
     const timer = setTimeout(() => controller.abort(), timeoutMs);
     try {
@@ -106,7 +106,12 @@ export function createVisionProvider({
           contents: [
             {
               role: 'user',
-              parts: [{ text: prompt }, { inlineData: { mimeType, data: imageBase64 } }],
+              // A page that published no structured data is read as text; a
+              // photograph of a page is read as an image. Same task either way.
+              parts: [
+                { text: prompt },
+                imageBase64 ? { inlineData: { mimeType, data: imageBase64 } } : { text },
+              ],
             },
           ],
           generationConfig: {
@@ -154,29 +159,32 @@ export function createVisionProvider({
      * One image in, parsed JSON out. Throws VisionError; never returns half a
      * result, and never returns unparsed text.
      */
-    async extract({ imageBase64, mimeType = 'image/jpeg', prompt, schema }) {
+    async extract({ imageBase64, mimeType = 'image/jpeg', prompt, schema, text }) {
       if (!configured) {
         throw new VisionError('unconfigured', 'No vision provider is configured.');
+      }
+      if (!imageBase64 && !text) {
+        throw new VisionError('bad_request', 'Nothing was sent to read.');
       }
       let lastError;
       for (let attempt = 1; attempt <= maxAttempts; attempt++) {
         try {
           const started = Date.now();
-          const body = await callOnce({ imageBase64, mimeType, prompt, schema });
-          const text = body?.candidates?.[0]?.content?.parts?.[0]?.text;
-          if (typeof text !== 'string') {
+          const body = await callOnce({ imageBase64, mimeType, prompt, schema, text });
+          const answer = body?.candidates?.[0]?.content?.parts?.[0]?.text;
+          if (typeof answer !== 'string') {
             // A response with no text part is a refusal or a safety block.
             throw new VisionError('empty_response', 'The vision provider returned nothing usable.');
           }
           let parsed;
           try {
-            parsed = JSON.parse(text);
+            parsed = JSON.parse(answer);
           } catch {
             throw new VisionError('bad_json', 'The vision provider returned invalid JSON.');
           }
           return {
             data: parsed,
-            raw: text,
+            raw: answer,
             model,
             latencyMs: Date.now() - started,
             usage: {

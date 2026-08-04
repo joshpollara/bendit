@@ -13,6 +13,7 @@ import AddFood from './screens/AddFood';
 import AddExercise from './screens/AddExercise';
 import Weight from './screens/Weight';
 import Foods from './screens/Foods';
+import Recipes from './screens/Recipes';
 import Reports from './screens/Reports';
 import More from './screens/More';
 
@@ -40,6 +41,7 @@ function Shell({ profile }: { profile: Profile }) {
             <Route path="/weight" element={<Weight profile={profile} />} />
             <Route path="/reports" element={<Reports profile={profile} />} />
             <Route path="/foods" element={<Foods />} />
+            <Route path="/recipes" element={<Recipes />} />
             <Route path="/more" element={<More profile={profile} />} />
             <Route path="*" element={<Navigate to="/" replace />} />
           </Routes>
