@@ -56,6 +56,37 @@ function writtenForms(token) {
   return [token, `${root}ies`, `${root}ie`];
 }
 
+/**
+ * British and Dutch-English words for foods the database names American.
+ *
+ * USDA is the reference data and it says "ground beef", "eggplant", "cilantro".
+ * A recipe written here says mince, aubergine, coriander — and matched nothing
+ * at all, because a name that shares only half its words is refused rather than
+ * guessed at. Translating the query is the fix; the index stays as published.
+ */
+const SYNONYMS = {
+  mince: 'ground',
+  minced: 'ground',
+  aubergine: 'eggplant',
+  courgette: 'zucchini',
+  coriander: 'cilantro',
+  rocket: 'arugula',
+  prawn: 'shrimp',
+  chickpea: 'garbanzo',
+  swede: 'rutabaga',
+  beetroot: 'beet',
+  sultana: 'raisin',
+  passata: 'tomato',
+  gammon: 'ham',
+  rasher: 'bacon',
+  biscuit: 'cookie',
+  crisp: 'chip',
+  chips: 'fries',
+  yoghurt: 'yogurt',
+  maize: 'corn',
+  tinned: 'canned',
+};
+
 /** Crude, deliberate: only the plural forms that actually show up in food names. */
 function singular(word) {
   if (word.length <= 3) return word;
@@ -76,6 +107,7 @@ export function tokenize(query) {
     .split(/\s+/)
     .filter(Boolean)
     .map(singular)
+    .map((word) => SYNONYMS[word] ?? word)
     .filter((w) => !NOISE.has(w));
 }
 
@@ -255,14 +287,23 @@ export const GENERIC_SOURCES = ['usda', 'seed'];
  * USDA's cooked long-grain at 130. A source bonus alone couldn't fix that
  * reliably; asking the reference tables first does.
  */
-export function matchFood(db, query, { preferSources = GENERIC_SOURCES, ...options } = {}) {
+export function matchFood(db, query, options = {}) {
+  return matchCandidates(db, query, { ...options, limit: 1 })[0] ?? null;
+}
+
+/**
+ * The matches worth considering, best first — all of them confident enough to
+ * commit to. A caller that needs more than a name from the row (a recipe line
+ * needs a portion it can weigh "1 large onion" by) can take the best one that
+ * actually answers, rather than the best one overall.
+ */
+export function matchCandidates(db, query, { preferSources = GENERIC_SOURCES, limit = 5, ...options } = {}) {
   const search = (sources) =>
-    searchFoods(db, query, { ...options, sources, limit: 1, requireNutrition: true })[0];
+    searchFoods(db, query, { ...options, sources, limit, requireNutrition: true }).filter(
+      (row) => row.coverage >= MIN_COVERAGE,
+    );
 
-  const preferred = preferSources?.length ? search(preferSources) : null;
-  if (preferred && preferred.coverage >= MIN_COVERAGE) return preferred;
-
-  const best = search(undefined);
-  if (!best || best.coverage < MIN_COVERAGE) return null;
-  return best;
+  const preferred = preferSources?.length ? search(preferSources) : [];
+  const rest = search(undefined).filter((row) => !preferred.some((p) => p.id === row.id));
+  return [...preferred, ...rest].slice(0, limit);
 }
