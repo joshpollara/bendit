@@ -105,11 +105,7 @@ export default function MealPhotoSheet({
   return (
     <Sheet onClose={onClose}>
       <h2 className="text-lg font-semibold">What&apos;s on the plate</h2>
-      <p className="mt-1 text-xs text-ink-muted">
-        The foods come from your photo; the calories come from the food database. Weights are
-        judged from a flat picture, so correct anything that looks wrong — that is worth more
-        than any amount of cleverness on our side.
-      </p>
+      <p className="mt-1 text-xs text-ink-muted">Check the weights before adding them.</p>
 
       <ul className="mt-3 flex flex-col gap-2">
         {items.map((item, index) => {
@@ -235,8 +231,8 @@ export default function MealPhotoSheet({
           {formatCalories(total.calories)} <span className="text-base font-normal">cal</span>
         </p>
         {anyEstimated && total.low !== total.high && (
-          <p className="text-xs text-ink-muted">
-            somewhere between {total.low} and {total.high}, depending on the portions
+          <p className="text-xs text-ink-muted tabular-nums">
+            {total.low}–{total.high}
           </p>
         )}
         <p className="mt-1 text-xs text-ink-secondary tabular-nums">

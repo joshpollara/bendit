@@ -327,14 +327,11 @@ export default function More({ profile }: { profile: Profile }) {
 
       <section className={card}>
         <h2 className="mb-1 font-semibold">This device</h2>
-        <p className="mb-3 text-xs text-ink-muted">
-          {session?.username ? (
-            <>
-              Signed in as <strong className="text-ink">{session.username}</strong>.{' '}
-            </>
-          ) : null}
-          You're signed in on this device for a year at a time.
-        </p>
+        {session?.username && (
+          <p className="mb-3 text-xs text-ink-muted">
+            Signed in as <strong className="text-ink">{session.username}</strong>
+          </p>
+        )}
         <button
           type="button"
           onClick={async () => {

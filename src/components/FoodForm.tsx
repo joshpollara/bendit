@@ -52,7 +52,6 @@ export default function FoodForm({
   const [basis, setBasis] = useState<Basis>('serving');
 
   const [scanState, setScanState] = useState<'idle' | ReadStage>('idle');
-  const [scanNote, setScanNote] = useState<string | null>(null);
   const [scanError, setScanError] = useState<string | null>(null);
   const [scanText, setScanText] = useState<string | null>(null);
   // What the check found, so the fields in question can be pointed at rather
@@ -85,7 +84,6 @@ export default function FoodForm({
     setShooting(false);
     setScanState('sending');
     setScanError(null);
-    setScanNote(null);
     setIssues([]);
     setScanned(null);
     try {
@@ -101,8 +99,7 @@ export default function FoodForm({
         return;
       }
       setScanned(reading.food);
-      const column = fillFrom(reading);
-      setScanNote(describe(reading, column));
+      fillFrom(reading);
     } catch (e) {
       setScanError(e instanceof Error ? e.message : "Couldn't read that photo.");
     } finally {
@@ -115,7 +112,7 @@ export default function FoodForm({
    * as per-portion, a per-100 one as per-100. The user is looking at the label
    * while they check, and matching it is what makes checking quick.
    */
-  function fillFrom(reading: LabelReading): 'per100' | 'perServing' {
+  function fillFrom(reading: LabelReading) {
     const food = reading.food as unknown as Food & Record<string, number | null>;
     const printedPerServing = reading.label.perServing != null && reading.label.per100 == null;
 
@@ -130,7 +127,7 @@ export default function FoodForm({
       setProtein(str(food.protein ?? null));
       setCarbs(str(food.carbs ?? null));
       setFat(str(food.fat ?? null));
-      return 'perServing';
+      return;
     }
 
     setBasis('100g');
@@ -139,30 +136,6 @@ export default function FoodForm({
     setProtein(str(round1(food.protein100)));
     setCarbs(str(round1(food.carbs100)));
     setFat(str(round1(food.fat100)));
-    return 'per100';
-  }
-
-  function describe(reading: LabelReading, column: 'per100' | 'perServing') {
-    // When the model couldn't be used, say so and why in one breath: "read on
-    // your phone instead" is only reassuring if the reason comes with it.
-    const where =
-      reading.source === 'vision'
-        ? 'Read from your photo.'
-        : reading.fellBackBecause
-          ? `Read on your phone instead — ${reading.fellBackBecause[0].toLowerCase()}${reading.fellBackBecause.slice(1)}`
-          : 'Read on your phone.';
-
-    if (reading.issues.length === 0) {
-      return reading.confidence === 'high'
-        ? `${where} The numbers cross-check. Have a glance and save.`
-        : `${where} Nothing here contradicts itself, but check the figures against the packet.`;
-    }
-    // A fault in the column that isn't on screen: say so, rather than send the
-    // user hunting for a highlight that isn't there.
-    const here = reading.issues.some((i) => !i.field.includes('.') || i.field.startsWith(column));
-    return here
-      ? `${where} Check the highlighted values against the packet before saving.`
-      : `${where} These are the ${column === 'per100' ? 'per-100' : 'per-portion'} figures, which add up — but something in the other column didn't, so check them over.`;
   }
 
   async function save() {
@@ -262,14 +235,8 @@ export default function FoodForm({
                 ? 'Checking the numbers…'
                 : 'Scan nutrition label'}
       </button>
-      <p className="-mt-1 text-center text-xs text-ink-muted">
-        Fill the frame with the panel. The photo is sent to be read, and read on your phone
-        instead when you're offline.
-      </p>
+      <p className="-mt-1 text-center text-xs text-ink-muted">Fill the frame with the panel.</p>
       {scanError && <p className="rounded-xl bg-over-soft px-3 py-2 text-xs text-over">{scanError}</p>}
-      {scanNote && (
-        <p className="rounded-xl bg-accent-soft px-3 py-2 text-xs text-accent-deep">{scanNote}</p>
-      )}
       {issues.length > 0 && (
         <ul className="flex flex-col gap-1">
           {issues.map((issue) => (

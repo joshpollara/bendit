@@ -64,9 +64,6 @@ export default function Login({ onSignedIn }: { onSignedIn: () => void }) {
         </button>
       </form>
 
-      <p className="text-center text-xs text-ink-muted">
-        You'll stay signed in on this device for a year.
-      </p>
     </div>
   );
 }
