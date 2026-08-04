@@ -330,12 +330,10 @@ export default function More({ profile }: { profile: Profile }) {
         <p className="mb-3 text-xs text-ink-muted">
           {session?.username ? (
             <>
-              Signed in as <strong className="text-ink">{session.username}</strong>. Your log,
-              weights and photos are yours alone — other accounts on this server can't see them.{' '}
+              Signed in as <strong className="text-ink">{session.username}</strong>.{' '}
             </>
           ) : null}
-          You're signed in on this device for a year at a time. Signing out means entering your
-          username and password again next time.
+          You're signed in on this device for a year at a time.
         </p>
         <button
           type="button"
