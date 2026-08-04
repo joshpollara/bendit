@@ -15,7 +15,8 @@ import Weight from './screens/Weight';
 import Foods from './screens/Foods';
 import Recipes from './screens/Recipes';
 import Reports from './screens/Reports';
-import More from './screens/More';
+import Menu from './screens/Menu';
+import Settings from './screens/Settings';
 
 function Splash() {
   return (
@@ -42,7 +43,8 @@ function Shell({ profile }: { profile: Profile }) {
             <Route path="/reports" element={<Reports profile={profile} />} />
             <Route path="/foods" element={<Foods />} />
             <Route path="/recipes" element={<Recipes />} />
-            <Route path="/more" element={<More profile={profile} />} />
+            <Route path="/more" element={<Menu />} />
+            <Route path="/settings" element={<Settings profile={profile} />} />
             <Route path="*" element={<Navigate to="/" replace />} />
           </Routes>
         </main>

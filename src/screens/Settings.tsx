@@ -1,5 +1,4 @@
 import { useState } from 'react';
-import { Link } from 'react-router-dom';
 import { api } from '../lib/api';
 import { useData } from '../lib/useData';
 import { useUI } from '../store/ui';
@@ -28,7 +27,7 @@ const card = 'mx-4 mt-3 rounded-2xl border border-line bg-card p-4 shadow-sm lg:
 const field = 'w-full rounded-xl border border-line bg-surface px-3 py-2.5 text-sm';
 const label = 'flex flex-col gap-1 text-sm text-ink-secondary';
 
-export default function More({ profile }: { profile: Profile }) {
+export default function Settings({ profile }: { profile: Profile }) {
   const bump = useUI((s) => s.bump);
   const { mode, setMode } = useTheme();
   const weights = useData(() => api.getWeights(), []);
@@ -109,7 +108,7 @@ export default function More({ profile }: { profile: Profile }) {
   return (
     <div className="pt-[env(safe-area-inset-top)] pb-4">
       <header className="px-4 py-3 lg:px-0 lg:pb-4 lg:pt-0">
-        <h1 className="text-lg font-semibold lg:text-2xl lg:font-bold lg:tracking-tight">More</h1>
+        <h1 className="text-lg font-semibold lg:text-2xl lg:font-bold lg:tracking-tight">Settings</h1>
       </header>
 
       <div className="lg:grid lg:grid-cols-2 lg:items-start lg:gap-4">
@@ -310,25 +309,6 @@ export default function More({ profile }: { profile: Profile }) {
             </a>
           ))}
         </div>
-      </section>
-
-      <section className={card}>
-        <h2 className="mb-1 font-semibold">Food database</h2>
-        <p className="mb-3 text-xs text-ink-muted">
-          Browse every food the app knows about, and delete the ones you created or scanned.
-        </p>
-        <Link
-          to="/foods"
-          className="block w-full rounded-xl border border-line py-2.5 text-center text-sm font-semibold text-accent"
-        >
-          Manage foods
-        </Link>
-        <Link
-          to="/recipes"
-          className="mt-2 block w-full rounded-xl border border-line py-2.5 text-center text-sm font-semibold text-accent"
-        >
-          Recipes
-        </Link>
       </section>
 
       <section className={card}>

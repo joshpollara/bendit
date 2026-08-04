@@ -114,7 +114,7 @@ export default function Weight({ profile }: { profile: Profile }) {
   return (
     <div className="pt-[env(safe-area-inset-top)]">
       <header className="flex items-center justify-between px-4 py-3 lg:px-0 lg:pb-4 lg:pt-0">
-        <h1 className="text-lg font-semibold lg:text-2xl lg:font-bold lg:tracking-tight">Weight</h1>
+        <h1 className="text-lg font-semibold lg:text-2xl lg:font-bold lg:tracking-tight">Body</h1>
         <Link to="/reports" className="ml-auto mr-2 text-sm font-medium text-accent">
           Trends
         </Link>

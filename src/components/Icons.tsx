@@ -147,6 +147,13 @@ export const ListIcon = (p: IconProps) => (
   </Svg>
 );
 
+/** An open book, for recipes. */
+export const BookIcon = (p: IconProps) => (
+  <Svg {...p}>
+    <path d="M12 6.5v13M12 6.5C10.5 5 8.5 4.5 4 4.5v13c4.5 0 6.5.5 8 2M12 6.5c1.5-1.5 3.5-2 8-2v13c-4.5 0-6.5.5-8 2" />
+  </Svg>
+);
+
 export const CheckIcon = (p: IconProps) => (
   <Svg {...p}>
     <path d="M4 12.5l5 5L20 6.5" />
