@@ -8,6 +8,7 @@ import compression from 'compression';
 import { barcodeVariants } from './lib/barcode.mjs';
 import { per100FromServing } from './lib/foodSchema.mjs';
 import { matchFood, searchFoods } from './lib/foodSearch.mjs';
+import { gradeMeal, nutriScore, processingForMeal } from './lib/nutriScore.mjs';
 import {
   authenticate,
   countUsers,
@@ -282,6 +283,9 @@ widenKey(
 // typed in is yours, but a food with a barcode belongs to the barcode, so the
 // next person to scan that packet finds it.
 ensureColumns('foods', { ownerId: 'TEXT' });
+// The published Nutri-Score grade and NOVA processing group, where a source
+// states them. Foods without one are graded from their nutrients instead.
+ensureColumns('foods', { nutriGrade: 'TEXT', nova: 'INTEGER', fruitVeg: 'INTEGER' });
 db.exec('CREATE INDEX IF NOT EXISTS idx_foods_owner ON foods(ownerId)');
 for (const table of USER_TABLES) {
   db.exec(`CREATE INDEX IF NOT EXISTS idx_${table}_user ON ${table}(userId)`);
@@ -326,9 +330,11 @@ if (seedCount === 0) {
   const seeds = JSON.parse(fs.readFileSync(path.join(__dirname, 'seedFoods.json'), 'utf8'));
   const ins = db.prepare(`INSERT OR REPLACE INTO foods
     (id, name, brand, barcode, servingLabel, servingGrams, caloriesPerServing, protein, carbs, fat,
-     source, kcal100, protein100, carbs100, fat100, updatedAt)
+     source, basis, kcal100, protein100, carbs100, fat100, fiber100, sugar100, satFat100, sodiumMg100,
+     fruitVeg, updatedAt)
     VALUES (@id, @name, @brand, @barcode, @servingLabel, @servingGrams, @caloriesPerServing, @protein,
-     @carbs, @fat, @source, @kcal100, @protein100, @carbs100, @fat100, @updatedAt)`);
+     @carbs, @fat, @source, @basis, @kcal100, @protein100, @carbs100, @fat100, @fiber100, @sugar100,
+     @satFat100, @sodiumMg100, @fruitVeg, @updatedAt)`);
   db.transaction(() => {
     for (const f of seeds) {
       const row = {
@@ -341,6 +347,9 @@ if (seedCount === 0) {
       ins.run({
         ...row,
         kcal100: null, protein100: null, carbs100: null, fat100: null,
+        fiber100: null, sugar100: null, satFat100: null, sodiumMg100: null,
+        fruitVeg: row.fruitVeg ?? null,
+        basis: row.basis ?? 'g',
         ...(per100FromServing(row) ?? {}),
         updatedAt: new Date().toISOString(),
       });
@@ -551,7 +560,11 @@ const foodColumns =
   'f.id AS f_id, f.name AS f_name, f.brand AS f_brand, f.barcode AS f_barcode, ' +
   'f.servingLabel AS f_servingLabel, f.servingGrams AS f_servingGrams, ' +
   'f.caloriesPerServing AS f_caloriesPerServing, f.protein AS f_protein, ' +
-  'f.carbs AS f_carbs, f.fat AS f_fat, f.source AS f_source';
+  'f.carbs AS f_carbs, f.fat AS f_fat, f.source AS f_source, ' +
+  'f.nutriGrade AS f_nutriGrade, f.nova AS f_nova, f.servingGrams AS f_servingGrams2, ' +
+  'f.kcal100 AS f_kcal100, f.sugar100 AS f_sugar100, f.satFat100 AS f_satFat100, ' +
+  'f.sodiumMg100 AS f_sodiumMg100, f.fiber100 AS f_fiber100, f.protein100 AS f_protein100, ' +
+  'f.fruitVeg AS f_fruitVeg, f.basis AS f_basis';
 
 function rowFood(row) {
   if (!row.f_id) return undefined;
@@ -568,6 +581,33 @@ function rowFood(row) {
     fat: row.f_fat ?? undefined,
     source: row.f_source,
   };
+}
+
+/**
+ * How an entry grades, and how much of it there was.
+ *
+ * The published grade is used where the source states one, because it accounts
+ * for the fruit and vegetable share that nothing here records. Otherwise the
+ * grade is computed from the nutrients, which is a letter worse on whole fruit
+ * and right about most other things.
+ */
+function gradedEntry(row) {
+  if (!row.f_id) return null;
+  const grams = (row.f_servingGrams2 ?? 0) * (row.servings ?? 0);
+  const grade =
+    row.f_nutriGrade ??
+    nutriScore({
+      kcal100: row.f_kcal100,
+      sugar100: row.f_sugar100,
+      satFat100: row.f_satFat100,
+      sodiumMg100: row.f_sodiumMg100,
+      fiber100: row.f_fiber100,
+      protein100: row.f_protein100,
+      fruitVeg: row.f_fruitVeg,
+      basis: row.f_basis,
+    })?.grade ??
+    null;
+  return { grade, nova: row.f_nova ?? null, grams };
 }
 
 const upsertFood = db.prepare(`INSERT OR REPLACE INTO foods
@@ -665,11 +705,11 @@ app.put('/api/profile', (req, res) => {
 
 app.get('/api/day', (req, res) => {
   const { date, yesterday } = req.query;
-  const entries = db
+  const rows = db
     .prepare(`SELECT l.*, ${foodColumns} FROM food_log l LEFT JOIN foods f ON f.id = l.foodId
        WHERE l.date = ? AND l.userId = ?`)
-    .all(date, req.userId)
-    .map((row) => ({
+    .all(date, req.userId);
+  const entries = rows.map((row) => ({
       id: row.id,
       date: row.date,
       meal: row.meal,
@@ -677,9 +717,9 @@ app.get('/api/day', (req, res) => {
       servings: row.servings,
       caloriesCached: row.caloriesCached,
       label: row.label ?? undefined,
-      estimated: row.estimated === 1,
-      food: rowFood(row),
-    }));
+    estimated: row.estimated === 1,
+    food: rowFood(row),
+  }));
   const exercises = db
     .prepare('SELECT * FROM exercise_log WHERE date = ? AND userId = ?')
     .all(date, req.userId);
@@ -696,7 +736,17 @@ app.get('/api/day', (req, res) => {
   }
   const done =
     db.prepare('SELECT 1 FROM day_done WHERE date = ? AND userId = ?').get(date, req.userId) != null;
-  res.json({ entries, exercises, latestWeightKg: latest?.weightKg, yesterdayMealCounts, done });
+
+  // A grade per meal, weighted by how much of each food was eaten.
+  const meals = {};
+  for (const meal of ['breakfast', 'lunch', 'dinner', 'snacks']) {
+    const graded = rows.filter((row) => row.meal === meal).map(gradedEntry).filter(Boolean);
+    const nutrition = gradeMeal(graded);
+    const processing = processingForMeal(graded);
+    if (nutrition || processing) meals[meal] = { ...nutrition, processing };
+  }
+
+  res.json({ entries, exercises, latestWeightKg: latest?.weightKg, yesterdayMealCounts, done, meals });
 });
 
 // Browsing the whole database: every food, newest sources first, with how many

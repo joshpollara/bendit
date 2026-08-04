@@ -46,6 +46,8 @@ export function makeFood({
   basis = 'g',
   per100 = {},
   servings = [],
+  nutriGrade = null,
+  nova = null,
 }) {
   if (!id) throw new Error('food needs an id');
   if (!source) throw new Error('food needs a source');
@@ -59,6 +61,10 @@ export function makeFood({
     brand: brand?.trim() || null,
     barcode: barcode ? String(barcode).trim() : null,
     basis: basis === 'ml' ? 'ml' : 'g',
+    // The published Nutri-Score grade and NOVA processing group, where the
+    // source states them. Neither is computed here.
+    nutriGrade: /^[A-E]$/.test(String(nutriGrade ?? '')) ? String(nutriGrade) : null,
+    nova: nova >= 1 && nova <= 4 ? Math.round(nova) : null,
     updatedAt: new Date().toISOString(),
   };
   for (const field of PER_100_FIELDS) record[field] = round(per100[field] ?? null);
@@ -88,14 +94,22 @@ export function scale(per100, grams) {
  * hand-entered foods join the canonical schema. Without a serving weight there
  * is nothing to divide by, and inventing one would poison every later estimate.
  */
-export function per100FromServing({ servingGrams, caloriesPerServing, protein, carbs, fat }) {
+export function per100FromServing(food) {
+  const { servingGrams } = food ?? {};
   if (!servingGrams || servingGrams <= 0) return null;
   const factor = 100 / servingGrams;
+  const scale = (value) => round(value == null ? null : value * factor);
   return {
-    kcal100: round(caloriesPerServing == null ? null : caloriesPerServing * factor),
-    protein100: round(protein == null ? null : protein * factor),
-    carbs100: round(carbs == null ? null : carbs * factor),
-    fat100: round(fat == null ? null : fat * factor),
+    kcal100: scale(food.caloriesPerServing),
+    protein100: scale(food.protein),
+    carbs100: scale(food.carbs),
+    fat100: scale(food.fat),
+    // Present on the curated foods since they were enriched from USDA, and on
+    // anything else that carries them per serving. A grade needs all three.
+    sugar100: scale(food.sugar),
+    satFat100: scale(food.satFat),
+    sodiumMg100: scale(food.sodiumMg),
+    fiber100: scale(food.fiber),
   };
 }
 

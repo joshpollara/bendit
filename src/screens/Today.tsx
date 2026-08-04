@@ -7,6 +7,7 @@ import { dayLabel, shiftDay, todayStr } from '../lib/dates';
 import { formatCalories } from '../lib/units';
 import { STRINGS } from '../lib/strings';
 import { useUI } from '../store/ui';
+import MealGrade, { type MealGradeData } from '../components/MealGrade';
 import { pendingForDate, useQueue } from '../lib/offlineQueue';
 import {
   MEAL_LABELS,
@@ -253,11 +254,13 @@ function MealSection({
   date,
   entries,
   yesterdayCount,
+  grade,
 }: {
   meal: Meal;
   date: string;
   entries: JoinedEntry[];
   yesterdayCount: number;
+  grade?: MealGradeData | null;
 }) {
   const [open, setOpen] = useState(true);
   const [editing, setEditing] = useState<JoinedEntry | null>(null);
@@ -302,7 +305,9 @@ function MealSection({
         >
           <ChevronDownIcon className={`h-4 w-4 transition-transform ${open ? '' : '-rotate-90'}`} />
         </button>
-        <h2 className="flex-1 font-semibold">{MEAL_LABELS[meal]}</h2>
+        <h2 className="font-semibold">{MEAL_LABELS[meal]}</h2>
+        <MealGrade data={grade} />
+        <span className="flex-1" />
         {subtotal > 0 && (
           <span className="text-sm font-medium tabular-nums text-ink-secondary">
             {formatCalories(subtotal)}
@@ -507,6 +512,7 @@ export default function Today({ profile }: { profile: Profile }) {
               date={date}
               entries={joined.filter((e) => e.meal === meal)}
               yesterdayCount={yesterdayByMeal[meal] ?? 0}
+              grade={day?.meals?.[meal]}
             />
           ))}
 

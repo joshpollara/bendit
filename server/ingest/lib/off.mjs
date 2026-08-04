@@ -82,6 +82,9 @@ export function matchesCountries(row, countries) {
  * grams later.
  */
 export function toFood(row) {
+  const grade = String(field(row, 'nutriscore_grade') ?? '').trim().toUpperCase();
+  const nova = number(field(row, 'nova_group'));
+
   const barcode = String(field(row, 'code') ?? '').trim();
   const name = (field(row, 'product_name') ?? '').trim();
   if (!barcode || !name || name.length > 200) return null;
@@ -123,5 +126,10 @@ export function toFood(row) {
     basis,
     per100,
     servings,
+    // Published by Open Food Facts rather than worked out here: their grade
+    // accounts for the fruit and vegetable share, which no column in this
+    // database carries.
+    nutriGrade: /^[A-E]$/.test(grade) ? grade : null,
+    nova: nova >= 1 && nova <= 4 ? nova : null,
   });
 }

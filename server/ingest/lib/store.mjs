@@ -11,13 +11,21 @@ import { PER_100_FIELDS } from '../../lib/foodSchema.mjs';
 export function openDatabase(path) {
   const db = new Database(path);
   db.pragma('journal_mode = WAL');
+
+  // The app adds columns as it starts; an importer run against a database that
+  // hasn't been started since is otherwise a raw SQLite error about a column
+  // nobody mentioned. The writer knows what it writes, so it ensures them.
+  const present = new Set(db.prepare('PRAGMA table_info(foods)').all().map((c) => c.name));
+  for (const [name, type] of Object.entries({ nutriGrade: 'TEXT', nova: 'INTEGER', ownerId: 'TEXT' })) {
+    if (!present.has(name)) db.exec(`ALTER TABLE foods ADD COLUMN ${name} ${type}`);
+  }
   return db;
 }
 
 const COLUMNS = [
   'id', 'name', 'brand', 'barcode', 'servingLabel', 'servingGrams',
   'caloriesPerServing', 'protein', 'carbs', 'fat', 'source', 'sourceId',
-  'basis', 'updatedAt', ...PER_100_FIELDS,
+  'basis', 'nutriGrade', 'nova', 'updatedAt', ...PER_100_FIELDS,
 ];
 
 export function createWriter(db) {

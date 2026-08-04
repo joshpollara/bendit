@@ -45,6 +45,17 @@ export interface DayData {
   yesterdayMealCounts: Partial<Record<Meal, number>>;
   /** The user has declared logging finished for this day. */
   done: boolean;
+  /** Nutri-Score and processing per meal, where enough was known to work it out. */
+  meals?: Partial<
+    Record<
+      Meal,
+      {
+        grade?: string | null;
+        covered?: number;
+        processing?: { worst: number; ultraShare: number } | null;
+      }
+    >
+  >;
 }
 
 export interface MealTemplateItem {
