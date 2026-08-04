@@ -7,7 +7,7 @@ import { ZipArchive } from 'archiver';
 import compression from 'compression';
 import { barcodeVariants } from './lib/barcode.mjs';
 import { per100FromServing } from './lib/foodSchema.mjs';
-import { matchFood, searchFoods } from './lib/foodSearch.mjs';
+import { matchFood, searchFoods, searchFoodsTiered } from './lib/foodSearch.mjs';
 import { gradeMeal, nutriScore, processingForMeal } from './lib/nutriScore.mjs';
 import {
   authenticate,
@@ -984,7 +984,7 @@ app.get('/api/foods', (req, res) => {
   // Ranked full-text search. A LIKE scan can't tell "Chicken breast" from
   // "Chicken breast flavoured crisps", and can't match a phrase against USDA's
   // qualifiers-last naming at all.
-  res.json(searchFoods(db, q, { limit: 50, ownerId: req.userId }));
+  res.json(searchFoodsTiered(db, q, { limit: 50, ownerId: req.userId }));
 });
 
 // The lookup the meal-photo path will use: one answer or none, never a guess.

@@ -263,6 +263,35 @@ export function searchFoods(
 }
 
 /**
+ * Search results with the reference foods first.
+ *
+ * Typing "chicken breast" means the food; typing "Nutella" means the packet.
+ * The difference can't be expressed as a weight: bm25 rewards a short product
+ * named exactly "Chicken breast" more than any source bonus safe enough to set,
+ * and raising that bonus threefold still left five of eight generic searches on
+ * a crowd-sourced row.
+ *
+ * So it is a rule instead. If a reference food covers everything the query
+ * asked for, reference foods come first and the products follow. A query
+ * nothing curated matches — pindakaas, hagelslag, every Dutch staple USDA has
+ * never heard of — falls straight through to the products, which for those
+ * foods are the only record there is.
+ */
+export function searchFoodsTiered(db, query, { limit = 25, ...options } = {}) {
+  const reference = searchFoods(db, query, {
+    ...options,
+    limit,
+    sources: ['usda', 'seed', 'custom'],
+  }).filter((row) => row.coverage >= MIN_COVERAGE);
+
+  if (reference.length === 0) return searchFoods(db, query, { ...options, limit });
+
+  const seen = new Set(reference.map((row) => row.id));
+  const products = searchFoods(db, query, { ...options, limit }).filter((row) => !seen.has(row.id));
+  return [...reference, ...products].slice(0, limit);
+}
+
+/**
  * How much of the query a row must actually contain to be committed to. Set so
  * a two-word query needs both words: "salmon fillet" must not settle for
  * "Vegetarian fillets" on the strength of one of them.

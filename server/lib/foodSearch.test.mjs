@@ -1,6 +1,6 @@
 import Database from 'better-sqlite3';
 import { beforeAll, describe, expect, it } from 'vitest';
-import { buildMatchPlan, matchFood, searchFoods, tokenize } from './foodSearch.mjs';
+import { buildMatchPlan, matchFood, searchFoods, searchFoodsTiered, tokenize } from './foodSearch.mjs';
 
 // Real names, copied in their published form — USDA writes the food first and
 // the qualifiers last, which is exactly what breaks naive phrase matching.
@@ -147,6 +147,32 @@ describe('searchFoods — what a meal photo actually sends', () => {
 
   it('returns nothing rather than a bad guess for an unknown food', () => {
     expect(searchFoods(db, 'zzzzz nonexistent foodstuff')).toEqual([]);
+  });
+});
+
+describe('searchFoodsTiered — what the search box returns', () => {
+  it('answers a generic name with the reference food, not a product of that name', () => {
+    // A product row called exactly "Chicken Breast Fillets" beats the USDA row
+    // on relevance alone: it is short and it matches exactly.
+    expect(searchFoodsTiered(db, 'chicken breast')[0].source).toBe('usda');
+  });
+
+  it('still lists the products, below', () => {
+    expect(searchFoodsTiered(db, 'chicken breast').map((r) => r.source)).toContain('openfoodfacts');
+  });
+
+  it('falls through to products when nothing curated matches', () => {
+    // The Dutch case: no reference row exists for these at all, and the
+    // products are the only record there is.
+    expect(searchFoodsTiered(db, 'chocolate chip cookies')[0].source).toBe('openfoodfacts');
+  });
+
+  it('leaves a brand search alone', () => {
+    expect(searchFoodsTiered(db, 'Fage')[0].name).toBe('Greek Style Yogurt');
+  });
+
+  it('has nothing to say about an empty query', () => {
+    expect(searchFoodsTiered(db, '')).toEqual([]);
   });
 });
 
