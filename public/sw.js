@@ -66,7 +66,10 @@ self.addEventListener('push', (event) => {
     self.registration.showNotification(payload.title, {
       body: payload.body,
       icon: '/icon-192.png',
-      badge: '/icon-192.png',
+      // A badge is drawn from its alpha channel and tinted by the system, so it
+      // has to be a glyph on transparency. The app icon is an opaque square,
+      // which arrives as a solid white block.
+      badge: '/badge-96.png',
       tag: 'bendit-reminder',
     }),
   );
