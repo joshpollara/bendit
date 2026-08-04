@@ -114,7 +114,7 @@ export default function Weight({ profile }: { profile: Profile }) {
   return (
     <div className="pt-[env(safe-area-inset-top)]">
       <header className="flex items-center justify-between px-4 py-3 lg:px-0 lg:pb-4 lg:pt-0">
-        <h1 className="text-lg font-semibold lg:text-2xl lg:font-bold lg:tracking-tight">Body</h1>
+        <h1 className="text-lg font-semibold lg:text-2xl lg:font-bold lg:tracking-tight">Progress</h1>
         <Link to="/reports" className="ml-auto mr-2 text-sm font-medium text-accent">
           Trends
         </Link>
@@ -146,7 +146,7 @@ export default function Weight({ profile }: { profile: Profile }) {
 
       <section className="mx-4 mt-3 rounded-2xl border border-line bg-card p-4 shadow-sm lg:col-span-2 lg:mx-0 lg:mt-0">
         <div className="mb-2 flex items-center justify-between">
-          <h2 className="font-semibold">Progress</h2>
+          <h2 className="font-semibold">Weight trend</h2>
           <div className="flex gap-1">
             {RANGES.map((r) => (
               <button

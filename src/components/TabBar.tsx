@@ -33,7 +33,7 @@ export default function TabBar() {
       <nav className="fixed bottom-0 left-1/2 z-30 w-full max-w-md -translate-x-1/2 border-t border-line bg-card pb-[env(safe-area-inset-bottom)] md:hidden">
         <div className="grid grid-cols-5 items-center">
           <Tab to="/" label="Today" icon={<GaugeIcon className="h-6 w-6" />} />
-          <Tab to="/weight" label="Body" icon={<ScaleIcon className="h-6 w-6" />} />
+          <Tab to="/weight" label="Progress" icon={<ScaleIcon className="h-6 w-6" />} />
           <div className="flex justify-center">
             <button
               type="button"
