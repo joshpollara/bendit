@@ -326,6 +326,40 @@ if (!logColumns.includes('label')) {
 }
 
 const seedCount = db.prepare("SELECT COUNT(*) AS c FROM foods WHERE source = 'seed'").get().c;
+
+// The curated foods gained sugar, saturated fat, sodium and a fruit share when
+// grading arrived. Seeding only runs on an empty database, so a database that
+// already had them would never see the new figures — and those rows are the
+// ones search prefers. Fill the gaps from the shipped file, never overwriting
+// what a row already has.
+if (seedCount > 0) {
+  const shipped = JSON.parse(fs.readFileSync(path.join(__dirname, 'seedFoods.json'), 'utf8'));
+  const update = db.prepare(
+    `UPDATE foods SET
+       sugar100 = COALESCE(sugar100, @sugar100), satFat100 = COALESCE(satFat100, @satFat100),
+       sodiumMg100 = COALESCE(sodiumMg100, @sodiumMg100), fiber100 = COALESCE(fiber100, @fiber100),
+       fruitVeg = COALESCE(fruitVeg, @fruitVeg), basis = @basis
+     WHERE id = @id AND source = 'seed'`,
+  );
+  let filled = 0;
+  db.transaction(() => {
+    for (const seed of shipped) {
+      const per100 = per100FromServing(seed) ?? {};
+      if (per100.sugar100 == null && per100.satFat100 == null && seed.fruitVeg == null) continue;
+      filled += update.run({
+        id: seed.id,
+        sugar100: per100.sugar100 ?? null,
+        satFat100: per100.satFat100 ?? null,
+        sodiumMg100: per100.sodiumMg100 ?? null,
+        fiber100: per100.fiber100 ?? null,
+        fruitVeg: seed.fruitVeg ?? null,
+        basis: seed.basis ?? 'g',
+      }).changes;
+    }
+  })();
+  if (filled > 0) console.log(`Filled nutrients on ${filled} curated foods`);
+}
+
 if (seedCount === 0) {
   const seeds = JSON.parse(fs.readFileSync(path.join(__dirname, 'seedFoods.json'), 'utf8'));
   const ins = db.prepare(`INSERT OR REPLACE INTO foods
