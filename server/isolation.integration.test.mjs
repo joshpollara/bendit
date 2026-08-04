@@ -41,6 +41,9 @@ beforeAll(async () => {
   createUsersTable(db);
   createUser(db, 'ada', 'ada-password-1');
   createUser(db, 'bob', 'bob-password-1');
+  // Its own account: changing a password would otherwise break every later
+  // test that signs in as the one it changed.
+  createUser(db, 'cid', 'cid-password-1');
   db.close();
 
   server = spawn('node', [path.join(here, 'index.mjs')], {
@@ -232,6 +235,60 @@ describe('two accounts on one server', () => {
     const adaCsv = (await as('ada', 'GET', '/api/export/food-log.csv')).body;
     expect(adaCsv).toContain("Ada's lunch");
     expect(adaCsv).not.toContain("Bob's lunch");
+  });
+
+  it('lets someone change their own password, and keeps them signed in', async () => {
+    // Sign in properly first: this is about the cookie, not the header.
+    const signIn = async (username, password) => {
+      const res = await fetch(`${base}/api/login`, {
+        method: 'POST',
+        headers: { 'content-type': 'application/json' },
+        body: JSON.stringify({ username, password }),
+      });
+      return res.headers.get('set-cookie')?.split(';')[0] ?? null;
+    };
+    const withCookie = (cookie, path, body, method = 'GET') =>
+      fetch(`${base}${path}`, {
+        method,
+        headers: { 'content-type': 'application/json', cookie },
+        body: body === undefined ? undefined : JSON.stringify(body),
+      });
+
+    const phone = await signIn('cid', 'cid-password-1');
+    const laptop = await signIn('cid', 'cid-password-1');
+    expect((await (await withCookie(phone, '/api/session')).json()).authed).toBe(true);
+
+    // The wrong current password changes nothing.
+    const refused = await withCookie(
+      phone,
+      '/api/password',
+      { currentPassword: 'not-it', newPassword: 'cid-password-2' },
+      'POST',
+    );
+    expect(refused.status).toBe(401);
+
+    const changed = await withCookie(
+      phone,
+      '/api/password',
+      { currentPassword: 'cid-password-1', newPassword: 'cid-password-2' },
+      'POST',
+    );
+    expect(changed.status).toBe(200);
+
+    // The device that made the change is handed a fresh session rather than
+    // being thrown out for doing the right thing.
+    const reissued = changed.headers.get('set-cookie')?.split(';')[0];
+    expect((await (await withCookie(reissued, '/api/session')).json()).authed).toBe(true);
+
+    // Every other device is signed out.
+    expect((await (await withCookie(laptop, '/api/session')).json()).authed).toBe(false);
+
+    // And the old password is gone.
+    expect(await signIn('cid', 'cid-password-1')).toBeNull();
+    expect(await signIn('cid', 'cid-password-2')).toBeTruthy();
+
+    // Nobody else is affected.
+    expect((await as('ada', 'GET', '/api/session')).body.authed).toBe(true);
   });
 
   it('deletes only the requester’s data when asked to delete everything', async () => {

@@ -209,6 +209,8 @@ export const api = {
     return body as { ok: true; username: string };
   },
   logout: () => post('/api/logout', {}),
+  changePassword: (currentPassword: string, newPassword: string) =>
+    post('/api/password', { currentPassword, newPassword }),
 
   getProfile: () => j<Profile | null>('/api/profile'),
   putProfile: (p: Profile) => post('/api/profile', p, 'PUT'),

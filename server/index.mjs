@@ -14,6 +14,7 @@ import {
   countUsers,
   createUsersTable,
   findUser,
+  setPassword,
   USER_TABLES,
 } from './lib/users.mjs';
 import { createVisionProvider } from './lib/vision.mjs';
@@ -711,6 +712,34 @@ function saveFood(f) {
     });
   }
 }
+
+// Changing your own password. The CLI can do this too, but needing a shell to
+// change a password is not a thing to ask of someone who is already signed in.
+app.post('/api/password', (req, res) => {
+  const { currentPassword, newPassword } = req.body ?? {};
+  if (tooManyAttempts(req.username)) {
+    return res.status(429).json({ error: 'Too many attempts. Wait a minute and try again.' });
+  }
+  if (!authenticate(db, req.username, currentPassword)) {
+    loginAttempts.set(req.username, [...(loginAttempts.get(req.username) ?? []), Date.now()]);
+    return res.status(401).json({ error: "That's not your current password." });
+  }
+  if (String(newPassword ?? '') === String(currentPassword ?? '')) {
+    return res.status(400).json({ error: 'That is the password you already have.' });
+  }
+  try {
+    setPassword(db, req.username, newPassword);
+  } catch (error) {
+    return res.status(400).json({ error: error.message });
+  }
+  loginAttempts.delete(req.username);
+
+  // Every session carries a stamp of the password it was issued against, so
+  // changing it signs out this user's other devices. This one is signing in
+  // again on the spot rather than being thrown out for doing the right thing.
+  issueSession(res, findUser(db, req.username), isSecure(req));
+  res.json({ ok: true });
+});
 
 // ——— API ———
 

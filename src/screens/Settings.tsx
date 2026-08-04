@@ -3,6 +3,7 @@ import { api } from '../lib/api';
 import { useData } from '../lib/useData';
 import { useUI } from '../store/ui';
 import { useTheme, type ThemeMode } from '../store/theme';
+import PasswordChange from '../components/PasswordChange';
 import ReminderSetting from '../components/ReminderSetting';
 import { computeBudget, suggestedProteinG } from '../lib/budget';
 import { todayStr } from '../lib/dates';
@@ -318,6 +319,7 @@ export default function Settings({ profile }: { profile: Profile }) {
             Signed in as <strong className="text-ink">{session.username}</strong>
           </p>
         )}
+        <PasswordChange />
         <button
           type="button"
           onClick={async () => {
