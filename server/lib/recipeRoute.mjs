@@ -24,13 +24,17 @@ const asDraft = (db, read, ownerId) => ({
 /**
  * POST /api/recipes/from-url — schema.org first, the model only for pages that
  * publish none.
+ *
+ * `fetch` is injectable so the fallback can be tested: reaching the model needs
+ * a page that publishes no JSON-LD, and no such page can be fetched from a test
+ * — the address guard exists to stop the server connecting to localhost.
  */
-export function createRecipeFromUrlHandler({ db, visionHandler }) {
+export function createRecipeFromUrlHandler({ db, visionHandler, fetch = fetchPage }) {
   return async function fromUrl(req, res) {
     const url = String(req.body?.url ?? '').trim();
     let html;
     try {
-      html = await fetchPage(url);
+      html = await fetch(url);
     } catch (error) {
       return res.status(400).json({ error: { code: 'bad_url', message: error.message } });
     }

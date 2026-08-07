@@ -189,12 +189,55 @@ describe('POST /api/vision/extract', () => {
     expect(provider.extract.mock.calls[0][0].imageBase64).toBe(image);
   });
 
-  it('rejects a request with no image', async () => {
+  it('rejects a request with nothing to read', async () => {
     const res = await post(createVisionExtractHandler({ db, provider: okProvider() }), {
       task: 'label',
     });
     expect(res.statusCode).toBe(400);
     expect(res.body.error.code).toBe('bad_request');
+  });
+
+  it('reads a page of text when there is no photo', async () => {
+    // How a recipe URL is read when the site publishes no structured data.
+    const provider = okProvider({ ingredients: ['2 eggs'] });
+    const res = await post(createVisionExtractHandler({ db, provider }), {
+      task: 'recipe',
+      text: 'Omelette\n2 eggs\nServes 1',
+    });
+
+    expect(res.statusCode).toBe(200);
+    expect(res.body.data.ingredients).toEqual(['2 eggs']);
+    const sent = provider.extract.mock.calls[0][0];
+    expect(sent.text).toContain('2 eggs');
+    expect(sent.imageBase64).toBeFalsy();
+  });
+
+  it('logs a text read the same way as a photographed one', async () => {
+    const text = 'Omelette\n2 eggs';
+    await post(createVisionExtractHandler({ db, provider: okProvider() }), { task: 'recipe', text });
+    const [row] = rows();
+    expect(row).toMatchObject({ task: 'recipe', status: 'ok', imageBytes: text.length });
+    expect(row.imageHash).toHaveLength(32);
+    expect(JSON.stringify(row)).not.toContain('Omelette'); // the hash, not the page
+  });
+
+  it('counts a text read against the daily ceiling', async () => {
+    const handler = createVisionExtractHandler({ db, provider: okProvider(), dailyLimit: 2 });
+    await post(handler, { task: 'recipe', text: 'one' });
+    await post(handler, { task: 'label', image });
+    const res = await post(handler, { task: 'recipe', text: 'three' });
+    expect(res.body.error.code).toBe('quota_exceeded');
+  });
+
+  it('refuses a page too long to be a recipe', async () => {
+    const provider = okProvider();
+    const res = await post(createVisionExtractHandler({ db, provider }), {
+      task: 'recipe',
+      text: 'x'.repeat(100_000),
+    });
+    expect(res.statusCode).toBe(413);
+    expect(res.body.error.code).toBe('text_too_large');
+    expect(provider.extract).not.toHaveBeenCalled();
   });
 
   it('turns an unrecognised failure into something the client can show', async () => {

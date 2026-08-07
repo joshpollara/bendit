@@ -15,6 +15,13 @@ import { getTask } from './visionTasks.mjs';
 export const MAX_IMAGE_BYTES = 2 * 1024 * 1024;
 
 /**
+ * A page's text is stripped of markup before it gets here and truncated to
+ * ~12,000 characters. This is the ceiling on what any caller may send, so a
+ * request with a novel attached costs no more than a long recipe page.
+ */
+export const MAX_TEXT_BYTES = 64 * 1024;
+
+/**
  * A failure the client can act on, rather than a spinner that never ends.
  * Each code maps to the status that says the same thing to a browser.
  */
@@ -30,6 +37,7 @@ export const HTTP_STATUS = {
   bad_request: 400,
   unknown_task: 400,
   image_too_large: 413,
+  text_too_large: 413,
 };
 
 const INSERT = `
@@ -57,18 +65,27 @@ export function createVisionExtractHandler({ db, provider, dailyLimit = 100 }) {
     const fail = (code, message, extra = {}) =>
       res.status(HTTP_STATUS[code] ?? 500).json({ error: { code, message, ...extra } });
 
-    const { task: taskName, image, mimeType = 'image/jpeg' } = req.body ?? {};
+    const { task: taskName, image, text, mimeType = 'image/jpeg' } = req.body ?? {};
     const task = getTask(taskName);
     if (!task) return fail('unknown_task', `There is no vision task called "${taskName}".`);
 
     // Either a bare base64 string or a data: URL — both are one line of client
     // code away from each other.
     const base64 = String(image ?? '').replace(/^data:[^;]+;base64,/, '');
-    if (!base64) return fail('bad_request', 'No image was sent.');
+    // A page that published no structured data arrives as text rather than as a
+    // photograph of itself. Same task, same prompt, same quota, same log row —
+    // only the part handed to the model differs.
+    const pageText = typeof text === 'string' ? text : '';
+    if (!base64 && !pageText) return fail('bad_request', 'Nothing was sent to read.');
 
-    const imageBytes = Math.floor((base64.length * 3) / 4);
-    if (imageBytes > MAX_IMAGE_BYTES) {
+    const inputBytes = base64
+      ? Math.floor((base64.length * 3) / 4)
+      : Buffer.byteLength(pageText, 'utf8');
+    if (base64 && inputBytes > MAX_IMAGE_BYTES) {
       return fail('image_too_large', 'That photo is too large — it should be resized first.');
+    }
+    if (!base64 && inputBytes > MAX_TEXT_BYTES) {
+      return fail('text_too_large', 'That page is too long to read.');
     }
     if (!provider.configured) {
       return fail('unconfigured', 'Photo reading is not switched on for this server.');
@@ -81,16 +98,22 @@ export function createVisionExtractHandler({ db, provider, dailyLimit = 100 }) {
       });
     }
 
-    // The image itself isn't stored — only a hash, which is enough to tell
-    // whether two calls were about the same photo.
+    // What was sent isn't stored — only a hash, which is enough to tell whether
+    // two calls were about the same photo or the same page. The two columns are
+    // named for images because that came first; for a text read they hold the
+    // text's hash and its size, which is what they mean either way.
     const record = {
       id: crypto.randomUUID(),
       createdAt: new Date().toISOString(),
       task: taskName,
       promptVersion: task.version,
       model: provider.model,
-      imageHash: crypto.createHash('sha256').update(base64).digest('hex').slice(0, 32),
-      imageBytes,
+      imageHash: crypto
+        .createHash('sha256')
+        .update(base64 || pageText)
+        .digest('hex')
+        .slice(0, 32),
+      imageBytes: inputBytes,
       status: 'error',
       errorCode: null,
       latencyMs: null,
@@ -103,6 +126,7 @@ export function createVisionExtractHandler({ db, provider, dailyLimit = 100 }) {
     try {
       const result = await provider.extract({
         imageBase64: base64,
+        text: pageText,
         mimeType,
         prompt: task.prompt,
         schema: task.schema,
