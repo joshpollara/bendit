@@ -136,6 +136,58 @@ export interface Recipe {
   perServing: { calories: number | null; grams: number | null };
 }
 
+/** Counts over some set of model calls — a window, a task, or a model. */
+export interface UsageTally {
+  calls: number;
+  ok: number;
+  errors: number;
+  inputTokens: number;
+  outputTokens: number;
+  /** Estimated, from the token counts and this server's rate table. */
+  costUsd: number;
+  /** Calls on a model this server has no rate for, so excluded from the cost. */
+  unpricedCalls: number;
+  medianLatencyMs: number | null;
+  p95LatencyMs: number | null;
+}
+
+export interface UsageWindow extends UsageTally {
+  label: string;
+  /** First day counted, or null for all time. */
+  from: string | null;
+}
+
+export interface VisionCall {
+  id: string;
+  createdAt: string;
+  task: string;
+  model: string;
+  status: string;
+  errorCode: string | null;
+  latencyMs: number | null;
+  inputTokens: number | null;
+  outputTokens: number | null;
+  costUsd: number | null;
+}
+
+export interface VisionUsage {
+  provider: string;
+  model: string;
+  configured: boolean;
+  dailyLimit: number;
+  usedToday: number;
+  remainingToday: number;
+  /** US dollars per million tokens, by model. */
+  prices: Record<string, { input: number; output: number }>;
+  windows: Record<'today' | 'week' | 'month' | 'all', UsageWindow>;
+  /** How many days the task and error breakdowns cover. */
+  breakdownDays: number;
+  byTask: (UsageTally & { task: string })[];
+  byError: { code: string; calls: number }[];
+  byModel: (UsageTally & { model: string; priced: boolean })[];
+  recent: VisionCall[];
+}
+
 export interface ProgressPhoto {
   id: string;
   date: string;
@@ -292,6 +344,8 @@ export const api = {
   pushSubscribe: (subscription: unknown) => post('/api/push/subscribe', subscription),
   pushUnsubscribe: (endpoint: string) => post('/api/push/unsubscribe', { endpoint }),
   pushTest: () => post('/api/push/test', {}),
+
+  visionUsage: () => j<VisionUsage>('/api/vision/usage'),
 
   listPhotos: () => j<ProgressPhoto[]>('/api/photos'),
   uploadPhoto: async (date: string, image: Blob) => {

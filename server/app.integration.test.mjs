@@ -146,6 +146,13 @@ const post = async (path, body, { auth = true } = {}) => {
   return { status: response.status, body: parsed, text };
 };
 
+const get = async (path, { auth = true } = {}) => {
+  const response = await fetch(`${base}${path}`, {
+    headers: auth ? { authorization: 'Bearer tester:test-password' } : {},
+  });
+  return { status: response.status, body: await response.json().catch(() => null) };
+};
+
 describe('the assembled server', () => {
   it('reads a photographed label sent at the size a phone sends', async () => {
     const { status, body, text } = await post('/api/labels/extract', { image: A_REAL_PHOTO });
@@ -183,6 +190,27 @@ describe('the assembled server', () => {
     const { status, body } = await post('/api/meals/estimate', { image: A_REAL_PHOTO });
     expect(status).toBe(429);
     expect(body.error.code).toBe('quota_exceeded');
+  });
+
+  it('reports what the model has been used for, and what it came to', async () => {
+    const { status, body } = await get('/api/vision/usage');
+    expect(status).toBe(200);
+    // Four calls were made above, which is also the limit this server runs on.
+    expect(body.usedToday).toBe(4);
+    expect(body.dailyLimit).toBe(4);
+    expect(body.remainingToday).toBe(0);
+    expect(body.windows.today.calls).toBe(4);
+    expect(body.windows.all.inputTokens).toBe(4 * 1300);
+    expect(body.windows.all.costUsd).toBeGreaterThan(0);
+    expect(body.byTask.map((t) => t.task).sort()).toEqual(['label', 'meal']);
+    expect(body.recent).toHaveLength(4);
+    // The quota rejection never reached the model, so it was never logged.
+    expect(body.byError).toEqual([]);
+  });
+
+  it('keeps the usage figures behind the same guard as everything else', async () => {
+    const { status } = await get('/api/vision/usage', { auth: false });
+    expect(status).toBe(401);
   });
 
   it('recorded every call, with what it cost', async () => {

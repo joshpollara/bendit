@@ -1,6 +1,7 @@
 import { NavLink } from 'react-router-dom';
 import {
   BookIcon,
+  ChipIcon,
   FlameIcon,
   GaugeIcon,
   ListIcon,
@@ -37,7 +38,10 @@ const GROUPS = [
   },
   {
     label: null,
-    links: [{ to: '/settings', label: 'Settings', icon: <PersonIcon className="h-5 w-5" /> }],
+    links: [
+      { to: '/settings', label: 'Settings', icon: <PersonIcon className="h-5 w-5" /> },
+      { to: '/ai-usage', label: 'AI usage', icon: <ChipIcon className="h-5 w-5" /> },
+    ],
   },
 ];
 

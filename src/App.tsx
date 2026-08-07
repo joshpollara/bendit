@@ -17,6 +17,7 @@ import Recipes from './screens/Recipes';
 import Reports from './screens/Reports';
 import Menu from './screens/Menu';
 import Settings from './screens/Settings';
+import AiUsage from './screens/AiUsage';
 
 function Splash() {
   return (
@@ -45,6 +46,7 @@ function Shell({ profile }: { profile: Profile }) {
             <Route path="/recipes" element={<Recipes />} />
             <Route path="/more" element={<Menu />} />
             <Route path="/settings" element={<Settings profile={profile} />} />
+            <Route path="/ai-usage" element={<AiUsage />} />
             <Route path="*" element={<Navigate to="/" replace />} />
           </Routes>
         </main>

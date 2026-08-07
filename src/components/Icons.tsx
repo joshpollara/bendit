@@ -154,6 +154,13 @@ export const BookIcon = (p: IconProps) => (
   </Svg>
 );
 
+export const ChipIcon = (p: IconProps) => (
+  <Svg {...p}>
+    <rect x="7" y="7" width="10" height="10" rx="2" />
+    <path d="M10 3v4M14 3v4M10 17v4M14 17v4M3 10h4M3 14h4M17 10h4M17 14h4" />
+  </Svg>
+);
+
 export const CheckIcon = (p: IconProps) => (
   <Svg {...p}>
     <path d="M4 12.5l5 5L20 6.5" />

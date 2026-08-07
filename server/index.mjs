@@ -31,6 +31,7 @@ import {
 } from './lib/recipeRoute.mjs';
 import { createRecipeTables } from './lib/recipeStore.mjs';
 import { createVisionExtractHandler } from './lib/visionRoute.mjs';
+import { createVisionUsageHandler } from './lib/visionUsage.mjs';
 import webpush from 'web-push';
 import Database from 'better-sqlite3';
 import express from 'express';
@@ -1346,14 +1347,22 @@ app.put('/api/day-done', (req, res) => {
 
 const vision = createVisionProvider();
 const bigJson = express.json({ limit: '4mb' });
+const visionDailyLimit = Number(process.env.VISION_DAILY_LIMIT ?? 100);
 
 const visionHandler = createVisionExtractHandler({
   db,
   provider: vision,
-  dailyLimit: Number(process.env.VISION_DAILY_LIMIT ?? 100),
+  dailyLimit: visionDailyLimit,
 });
 
 app.post('/api/vision/extract', bigJson, visionHandler);
+
+// Every call is logged; this reads that log back as counts and an estimated
+// cost, so what the model is being spent on can be seen without a query.
+app.get(
+  '/api/vision/usage',
+  createVisionUsageHandler({ db, provider: vision, dailyLimit: visionDailyLimit }),
+);
 
 // ——— nutrition labels ———
 //
