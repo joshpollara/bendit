@@ -1,4 +1,4 @@
-import type { Meal } from '../types';
+import type { Meal } from "../types";
 
 // Pure reporting math: trend weight, weekly rollups, and the projections built
 // on them. No I/O, no dates from the environment.
@@ -57,7 +57,10 @@ export function trendSeries(points: Point[], halfLifeDays = 10): Point[] {
  * week. Regression rather than first-vs-last so one odd endpoint can't set the
  * whole rate. Returns undefined when there isn't enough spread to fit a line.
  */
-export function ratePerWeek(points: Point[], windowDays = 28): number | undefined {
+export function ratePerWeek(
+  points: Point[],
+  windowDays = 28,
+): number | undefined {
   if (points.length < 2) return undefined;
   const last = points[points.length - 1].date;
   const window = points.filter((p) => daysBetween(p.date, last) <= windowDays);
@@ -97,7 +100,6 @@ export interface CalorieSummary {
   totalDays: number; // days in the range
   avgFood: number; // mean intake across logged days
   avgExercise: number;
-  avgNet: number; // intake − exercise
   avgBudget: number;
   avgVsBudget: number; // negative = under budget
   totalVsBudget: number; // cumulative surplus/deficit across logged days
@@ -108,27 +110,31 @@ export interface CalorieSummary {
 
 // budgetFor lets each day be measured against the budget that applied then,
 // which drifts as weight does.
-export function summarize(days: DayTotals[], budgetFor: (date: string) => number): CalorieSummary {
+export function summarize(
+  days: DayTotals[],
+  budgetFor: (date: string) => number,
+): CalorieSummary {
   const logged = days.filter((d) => d.entries > 0);
-  const sum = (f: (d: DayTotals) => number) => logged.reduce((a, d) => a + f(d), 0);
+  const sum = (f: (d: DayTotals) => number) =>
+    logged.reduce((a, d) => a + f(d), 0);
   const mean = (total: number) => (logged.length ? total / logged.length : 0);
 
-  const net = (d: DayTotals) => d.food - d.exercise;
+  // Intake stands on its own: exercise is reported, never subtracted.
+  const intake = (d: DayTotals) => d.food;
   const budgets = logged.map((d) => budgetFor(d.date));
   const totalBudget = budgets.reduce((a, b) => a + b, 0);
-  const totalNet = sum(net);
+  const totalIntake = sum(intake);
 
   return {
     loggedDays: logged.length,
     totalDays: days.length,
     avgFood: mean(sum((d) => d.food)),
     avgExercise: mean(sum((d) => d.exercise)),
-    avgNet: mean(totalNet),
     avgBudget: mean(totalBudget),
-    avgVsBudget: mean(totalNet - totalBudget),
-    totalVsBudget: totalNet - totalBudget,
-    daysUnder: logged.filter((d, i) => net(d) <= budgets[i]).length,
-    daysOver: logged.filter((d, i) => net(d) > budgets[i]).length,
+    avgVsBudget: mean(totalIntake - totalBudget),
+    totalVsBudget: totalIntake - totalBudget,
+    daysUnder: logged.filter((d, i) => intake(d) <= budgets[i]).length,
+    daysOver: logged.filter((d, i) => intake(d) > budgets[i]).length,
     avgProtein: mean(sum((d) => d.protein ?? 0)),
   };
 }
@@ -139,7 +145,6 @@ export interface WeekRollup {
   loggedDays: number;
   avgFood: number;
   avgExercise: number;
-  avgNet: number;
   avgBudget: number;
   trendWeight?: number; // trend at the end of the week
   trendChange?: number; // vs the previous week's end
@@ -179,7 +184,6 @@ export function weeklyRollups(
         loggedDays: summary.loggedDays,
         avgFood: summary.avgFood,
         avgExercise: summary.avgExercise,
-        avgNet: summary.avgNet,
         avgBudget: summary.avgBudget,
         trendWeight: at?.value,
       } as WeekRollup;
@@ -194,9 +198,11 @@ export function weeklyRollups(
 }
 
 // Average calories per meal across the days that have any food logged.
-export function mealAverages(days: DayTotals[]): { meal: Meal; average: number }[] {
+export function mealAverages(
+  days: DayTotals[],
+): { meal: Meal; average: number }[] {
   const logged = days.filter((d) => d.entries > 0);
-  const meals: Meal[] = ['breakfast', 'lunch', 'dinner', 'snacks'];
+  const meals: Meal[] = ["breakfast", "lunch", "dinner", "snacks"];
   return meals.map((meal) => ({
     meal,
     average: logged.length
@@ -207,7 +213,11 @@ export function mealAverages(days: DayTotals[]): { meal: Meal; average: number }
 
 // Fills every date from..to so charts show gaps as gaps, not as a straight line
 // between the days that happen to have data.
-export function fillDays(days: DayTotals[], from: string, to: string): DayTotals[] {
+export function fillDays(
+  days: DayTotals[],
+  from: string,
+  to: string,
+): DayTotals[] {
   const byDate = new Map(days.map((d) => [d.date, d]));
   const out: DayTotals[] = [];
   const total = daysBetween(from, to);
@@ -215,7 +225,16 @@ export function fillDays(days: DayTotals[], from: string, to: string): DayTotals
     const d = new Date(`${from}T00:00:00Z`);
     d.setUTCDate(d.getUTCDate() + i);
     const date = d.toISOString().slice(0, 10);
-    out.push(byDate.get(date) ?? { date, food: 0, exercise: 0, entries: 0, protein: 0, meals: {} });
+    out.push(
+      byDate.get(date) ?? {
+        date,
+        food: 0,
+        exercise: 0,
+        entries: 0,
+        protein: 0,
+        meals: {},
+      },
+    );
   }
   return out;
 }

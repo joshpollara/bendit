@@ -1,14 +1,14 @@
-import { useState } from 'react';
-import { Link } from 'react-router-dom';
-import { api, type JoinedEntry } from '../lib/api';
-import { useData } from '../lib/useData';
-import { computeBudget, remaining } from '../lib/budget';
-import { dayLabel, shiftDay, todayStr } from '../lib/dates';
-import { formatCalories } from '../lib/units';
-import { STRINGS } from '../lib/strings';
-import { useUI } from '../store/ui';
-import MealGrade, { type MealGradeData } from '../components/MealGrade';
-import { pendingForDate, useQueue } from '../lib/offlineQueue';
+import { useState } from "react";
+import { Link } from "react-router-dom";
+import { api, type JoinedEntry } from "../lib/api";
+import { useData } from "../lib/useData";
+import { computeBudget, remaining } from "../lib/budget";
+import { dayLabel, shiftDay, todayStr } from "../lib/dates";
+import { formatCalories } from "../lib/units";
+import { STRINGS } from "../lib/strings";
+import { useUI } from "../store/ui";
+import MealGrade, { type MealGradeData } from "../components/MealGrade";
+import { pendingForDate, useQueue } from "../lib/offlineQueue";
 import {
   MEAL_LABELS,
   MEALS,
@@ -16,9 +16,9 @@ import {
   type FoodLogEntry,
   type Meal,
   type Profile,
-} from '../types';
-import EntrySheet from '../components/EntrySheet';
-import ExerciseSheet from '../components/ExerciseSheet';
+} from "../types";
+import EntrySheet from "../components/EntrySheet";
+import ExerciseSheet from "../components/ExerciseSheet";
 import {
   CheckIcon,
   ChevronDownIcon,
@@ -27,7 +27,7 @@ import {
   PlusIcon,
   WarnIcon,
   XIcon,
-} from '../components/Icons';
+} from "../components/Icons";
 
 // A photo-estimated portion is a fraction of a serving — 1.6274… of a 100g
 // serving. Two decimals is as much as anyone reads.
@@ -67,93 +67,89 @@ function DateNav() {
         </div>
       </header>
 
-    <div className="flex items-center justify-between px-2 py-3 lg:hidden">
-      <button
-        type="button"
-        aria-label="Previous day"
-        onClick={() => setDate(shiftDay(date, -1))}
-        className="rounded-full p-2 text-ink-secondary hover:bg-card"
-      >
-        <ChevronLeftIcon className="h-5 w-5" />
-      </button>
-      <button
-        type="button"
-        onClick={() => setDate(todayStr())}
-        className="text-base font-semibold"
-      >
-        {dayLabel(date)}
-      </button>
-      <button
-        type="button"
-        aria-label="Next day"
-        onClick={() => setDate(shiftDay(date, 1))}
-        className="rounded-full p-2 text-ink-secondary hover:bg-card"
-      >
-        <ChevronRightIcon className="h-5 w-5" />
-      </button>
-    </div>
+      <div className="flex items-center justify-between px-2 py-3 lg:hidden">
+        <button
+          type="button"
+          aria-label="Previous day"
+          onClick={() => setDate(shiftDay(date, -1))}
+          className="rounded-full p-2 text-ink-secondary hover:bg-card"
+        >
+          <ChevronLeftIcon className="h-5 w-5" />
+        </button>
+        <button
+          type="button"
+          onClick={() => setDate(todayStr())}
+          className="text-base font-semibold"
+        >
+          {dayLabel(date)}
+        </button>
+        <button
+          type="button"
+          aria-label="Next day"
+          onClick={() => setDate(shiftDay(date, 1))}
+          className="rounded-full p-2 text-ink-secondary hover:bg-card"
+        >
+          <ChevronRightIcon className="h-5 w-5" />
+        </button>
+      </div>
     </>
   );
 }
 
-function BudgetSummary({
-  budget,
-  food,
-  exercise,
-  measured,
-}: {
-  budget: number;
-  food: number;
-  exercise: number;
-  /** A measured budget already includes activity, so exercise isn't added back. */
-  measured: boolean;
-}) {
-  const left = remaining(budget, food, measured ? 0 : exercise);
+function BudgetSummary({ budget, food }: { budget: number; food: number }) {
+  const left = remaining(budget, food);
   const over = left < 0;
   const consumedPct =
-    budget > 0 ? Math.min(100, (Math.max(0, food - (measured ? 0 : exercise)) / budget) * 100) : 0;
+    budget > 0 ? Math.min(100, (Math.max(0, food) / budget) * 100) : 0;
 
   const stat = (label: string, value: number) => (
     <div className="flex flex-col items-center">
-      <span className="text-[11px] font-medium uppercase tracking-wide text-ink-muted">{label}</span>
-      <span className="text-lg font-semibold tabular-nums">{formatCalories(value)}</span>
+      <span className="text-[11px] font-medium uppercase tracking-wide text-ink-muted">
+        {label}
+      </span>
+      <span className="text-lg font-semibold tabular-nums">
+        {formatCalories(value)}
+      </span>
     </div>
   );
 
   return (
     <section className="mx-4 rounded-2xl border border-line bg-card p-4 shadow-sm lg:mx-0">
       <div className="flex items-center justify-between">
-        {stat('Budget', budget)}
+        {stat("Budget", budget)}
         <span className="text-ink-muted">−</span>
-        {stat('Food', food)}
-        {!measured && (
-          <>
-            <span className="text-ink-muted">+</span>
-            {stat('Exercise', exercise)}
-          </>
-        )}
+        {stat("Food", food)}
         <span className="text-ink-muted">=</span>
         <div className="flex flex-col items-center">
           <span className="text-[11px] font-medium uppercase tracking-wide text-ink-muted">
             Remaining
           </span>
-          <span className={`text-lg font-bold tabular-nums ${over ? 'text-over' : 'text-good'}`}>
+          <span
+            className={`text-lg font-bold tabular-nums ${over ? "text-over" : "text-good"}`}
+          >
             {formatCalories(left)}
           </span>
         </div>
       </div>
 
-      <div className="mt-4 h-2.5 overflow-hidden rounded-full bg-line" role="presentation">
+      <div
+        className="mt-4 h-2.5 overflow-hidden rounded-full bg-line"
+        role="presentation"
+      >
         <div
-          className={`h-full rounded-full transition-all ${over ? 'bg-over' : 'bg-good'}`}
+          className={`h-full rounded-full transition-all ${over ? "bg-over" : "bg-good"}`}
           style={{ width: `${over ? 100 : consumedPct}%` }}
         />
       </div>
 
       <p
-        className={`mt-3 flex items-center gap-1.5 text-sm ${over ? 'text-over' : 'text-ink-secondary'}`}
+        className={`mt-3 flex items-center gap-1.5 text-sm ${over ? "text-over" : "text-ink-secondary"}`}
       >
-        {over ? <WarnIcon className="h-4 w-4 shrink-0" /> : <CheckIcon className="h-4 w-4 shrink-0 text-good" />}
+        {over ? (
+          <WarnIcon className="h-4 w-4 shrink-0" />
+        ) : (
+          <CheckIcon className="h-4 w-4 shrink-0 text-good" />
+        )}
         {over
           ? STRINGS.overBudget(formatCalories(-left))
           : left === 0
@@ -166,14 +162,20 @@ function BudgetSummary({
 
 // A week's budget, spent so far. People eat in weeks, not days: a big Friday
 // is fine if the week holds. Only shown once the week is under way.
-function WeekLine({ date, dailyBudget, measured }: { date: string; dailyBudget: number; measured: boolean }) {
+function WeekLine({
+  date,
+  dailyBudget,
+}: {
+  date: string;
+  dailyBudget: number;
+}) {
   const week = useData(() => api.getWeek(date), [date]);
   if (!week) return null;
 
   const elapsed = week.days.filter((d) => d.date <= date).length;
   const used = week.days
     .filter((d) => d.date <= date)
-    .reduce((sum, d) => sum + d.food - (measured ? 0 : d.exercise), 0);
+    .reduce((sum, d) => sum + d.food, 0);
   if (used === 0) return null;
 
   const weekBudget = dailyBudget * 7;
@@ -188,9 +190,12 @@ function WeekLine({ date, dailyBudget, measured }: { date: string; dailyBudget: 
           {formatCalories(used)} of {formatCalories(weekBudget)}
         </span>
       </div>
-      <div className="mt-2 h-2 overflow-hidden rounded-full bg-line" role="presentation">
+      <div
+        className="mt-2 h-2 overflow-hidden rounded-full bg-line"
+        role="presentation"
+      >
         <div
-          className={`h-full rounded-full ${left < 0 ? 'bg-over' : 'bg-accent'}`}
+          className={`h-full rounded-full ${left < 0 ? "bg-over" : "bg-accent"}`}
           style={{ width: `${Math.min(100, (used / weekBudget) * 100)}%` }}
         />
       </div>
@@ -212,8 +217,13 @@ function MacroRow({
   entries: JoinedEntry[];
   proteinTargetG?: number | null;
 }) {
-  const total = (get: (f: NonNullable<JoinedEntry['food']>) => number | undefined) =>
-    entries.reduce((sum, e) => sum + (e.food ? (get(e.food) ?? 0) * e.servings : 0), 0);
+  const total = (
+    get: (f: NonNullable<JoinedEntry["food"]>) => number | undefined,
+  ) =>
+    entries.reduce(
+      (sum, e) => sum + (e.food ? (get(e.food) ?? 0) * e.servings : 0),
+      0,
+    );
 
   const protein = Math.round(total((f) => f.protein));
   const carbs = Math.round(total((f) => f.carbs));
@@ -229,21 +239,24 @@ function MacroRow({
       <div className="flex items-baseline justify-between">
         <h2 className="text-sm font-semibold">Protein</h2>
         <span className="text-sm tabular-nums">
-          <strong className={hit ? 'text-good' : ''}>{protein} g</strong>
+          <strong className={hit ? "text-good" : ""}>{protein} g</strong>
           {target > 0 && <span className="text-ink-muted"> of {target} g</span>}
         </span>
       </div>
       {target > 0 && (
-        <div className="mt-2 h-2 overflow-hidden rounded-full bg-line" role="presentation">
+        <div
+          className="mt-2 h-2 overflow-hidden rounded-full bg-line"
+          role="presentation"
+        >
           <div
-            className={`h-full rounded-full transition-all ${hit ? 'bg-good' : 'bg-accent'}`}
+            className={`h-full rounded-full transition-all ${hit ? "bg-good" : "bg-accent"}`}
             style={{ width: `${pct}%` }}
           />
         </div>
       )}
       <p className="mt-2 text-xs text-ink-muted">
         Carbs {carbs} g · Fat {fat} g
-        {target === 0 && ' · set a protein target in More'}
+        {target === 0 && " · set a protein target in More"}
       </p>
     </section>
   );
@@ -268,7 +281,7 @@ function MealSection({
   const subtotal = entries.reduce((sum, e) => sum + e.caloriesCached, 0);
 
   async function saveAsMeal() {
-    const name = window.prompt('Save this meal as:', MEAL_LABELS[meal]);
+    const name = window.prompt("Save this meal as:", MEAL_LABELS[meal]);
     if (!name?.trim()) return;
     await api.saveMealAsTemplate(name.trim(), date, meal);
     bump();
@@ -299,11 +312,17 @@ function MealSection({
       <header className="flex items-center gap-2 px-4 py-3">
         <button
           type="button"
-          aria-label={open ? `Collapse ${MEAL_LABELS[meal]}` : `Expand ${MEAL_LABELS[meal]}`}
+          aria-label={
+            open
+              ? `Collapse ${MEAL_LABELS[meal]}`
+              : `Expand ${MEAL_LABELS[meal]}`
+          }
           onClick={() => setOpen(!open)}
           className="text-ink-muted"
         >
-          <ChevronDownIcon className={`h-4 w-4 transition-transform ${open ? '' : '-rotate-90'}`} />
+          <ChevronDownIcon
+            className={`h-4 w-4 transition-transform ${open ? "" : "-rotate-90"}`}
+          />
         </button>
         <h2 className="font-semibold">{MEAL_LABELS[meal]}</h2>
         <MealGrade data={grade} />
@@ -353,11 +372,11 @@ function MealSection({
                   <button
                     type="button"
                     onClick={() => setEditing(e)}
-                    aria-label={`Edit ${e.food?.name ?? e.label ?? 'entry'}`}
+                    aria-label={`Edit ${e.food?.name ?? e.label ?? "entry"}`}
                     className="min-w-0 flex-1 text-left"
                   >
                     <p className="truncate text-sm font-medium">
-                      {e.food?.name ?? e.label ?? 'Deleted food'}
+                      {e.food?.name ?? e.label ?? "Deleted food"}
                       {/* An amount judged from a photograph, not weighed or
                           scanned. Marked because a guess shown like a lookup
                           is a guess wearing a lookup's authority. */}
@@ -372,16 +391,18 @@ function MealSection({
                     </p>
                     <p className="truncate text-xs text-ink-muted">
                       {(e as { pending?: boolean }).pending
-                        ? 'Waiting to sync'
+                        ? "Waiting to sync"
                         : e.food
-                          ? `${e.estimated ? '≈' : ''}${round2(e.servings)} × ${e.food.servingLabel}${e.food.brand ? ` · ${e.food.brand}` : ''}`
-                          : 'Calories only'}
+                          ? `${e.estimated ? "≈" : ""}${round2(e.servings)} × ${e.food.servingLabel}${e.food.brand ? ` · ${e.food.brand}` : ""}`
+                          : "Calories only"}
                     </p>
                   </button>
-                  <span className="text-sm font-medium tabular-nums">{formatCalories(e.caloriesCached)}</span>
+                  <span className="text-sm font-medium tabular-nums">
+                    {formatCalories(e.caloriesCached)}
+                  </span>
                   <button
                     type="button"
-                    aria-label={`Remove ${e.food?.name ?? e.label ?? 'entry'}`}
+                    aria-label={`Remove ${e.food?.name ?? e.label ?? "entry"}`}
                     onClick={() => api.deleteLogEntry(e.id).then(bump)}
                     className="rounded-full p-1 text-ink-muted hover:bg-surface hover:text-over"
                   >
@@ -419,7 +440,15 @@ function MealSection({
 
 // Marking a day as finished changes nothing in the data — it's a line you
 // draw for yourself. The strip replaces the button so the day reads as closed.
-function DayDone({ date, done, left }: { date: string; done: boolean; left: number }) {
+function DayDone({
+  date,
+  done,
+  left,
+}: {
+  date: string;
+  done: boolean;
+  left: number;
+}) {
   const bump = useUI((s) => s.bump);
   const toggle = (next: boolean) => api.setDayDone(date, next).then(bump);
 
@@ -439,9 +468,13 @@ function DayDone({ date, done, left }: { date: string; done: boolean; left: numb
       <CheckIcon className="h-4 w-4 shrink-0 text-good" />
       <p className="flex-1 text-sm text-ink-secondary">
         Logging closed for today
-        {left >= 0 ? ` — ${formatCalories(left)} calories under budget.` : '.'}
+        {left >= 0 ? ` — ${formatCalories(left)} calories under budget.` : "."}
       </p>
-      <button type="button" onClick={() => toggle(false)} className="text-xs font-medium text-accent">
+      <button
+        type="button"
+        onClick={() => toggle(false)}
+        className="text-xs font-medium text-accent"
+      >
         Reopen
       </button>
     </div>
@@ -453,7 +486,9 @@ export default function Today({ profile }: { profile: Profile }) {
   const bump = useUI((s) => s.bump);
 
   const day = useData(() => api.getDay(date, shiftDay(date, -1)), [date]);
-  const [editingExercise, setEditingExercise] = useState<ExerciseEntry | null>(null);
+  const [editingExercise, setEditingExercise] = useState<ExerciseEntry | null>(
+    null,
+  );
 
   const queue = useQueue((s) => s.queue);
   const online = useQueue((s) => s.online);
@@ -461,19 +496,24 @@ export default function Today({ profile }: { profile: Profile }) {
   // Entries logged while offline aren't on the server yet, but they're real to
   // the person who logged them — show them in place, marked as not yet synced.
   const pending: JoinedEntry[] = pendingForDate(queue, date)
-    .filter((w) => w.path === '/api/food-log')
+    .filter((w) => w.path === "/api/food-log")
     .map((w) => {
-      const body = w.body as Omit<FoodLogEntry, 'id'> & { id: string };
-      return { ...body, id: w.id, pending: true } as JoinedEntry & { pending: boolean };
+      const body = w.body as Omit<FoodLogEntry, "id"> & { id: string };
+      return { ...body, id: w.id, pending: true } as JoinedEntry & {
+        pending: boolean;
+      };
     });
 
   const joined = [...(day?.entries ?? []), ...pending];
   const exercises = day?.exercises ?? [];
   const foodCalories = joined.reduce((sum, e) => sum + e.caloriesCached, 0);
-  const exerciseCalories = exercises.reduce((sum, e) => sum + e.caloriesBurned, 0);
-  const { budget, measured } = computeBudget(profile, date, day?.latestWeightKg);
+  const exerciseCalories = exercises.reduce(
+    (sum, e) => sum + e.caloriesBurned,
+    0,
+  );
+  const { budget } = computeBudget(profile, date, day?.latestWeightKg);
   const yesterdayByMeal = day?.yesterdayMealCounts ?? {};
-  const left = remaining(budget, foodCalories, measured ? 0 : exerciseCalories);
+  const left = remaining(budget, foodCalories);
 
   return (
     <div className="pt-[env(safe-area-inset-top)]">
@@ -482,21 +522,16 @@ export default function Today({ profile }: { profile: Profile }) {
       {(!online || queue.length > 0) && (
         <p className="mx-4 mb-3 rounded-xl bg-amber/15 px-3 py-2 text-xs text-ink-secondary lg:mx-0">
           {online
-            ? `Syncing ${queue.length} entr${queue.length === 1 ? 'y' : 'ies'} logged offline…`
-            : `Offline — ${queue.length > 0 ? `${queue.length} logged here, ` : ''}everything you add is saved and sent when you're back.`}
+            ? `Syncing ${queue.length} entr${queue.length === 1 ? "y" : "ies"} logged offline…`
+            : `Offline — ${queue.length > 0 ? `${queue.length} logged here, ` : ""}everything you add is saved and sent when you're back.`}
         </p>
       )}
 
       <div className="lg:grid lg:grid-cols-[22rem_minmax(0,1fr)] lg:items-start lg:gap-5 lg:px-0">
         {/* The standings: pinned while you scroll the log beside them. */}
         <div className="lg:sticky lg:top-8 lg:space-y-3">
-          <BudgetSummary
-            budget={budget}
-            food={foodCalories}
-            exercise={exerciseCalories}
-            measured={measured}
-          />
-          <WeekLine date={date} dailyBudget={budget} measured={measured} />
+          <BudgetSummary budget={budget} food={foodCalories} />
+          <WeekLine date={date} dailyBudget={budget} />
           <MacroRow entries={joined} proteinTargetG={profile.proteinTargetG} />
           <div className="hidden lg:block">
             {day && <DayDone date={date} done={day.done} left={left} />}
@@ -516,62 +551,62 @@ export default function Today({ profile }: { profile: Profile }) {
             />
           ))}
 
-      <section className="mx-4 mt-3 mb-4 rounded-2xl border border-line bg-card shadow-sm lg:mx-0 lg:mb-0 lg:mt-0">
-        <header className="flex items-center gap-2 px-4 py-3">
-          <h2 className="flex-1 font-semibold">Exercise</h2>
-          {measured && exerciseCalories > 0 && (
-            <span className="text-[11px] text-ink-muted">already in your budget</span>
-          )}
-          {exerciseCalories > 0 && (
-            <span className="text-sm font-medium tabular-nums text-good">
-              +{formatCalories(exerciseCalories)}
-            </span>
-          )}
-          <Link
-            to={`/add-exercise?date=${date}`}
-            aria-label="Add exercise"
-            className="flex h-7 w-7 items-center justify-center rounded-full bg-accent-soft text-accent"
-          >
-            <PlusIcon className="h-4 w-4" />
-          </Link>
-        </header>
-        <div className="border-t border-line">
-          {exercises.length === 0 ? (
-            <p className="px-4 py-3 text-sm text-ink-muted">{STRINGS.emptyExercise}</p>
-          ) : (
-            <ul>
-              {exercises.map((e) => (
-                <li
-                  key={e.id}
-                  className="flex items-center gap-3 border-b border-line px-4 py-2.5 last:border-b-0"
-                >
-                  <button
-                    type="button"
-                    onClick={() => setEditingExercise(e)}
-                    aria-label={`Edit ${e.name}`}
-                    className="min-w-0 flex-1 text-left"
-                  >
-                    <p className="truncate text-sm font-medium">{e.name}</p>
-                    <p className="text-xs text-ink-muted">{e.minutes} min</p>
-                  </button>
-                  <span className="text-sm font-medium tabular-nums text-good">
-                    +{formatCalories(e.caloriesBurned)}
-                  </span>
-                  <button
-                    type="button"
-                    aria-label={`Remove ${e.name}`}
-                    onClick={() => api.deleteExercise(e.id).then(bump)}
-                    className="rounded-full p-1 text-ink-muted hover:bg-surface hover:text-over"
-                  >
-                    <XIcon className="h-4 w-4" />
-                  </button>
-                </li>
-              ))}
-            </ul>
-          )}
-        </div>
-      </section>
-
+          <section className="mx-4 mt-3 mb-4 rounded-2xl border border-line bg-card shadow-sm lg:mx-0 lg:mb-0 lg:mt-0">
+            <header className="flex items-center gap-2 px-4 py-3">
+              <h2 className="flex-1 font-semibold">Exercise</h2>
+              {exerciseCalories > 0 && (
+                <span className="text-sm font-medium tabular-nums text-ink-secondary">
+                  {formatCalories(exerciseCalories)} cal
+                </span>
+              )}
+              <Link
+                to={`/add-exercise?date=${date}`}
+                aria-label="Add exercise"
+                className="flex h-7 w-7 items-center justify-center rounded-full bg-accent-soft text-accent"
+              >
+                <PlusIcon className="h-4 w-4" />
+              </Link>
+            </header>
+            <div className="border-t border-line">
+              {exercises.length === 0 ? (
+                <p className="px-4 py-3 text-sm text-ink-muted">
+                  {STRINGS.emptyExercise}
+                </p>
+              ) : (
+                <ul>
+                  {exercises.map((e) => (
+                    <li
+                      key={e.id}
+                      className="flex items-center gap-3 border-b border-line px-4 py-2.5 last:border-b-0"
+                    >
+                      <button
+                        type="button"
+                        onClick={() => setEditingExercise(e)}
+                        aria-label={`Edit ${e.name}`}
+                        className="min-w-0 flex-1 text-left"
+                      >
+                        <p className="truncate text-sm font-medium">{e.name}</p>
+                        <p className="text-xs text-ink-muted">
+                          {e.minutes} min
+                        </p>
+                      </button>
+                      <span className="text-sm font-medium tabular-nums text-good">
+                        +{formatCalories(e.caloriesBurned)}
+                      </span>
+                      <button
+                        type="button"
+                        aria-label={`Remove ${e.name}`}
+                        onClick={() => api.deleteExercise(e.id).then(bump)}
+                        className="rounded-full p-1 text-ink-muted hover:bg-surface hover:text-over"
+                      >
+                        <XIcon className="h-4 w-4" />
+                      </button>
+                    </li>
+                  ))}
+                </ul>
+              )}
+            </div>
+          </section>
         </div>
       </div>
 
@@ -586,7 +621,9 @@ export default function Today({ profile }: { profile: Profile }) {
         />
       )}
 
-      <div className="lg:hidden">{day && <DayDone date={date} done={day.done} left={left} />}</div>
+      <div className="lg:hidden">
+        {day && <DayDone date={date} done={day.done} left={left} />}
+      </div>
     </div>
   );
 }

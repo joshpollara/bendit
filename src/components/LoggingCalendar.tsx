@@ -1,12 +1,12 @@
-import { useState } from 'react';
-import { format, parseISO } from 'date-fns';
-import type { DayTotals } from '../lib/report';
-import { formatCalories } from '../lib/units';
+import { useState } from "react";
+import { format, parseISO } from "date-fns";
+import type { DayTotals } from "../lib/report";
+import { formatCalories } from "../lib/units";
 
 // A month at a glance: which days you logged, which you closed. Consistency
 // made visible without turning it into a streak to protect.
 
-const WEEKDAYS = ['M', 'T', 'W', 'T', 'F', 'S', 'S'];
+const WEEKDAYS = ["M", "T", "W", "T", "F", "S", "S"];
 
 function monthKey(date: string): string {
   return date.slice(0, 7);
@@ -61,7 +61,7 @@ export default function LoggingCalendar({
             ‹
           </button>
           <span className="w-24 text-center text-xs font-medium tabular-nums">
-            {format(parseISO(`${key}-01`), 'MMMM yyyy')}
+            {format(parseISO(`${key}-01`), "MMMM yyyy")}
           </span>
           <button
             type="button"
@@ -80,7 +80,10 @@ export default function LoggingCalendar({
 
       <div className="grid grid-cols-7 gap-1 text-center">
         {WEEKDAYS.map((w, i) => (
-          <span key={i} className="text-[10px] font-medium uppercase text-ink-muted">
+          <span
+            key={i}
+            className="text-[10px] font-medium uppercase text-ink-muted"
+          >
             {w}
           </span>
         ))}
@@ -90,20 +93,20 @@ export default function LoggingCalendar({
           const logged = (day?.entries ?? 0) > 0;
           const isClosed = closed.has(date);
           const future = date > today;
-          const net = day ? Math.round(day.food - day.exercise) : 0;
+          const eaten = day ? Math.round(day.food) : 0;
           return (
             <span
               key={date}
-              title={logged ? `${date}: ${formatCalories(net)} cal` : date}
+              title={logged ? `${date}: ${formatCalories(eaten)} cal` : date}
               className={`flex aspect-square items-center justify-center rounded-lg text-[11px] tabular-nums ${
                 future
-                  ? 'text-ink-muted/40'
+                  ? "text-ink-muted/40"
                   : isClosed
-                    ? 'bg-good-soft font-semibold text-good'
+                    ? "bg-good-soft font-semibold text-good"
                     : logged
-                      ? 'bg-accent-soft font-medium text-accent-deep'
-                      : 'bg-surface text-ink-muted'
-              } ${date === today ? 'ring-1 ring-accent' : ''}`}
+                      ? "bg-accent-soft font-medium text-accent-deep"
+                      : "bg-surface text-ink-muted"
+              } ${date === today ? "ring-1 ring-accent" : ""}`}
             >
               {Number(date.slice(8))}
             </span>
@@ -113,13 +116,16 @@ export default function LoggingCalendar({
 
       <ul className="mt-3 flex flex-wrap gap-x-4 gap-y-1 text-[11px] text-ink-secondary">
         <li className="flex items-center gap-1.5">
-          <span className="h-3 w-3 rounded bg-accent-soft" aria-hidden="true" /> logged
+          <span className="h-3 w-3 rounded bg-accent-soft" aria-hidden="true" />{" "}
+          logged
         </li>
         <li className="flex items-center gap-1.5">
-          <span className="h-3 w-3 rounded bg-good-soft" aria-hidden="true" /> closed
+          <span className="h-3 w-3 rounded bg-good-soft" aria-hidden="true" />{" "}
+          closed
         </li>
         <li className="flex items-center gap-1.5">
-          <span className="h-3 w-3 rounded bg-surface" aria-hidden="true" /> nothing logged
+          <span className="h-3 w-3 rounded bg-surface" aria-hidden="true" />{" "}
+          nothing logged
         </li>
       </ul>
     </section>
