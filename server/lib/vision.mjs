@@ -38,15 +38,19 @@ const ENDPOINT =
   process.env.VISION_ENDPOINT ?? 'https://generativelanguage.googleapis.com/v1beta/models';
 
 /**
- * How hard a thinking model should think, when set: "low", "medium" or "high".
+ * How hard a thinking model should think, when set: LOW, MEDIUM or HIGH.
  *
  * Sent only when asked for, because the models that don't take it reject the
  * request outright. It exists because thinking is billed at the output rate and
  * the newer models can't be told not to think at all — so on those, this is the
  * difference between a read costing what a read should and costing several
  * times that. Left unset, nothing changes.
+ *
+ * It goes inside thinkingConfig, not beside it. Flat, it is a field the API
+ * doesn't know, which is the worst of both: either every read fails, or the
+ * setting is quietly ignored and the bill arrives at the default anyway.
  */
-const THINKING_LEVEL = process.env.VISION_THINKING_LEVEL;
+const THINKING_LEVEL = process.env.VISION_THINKING_LEVEL?.trim().toUpperCase();
 
 /** Long enough for a slow model, short enough that a phone isn't left hanging. */
 const TIMEOUT_MS = 20_000;
@@ -157,7 +161,7 @@ export function createVisionProvider({
             responseMimeType: 'application/json',
             responseSchema: toGeminiSchema(schema),
             temperature: 0,
-            ...(THINKING_LEVEL ? { thinkingLevel: THINKING_LEVEL } : {}),
+            ...(THINKING_LEVEL ? { thinkingConfig: { thinkingLevel: THINKING_LEVEL } } : {}),
           },
         }),
       });

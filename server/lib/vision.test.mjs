@@ -67,7 +67,22 @@ describe('vision provider', () => {
     const fetchImpl = vi.fn(async () => geminiResponse({ calories: 1 }));
     await provider(fetchImpl).extract(call);
     const body = JSON.parse(fetchImpl.mock.calls[0][1].body);
+    expect(body.generationConfig).not.toHaveProperty('thinkingConfig');
     expect(body.generationConfig).not.toHaveProperty('thinkingLevel');
+  });
+
+  it('nests the thinking level where the provider expects it', async () => {
+    // Beside thinkingConfig rather than inside it, this is an unknown field:
+    // the request either fails or the setting is ignored and billed at the
+    // default. Neither announces itself.
+    process.env.VISION_THINKING_LEVEL = 'high';
+    vi.resetModules();
+    const { createVisionProvider: fresh } = await import(`./vision.mjs?level=high`);
+    const fetchImpl = vi.fn(async () => geminiResponse({ calories: 1 }));
+    await fresh({ apiKey: 'k', fetchImpl, onRetryDelay: async () => {} }).extract(call);
+    delete process.env.VISION_THINKING_LEVEL;
+    const body = JSON.parse(fetchImpl.mock.calls[0][1].body);
+    expect(body.generationConfig.thinkingConfig).toEqual({ thinkingLevel: 'HIGH' });
   });
 
   it('leaves a call that reported no tokens as unknown, not as free', async () => {
