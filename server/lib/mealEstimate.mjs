@@ -57,7 +57,15 @@ export function estimateMeal(db, items = []) {
 
     if (!name || !Number.isFinite(grams) || grams <= 0) return null;
 
-    const food = matchFood(db, name);
+    // Three ways of saying the same food, tried from the most specific: the
+    // catalogue form the model was asked for, then what it would say out loud,
+    // then the broader term it offered for a food it could only half place.
+    // How a food is *said* and how it is *catalogued* are different strings,
+    // and the database only answers to one of them.
+    const food = [item?.query, name, item?.alternate]
+      .map((term) => String(term ?? '').trim())
+      .filter(Boolean)
+      .reduce((found, term) => found ?? matchFood(db, term), null);
     if (!food) {
       // No confident match. Returned anyway: the person can search for it
       // themselves, and dropping it silently would understate the meal.

@@ -93,40 +93,78 @@ export const TASKS = {
  * models are good at, so that is the part they are asked for.
  */
 TASKS.meal = {
-  version: '1',
+  // 2: asks for a search term separately from the name, for the cooked state,
+  //    and for the scale reference before any weight is given.
+  version: '2',
   prompt: [
     'You are looking at a photograph of a meal, to help someone log what they ate.',
     '',
-    'List each distinct food you can see. For each one give:',
-    '  • name — what the food is, in plain words someone would search for:',
-    '    "grilled chicken breast", "white rice", "olive oil". Name the food, not',
-    '    the dish, when a dish is really several foods on a plate.',
-    '  • grams — how much of it is there, as edible weight. Estimate against the',
-    '    plate, cutlery, or hand in the photo if any are visible.',
+    'First, scale. Say what in the photograph tells you how big things are — a',
+    'dinner plate is about 26cm across, a fork about 19cm long, a can 66mm wide.',
+    'If there is nothing to judge against, say so; do not invent one.',
+    '',
+    'Then list each distinct food. For each one give:',
+    '  • name — what it is, as you would say it to someone: "grilled chicken',
+    '    breast", "shredded cheddar".',
+    '  • query — the same food as it would be catalogued, which is not always how',
+    '    it is said. Use the singular, plainest form of the food, and say whether',
+    '    it is cooked: "chicken breast, grilled", "rice, white, cooked", "cheddar',
+    '    cheese". Leave out brands, and leave out what shape it is in — sliced,',
+    '    shredded and grated cheddar are all cheddar. Cooked and raw are not:',
+    '    100g of dry pasta is two and a half times the calories of 100g cooked,',
+    '    so say which you are looking at.',
+    '  • alternate — a second, broader search term to fall back on, or null.',
+    '    "cheese" for a cheese you can only half identify.',
+    '  • grams — how much of it is there, as edible weight. Work from the scale',
+    '    you gave: judge the volume against something in the photograph, then',
+    '    the weight from what the food is. Do not weigh the bone, skin, rind or',
+    '    packaging.',
     '  • confidence — "high" if both the food and the amount are clear, "medium"',
     '    if the amount is a judgement call, "low" if you are unsure what it is.',
     '',
+    'One food per item. A yoghurt with seeds on it is a yoghurt and some seeds,',
+    'listed separately, because they are looked up separately. Oil, butter and',
+    'dressing count: they are usually the largest thing nobody lists.',
+    '',
     'Do not give calories, protein, carbohydrate, fat or any other nutrition',
-    'figure. They are looked up from the food name, not taken from you.',
+    'figure. They are looked up from the food, not taken from you.',
     '',
     'Ignore anything not eaten: the plate, cutlery, packaging, the table.',
     'Combine what is genuinely one food — a scattering of peas is one item.',
     'If the photo is not of food, return an empty list.',
   ].join('\n'),
+  // Field order is generation order, so this is also the order the model is
+  // made to think in: what it can measure against, then what the food is, and
+  // only then how much of it there is. A weight given before the food has been
+  // named is a guess dressed up as a measurement.
   schema: {
     type: 'object',
     properties: {
+      scale: {
+        type: 'string',
+        nullable: true,
+        description: 'What in the photo the sizes were judged against, or null if nothing was',
+      },
       items: {
         type: 'array',
         description: 'Each distinct food on the plate',
         items: {
           type: 'object',
           properties: {
-            name: { type: 'string', description: 'Plain searchable food name' },
+            name: { type: 'string', description: 'The food, as someone would say it' },
+            query: {
+              type: 'string',
+              description: 'The food as catalogued: singular, plain, no brand, cooked state stated',
+            },
+            alternate: {
+              type: 'string',
+              nullable: true,
+              description: 'A broader search term to fall back on',
+            },
             grams: { type: 'number', description: 'Estimated edible weight in grams' },
             confidence: { type: 'string', enum: ['high', 'medium', 'low'] },
           },
-          required: ['name', 'grams', 'confidence'],
+          required: ['name', 'query', 'grams', 'confidence'],
         },
       },
     },

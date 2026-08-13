@@ -90,6 +90,29 @@ describe('estimateMeal', () => {
     expect(result.total.calories).toBe(248);
   });
 
+  it('looks the food up by how it is catalogued, not by how it is said', () => {
+    // The spoken name finds nothing here; the catalogue form is the whole
+    // point of asking for both.
+    const [only] = estimateMeal(db, [
+      { name: 'a bit of chicken', query: 'chicken breast, roasted', grams: 150, confidence: 'high' },
+    ]).items;
+    expect(only.food.id).toBe('usda-1');
+    expect(only.name).toBe('a bit of chicken'); // what the person sees is still their words
+  });
+
+  it('falls back to the broader term for a food it could only half place', () => {
+    const [only] = estimateMeal(db, [
+      { name: 'jasmine rice', query: 'jasmine rice, steamed', alternate: 'white rice', grams: 100, confidence: 'medium' },
+    ]).items;
+    expect(only.food.id).toBe('usda-2');
+  });
+
+  it('still works when the model gives only a name', () => {
+    // Nothing forces version 2 of the prompt to be the one that answered.
+    const [only] = estimateMeal(db, [item('grilled chicken breast', 150)]).items;
+    expect(only.food.id).toBe('usda-1');
+  });
+
   it('drops an item with no usable weight', () => {
     const result = estimateMeal(db, [item('white rice', 0), item('white rice', null), { name: '' }]);
     expect(result.items).toEqual([]);
@@ -125,11 +148,20 @@ describe('estimateMeal', () => {
 });
 
 describe('the meal task itself', () => {
+  it('names the food before it weighs it', () => {
+    // Field order is generation order. A weight produced before the model has
+    // committed to what the food is, and to what it measured against, is a
+    // guess with nothing behind it.
+    const fields = Object.keys(TASKS.meal.schema.properties.items.items.properties);
+    expect(Object.keys(TASKS.meal.schema.properties)[0]).toBe('scale');
+    expect(fields.indexOf('query')).toBeLessThan(fields.indexOf('grams'));
+  });
+
   it('has nowhere to put a calorie figure', () => {
     // The guarantee this milestone rests on: the model cannot return nutrition
     // because the schema it is constrained to has no field for it.
     const fields = Object.keys(TASKS.meal.schema.properties.items.items.properties);
-    expect(fields.sort()).toEqual(['confidence', 'grams', 'name']);
+    expect(fields.sort()).toEqual(['alternate', 'confidence', 'grams', 'name', 'query']);
     expect(JSON.stringify(TASKS.meal.schema)).not.toMatch(/calorie|protein|carb|fat|kcal/i);
   });
 
@@ -217,10 +249,13 @@ describe('POST /api/meals/estimate', () => {
     expect(JSON.stringify(res.body)).not.toContain('9999');
   });
 
-  it('says so when there was no food in the photo', async () => {
+  it('returns an empty meal when there was no food in the photo', async () => {
+    // Not an error: the screen this opens is the one that can rescue it by
+    // hand, and an error would have thrown the read away instead.
     const res = await post(handlerReturning({ items: [] }), { image });
-    expect(res.statusCode).toBe(422);
-    expect(res.body.error.code).toBe('no_food_found');
+    expect(res.statusCode).toBe(200);
+    expect(res.body.items).toEqual([]);
+    expect(res.body.total.calories).toBe(0);
   });
 
   it('passes a provider failure through for the client to handle', async () => {
