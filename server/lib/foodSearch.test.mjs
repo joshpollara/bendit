@@ -22,6 +22,14 @@ const FOODS = [
   ['off-2', 'openfoodfacts', 'Greek Style Yogurt', 'Fage', 97],
   ['off-3', 'openfoodfacts', 'Chocolate chip cookies', 'Albert Heijn', 480],
   ['seed-1', 'seed', 'Apple', null, 52],
+  // Rows that reproduce four real failures, taken from the model's own words
+  // on photographs of actual meals.
+  ['usda-15', 'usda', 'Veal, leg (top round), separable lean only, cooked, pan-fried, breaded', null, 216],
+  ['usda-16', 'usda', 'Cheese, cheddar', null, 408],
+  ['off-4', 'openfoodfacts', 'Shredded dairy free cheddar cheese alternative', null, 80],
+  ['usda-17', 'usda', 'Egg, whole, cooked, hard-boiled', null, 155],
+  ['off-5', 'openfoodfacts', 'Texas Toast Garlic & Butter Flavored Croutons', null, 500],
+  ['usda-18', 'usda', 'Butter, salted', null, 717],
   // A row with no nutrition: findable, but never the answer for an estimate.
   ['usda-11', 'usda', 'Chicken breast, unprepared', null, null],
 ];
@@ -210,5 +218,36 @@ describe('matchFood — the single answer the photo path commits to', () => {
   it('can be told to search everything, for callers that want a product', () => {
     const anywhere = matchFood(db, 'greek yogurt', { preferSources: [] });
     expect(anywhere).toBeTruthy();
+  });
+});
+
+// Four failures from photographs of real meals, each traced to a mechanism
+// rather than to the food it happened to be about.
+describe('matchFood — what went wrong on real plates', () => {
+  it('matches whole words, so bread is not breaded veal', () => {
+    // "bread" is inside "breaded" and "round" inside "(top round)", which read
+    // as full coverage and committed a plate of toast to a veal escalope.
+    expect(matchFood(db, 'toasted bread rounds')).toBeNull();
+  });
+
+  it('lets a food be found when only its shape is unusual', () => {
+    // Nothing is named "soft boiled egg", and every hard-boiled row sat one
+    // word short of admissible, so the item was dropped from the meal.
+    expect(matchFood(db, 'soft boiled egg')?.kcal100).toBe(155);
+  });
+
+  it('is not trapped by the one row that happens to use the word', () => {
+    // "Shredded dairy free cheddar cheese alternative" was the only row
+    // matching all three words, so cheddar at a fifth of its calories was the
+    // confident answer.
+    expect(matchFood(db, 'shredded cheddar cheese')?.kcal100).toBe(408);
+  });
+
+  it('reads a derived product from the front of a name, not from anywhere in it', () => {
+    // Croutons flavoured with butter are croutons. Butter appearing late in a
+    // product name is not a claim about what the row is.
+    expect(matchFood(db, 'garlic croutons')?.kcal100).toBe(500);
+    // ...while a name that leads with it still is.
+    expect(matchFood(db, 'salted butter')?.kcal100).toBe(717);
   });
 });

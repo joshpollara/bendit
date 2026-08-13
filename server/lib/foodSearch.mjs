@@ -31,13 +31,37 @@ export const PREPARATION = new Set([
 ]);
 
 /**
+ * What shape the food is in, as opposed to what it is.
+ *
+ * Cheddar is cheddar whether it is shredded, sliced or in a block, but the
+ * reference tables rarely say which, so requiring the word finds only the
+ * packets that happen to print it — "shredded cheddar cheese" landed on a
+ * dairy-free alternative at 80 kcal/100g, a fifth of real cheddar, because it
+ * was the one row that used the word. Treated like preparation: dropped when a
+ * match depends on it, still counted when ranking, so a row that does say
+ * "shredded" is preferred when one exists.
+ *
+ * "soft" is here for the same reason from the other direction: "soft boiled
+ * egg" matched nothing at all, while every hard-boiled row sat one word short.
+ */
+// Deliberately excludes words that change what the food *is* rather than its
+// shape: "whole" (milk), "ground" (beef) and "minced" carry real nutrition.
+export const FORM = new Set([
+  'soft', 'shredded', 'grated', 'sliced', 'chopped', 'diced',
+  'crumbled', 'flaked', 'flake', 'mashed', 'mini',
+]);
+
+/** Words a match may lack: how it was cooked, and what shape it is in. */
+const OPTIONAL = new Set([...PREPARATION, ...FORM]);
+
+/**
  * The words a match has to actually contain. Preparation is excluded: a
  * database holding "chicken breast, roasted" but not "grilled" should still
  * answer "grilled chicken breast", because the cooking method barely moves the
  * nutrition. It still counts for *ranking* — a grilled row wins when it exists.
  */
 const contentTokens = (tokens) => {
-  const content = tokens.filter((t) => !PREPARATION.has(t));
+  const content = tokens.filter((t) => !OPTIONAL.has(t));
   return content.length > 0 ? content : tokens;
 };
 
@@ -124,7 +148,7 @@ export function buildMatchPlan(query) {
 
   const plan = [tokens.map(quote).join(' AND ')];
 
-  const withoutPrep = tokens.filter((t) => !PREPARATION.has(t));
+  const withoutPrep = tokens.filter((t) => !OPTIONAL.has(t));
   if (withoutPrep.length > 0 && withoutPrep.length < tokens.length) {
     plan.push(withoutPrep.map(quote).join(' AND '));
   }
@@ -178,11 +202,17 @@ export function rankRows(rows, query) {
   return rows
     .map((row) => {
       const name = row.name.toLowerCase();
+      // Whole words, not substrings. "toasted bread rounds" was committed to
+      // "Veal, leg (top round), cooked, pan-fried, breaded" at full coverage,
+      // because "bread" is inside "breaded" and "round" inside "(top round)".
+      // Both sides go through the same tokeniser, so singulars and the British
+      // spellings line up as they did before.
+      const words = new Set(tokenize(name));
       const required = contentTokens(tokens);
-      const covered = required.filter((t) => writtenForms(t).some((f) => name.includes(f))).length;
+      const covered = required.filter((t) => writtenForms(t).some((f) => words.has(f))).length;
       const coverage = required.length ? covered / required.length : 0;
-      // Preparation still influences the ordering, just not admissibility.
-      const prepBonus = tokens.filter((t) => PREPARATION.has(t) && name.includes(t)).length;
+      // Preparation and form still influence the ordering, just not admissibility.
+      const prepBonus = tokens.filter((t) => OPTIONAL.has(t) && words.has(t)).length;
 
       let score = -(row.bm25 ?? 0); // bm25 is negative-better; flip it
       score += coverage * 6;
@@ -195,14 +225,22 @@ export function rankRows(rows, query) {
       // The leading segment of a USDA name says what kind of thing the row is.
       // If it announces a derived product the query never mentioned, it's the
       // wrong row however well the words line up.
+      //
+      // Only the first couple of words count as the announcement. A product
+      // name is a phrase rather than a classification, and one of these words
+      // can appear anywhere in it without being what the row is: "Texas Toast
+      // Garlic & Butter Flavored Croutons" is croutons, and reading it as
+      // butter cost the only match "garlic croutons" had. "Peanut butter cups"
+      // still names its derived product where such a name always does — at
+      // the front.
       const head = tokenize(name.split(',')[0]);
-      if (head.some((word) => DERIVED_HEAD.has(word) && !tokens.includes(word))) score -= 7;
+      const leading = tokenize(name).slice(0, 2);
+      if (leading.some((word) => DERIVED_HEAD.has(word) && !tokens.includes(word))) score -= 7;
 
       // A row for a part of the animal, when the query asked for the animal.
-      const words = tokenize(name);
       if (
-        !words.includes('meat') &&
-        words.some((word) => PART_WORDS.has(word) && !tokens.includes(word))
+        !words.has('meat') &&
+        [...words].some((word) => PART_WORDS.has(word) && !tokens.includes(word))
       ) {
         score -= 6;
       }
@@ -242,6 +280,15 @@ export function searchFoods(
     extra.push(ownerId);
   }
 
+  // Every plan runs and the results are ranked together, rather than stopping
+  // at the first that returns anything. A strict plan finding one poor row used
+  // to hide the better answers a relaxed plan would have found: "shredded
+  // cheddar cheese" matched exactly one product — a dairy-free alternative at a
+  // fifth of cheddar's calories — and the plan that would have found cheddar
+  // never ran. Ranking decides between them; matching only decides who is
+  // considered. The strict plan is still cheapest and usually enough, so it is
+  // the only one that runs when it fills the result set.
+  const collected = new Map();
   for (const match of plan) {
     let rows;
     try {
@@ -257,9 +304,11 @@ export function searchFoods(
       // A malformed match expression means no results, not a 500.
       continue;
     }
-    if (rows.length > 0) return rankRows(rows, query).slice(0, limit);
+    for (const row of rows) if (!collected.has(row.id)) collected.set(row.id, row);
+    if (collected.size >= limit * 4) break;
   }
-  return [];
+  if (collected.size === 0) return [];
+  return rankRows([...collected.values()], query).slice(0, limit);
 }
 
 /**
@@ -327,8 +376,14 @@ export function matchFood(db, query, options = {}) {
  * actually answers, rather than the best one overall.
  */
 export function matchCandidates(db, query, { preferSources = GENERIC_SOURCES, limit = 5, ...options } = {}) {
+  // Ask for more than are wanted, because the coverage floor is applied after
+  // the search has already ranked and cut. A row that answers the query can sit
+  // just outside a five-row cut behind rows that are about to be thrown away,
+  // and cutting first loses it: "garlic croutons" and "instant ramen noodles"
+  // both went from a good match to none that way.
+  const pool = Math.max(limit * 5, 25);
   const search = (sources) =>
-    searchFoods(db, query, { ...options, sources, limit, requireNutrition: true }).filter(
+    searchFoods(db, query, { ...options, sources, limit: pool, requireNutrition: true }).filter(
       (row) => row.coverage >= MIN_COVERAGE,
     );
 
