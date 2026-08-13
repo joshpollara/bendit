@@ -328,12 +328,15 @@ export default function AddFood() {
   /** Everything the photo found, logged in one go against the chosen meal. */
   async function logMealPhoto(items: MealItem[], chosenMeal: Meal) {
     for (const item of items) {
-      if (!item.food || !item.nutrition) continue;
+      if (!item.nutrition) continue;
       await api.addLogEntry({
         date,
         meal: chosenMeal,
-        foodId: item.food.id,
-        servings: item.servings ?? item.grams / 100,
+        // An item whose calories were typed over a name nothing matched has no
+        // food behind it. It logs as a quick add does — name and a number.
+        foodId: item.food?.id ?? null,
+        label: item.food ? undefined : item.name,
+        servings: item.food ? (item.servings ?? item.grams / 100) : 1,
         caloriesCached: Math.round(item.nutrition.calories),
         // Only the portions still carrying an error band are estimates; one the
         // user typed or picked a unit for is as good as any other entry.

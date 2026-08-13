@@ -90,6 +90,31 @@ export function rescaleItem(item: MealItem, grams: number): MealItem {
 }
 
 /**
+ * Recomputes an item after its calorie figure is corrected by hand.
+ *
+ * A matched food has a known energy density, so a corrected calorie count is
+ * really a corrected weight: it goes back through the same per-100g arithmetic,
+ * and the grams box, the macros and the unit chips all stay in step with each
+ * other. An item that matched nothing has no density to work from, so the
+ * number typed is all there is — it becomes the item's calories directly, and
+ * that is enough to log it.
+ */
+export function setCalories(item: MealItem, calories: number): MealItem {
+  if (!(calories >= 0)) return item;
+  const kcal100 = item.food?.kcal100 ?? null;
+  if (kcal100 != null && kcal100 > 0) {
+    return rescaleItem(item, Math.round(((calories * 100) / kcal100) * 10) / 10);
+  }
+  const rounded = Math.round(calories);
+  return {
+    ...item,
+    error: 0,
+    nutrition: { calories: rounded, protein: null, carbs: null, fat: null },
+    range: { low: rounded, high: rounded },
+  };
+}
+
+/**
  * A food chosen by hand becomes an item at the given weight. Its numbers come
  * from the same per-100g figures the server would have used, so a corrected
  * item is priced exactly like an estimated one — and carries no error band,

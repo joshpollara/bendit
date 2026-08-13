@@ -26,15 +26,13 @@ export function createMealEstimateHandler({ db, visionHandler }) {
       return res.status(captured.statusCode).json(captured.body ?? { error: { code: 'unknown' } });
     }
 
+    // An empty list is an answer, not a failure: the model looked and found
+    // nothing it could name. It comes back as a meal with no items rather than
+    // an error, because the alternative was a dead end — a banner, and a
+    // photograph that had already been paid for thrown away. Everything needed
+    // to rescue it is on the screen the estimate opens: the food search, and a
+    // box to type the calories into.
     const items = Array.isArray(captured.body.data.items) ? captured.body.data.items : [];
-    if (items.length === 0) {
-      return res.status(422).json({
-        error: {
-          code: 'no_food_found',
-          message: "No food was recognised in that photo. Try again with the plate filling the frame.",
-        },
-      });
-    }
 
     return res.json({ ...estimateMeal(db, items), meta: captured.body.meta });
   };

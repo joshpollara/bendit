@@ -1,5 +1,12 @@
 import { describe, expect, it } from 'vitest';
-import { itemFromFood, rescaleItem, totalsFor, unitOptions, type MealItem } from './mealPhoto';
+import {
+  itemFromFood,
+  rescaleItem,
+  setCalories,
+  totalsFor,
+  unitOptions,
+  type MealItem,
+} from './mealPhoto';
 import type { Food } from '../types';
 
 // The correction layer: what happens after the model has had its say.
@@ -100,6 +107,38 @@ describe('rescaleItem', () => {
     const unmatched = estimated({ food: null, nutrition: null });
     expect(rescaleItem(unmatched, 50).grams).toBe(50);
     expect(rescaleItem(unmatched, 50).nutrition).toBeNull();
+  });
+});
+
+describe('setCalories', () => {
+  it('turns a corrected calorie figure back into a weight', () => {
+    const corrected = setCalories(estimated(), 205);
+    expect(corrected.grams).toBe(157.7); // 205 ÷ 130 × 100
+    expect(corrected.nutrition?.calories).toBe(205);
+  });
+
+  it('keeps the macros in step with the calories', () => {
+    const corrected = setCalories(estimated(), 130);
+    expect(corrected.grams).toBe(100);
+    expect(corrected.nutrition?.protein).toBe(2.7);
+    expect(corrected.nutrition?.carbs).toBe(28.2);
+  });
+
+  it('drops the error band, as a typed weight does', () => {
+    const corrected = setCalories(estimated(), 205);
+    expect(corrected.error).toBe(0);
+    expect(corrected.range).toEqual({ low: 205, high: 205 });
+  });
+
+  it('gives an unmatched item the calories it was typed, and nothing else', () => {
+    const corrected = setCalories(estimated({ food: null, nutrition: null, range: null }), 320);
+    expect(corrected.nutrition).toEqual({ calories: 320, protein: null, carbs: null, fat: null });
+    expect(corrected.range).toEqual({ low: 320, high: 320 });
+    expect(corrected.grams).toBe(210); // untouched: there is no weight to infer
+  });
+
+  it('ignores a figure that is not a number', () => {
+    expect(setCalories(estimated(), Number.NaN)).toEqual(estimated());
   });
 });
 

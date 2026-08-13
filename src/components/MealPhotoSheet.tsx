@@ -3,6 +3,7 @@ import { api } from '../lib/api';
 import {
   itemFromFood,
   rescaleItem,
+  setCalories,
   totalsFor,
   unitOptions,
   type MealEstimate,
@@ -21,8 +22,16 @@ import Sheet from './Sheet';
 // in grams. The calories carry the range that amount implies, and typing an
 // amount collapses the range, because an amount someone knows is not a guess.
 //
+// The calorie figure is editable too. Often the food is right and only the
+// number is wrong, and someone who knows the calories shouldn't have to work
+// backwards to a weight that produces them. For a matched food that is exactly
+// what happens behind the box — calories in, weight out, macros in step. For
+// one that matched nothing, the typed figure is the whole entry, and it logs
+// the way a quick add does.
+//
 // Everything the model produced can be overruled: the food it matched, the
-// weight, whether the item belongs at all, and anything it missed entirely.
+// weight, the calories, whether the item belongs at all, and anything it
+// missed entirely.
 
 const CONFIDENCE_LABEL: Record<string, string> = {
   high: 'clear',
@@ -54,7 +63,9 @@ export default function MealPhotoSheet({
   const [saving, setSaving] = useState(false);
 
   const total = totalsFor(items);
-  const loggable = items.filter((item) => item.food && item.nutrition);
+  // An item with a calorie figure can be logged, whether that figure came from
+  // a matched food or was typed in over the top of a name nothing matched.
+  const loggable = items.filter((item) => item.nutrition);
   const anyEstimated = loggable.some((item) => (item.error ?? 0) > 0);
 
   const update = (index: number, next: MealItem) =>
@@ -62,6 +73,9 @@ export default function MealPhotoSheet({
 
   const setGrams = (index: number, grams: number) =>
     update(index, rescaleItem(items[index], grams));
+
+  const setCals = (index: number, calories: number) =>
+    update(index, setCalories(items[index], calories));
 
   /** Swapping the food keeps the weight: the plate didn't change, the name did. */
   const swap = (index: number, food: Food) => {
@@ -90,12 +104,18 @@ export default function MealPhotoSheet({
 
   /** Repeat meals are most of most diets; a saved meal re-logs in one tap. */
   async function saveTemplate() {
-    const name = window.prompt('Save this meal as:', loggable.map((i) => i.food?.name).join(', ').slice(0, 40));
+    const name = window.prompt(
+      'Save this meal as:',
+      loggable.map((i) => i.food?.name ?? i.name).join(', ').slice(0, 40),
+    );
     if (!name?.trim()) return;
     await api.createMealTemplate(
       name.trim(),
       loggable.map((item) => ({
         foodId: item.food?.id ?? null,
+        // An item with no food behind it keeps its name, or it re-logs as a
+        // nameless number.
+        label: item.food ? undefined : item.name,
         servings: item.servings ?? item.grams / 100,
         caloriesCached: Math.round(item.nutrition?.calories ?? 0),
       })),
@@ -105,7 +125,11 @@ export default function MealPhotoSheet({
   return (
     <Sheet onClose={onClose}>
       <h2 className="text-lg font-semibold">What&apos;s on the plate</h2>
-      <p className="mt-1 text-xs text-ink-muted">Check the weights before adding them.</p>
+      <p className="mt-1 text-xs text-ink-muted">
+        {items.length > 0
+          ? 'Check the weights before adding them.'
+          : 'Nothing was recognised. Add what you ate.'}
+      </p>
 
       <ul className="mt-3 flex flex-col gap-2">
         {items.map((item, index) => {
@@ -129,7 +153,7 @@ export default function MealPhotoSheet({
                         {item.seenAs ? `seen as “${item.seenAs}”` : 'you chose this'}
                       </>
                     ) : (
-                      `“${item.name}” isn't in the database — pick something`
+                      `“${item.name}” isn't in the database — pick a food, or type the calories`
                     )}
                   </p>
                 </button>
@@ -182,19 +206,24 @@ export default function MealPhotoSheet({
                   </button>
                 ))}
 
-                <span className="ml-auto text-sm tabular-nums">
-                  {item.nutrition ? (
-                    <>
-                      <strong>{formatCalories(item.nutrition.calories)}</strong> cal
-                      {item.range && item.range.low !== item.range.high && (
-                        <span className="text-ink-muted">
-                          {' '}
-                          ({item.range.low}–{item.range.high})
-                        </span>
-                      )}
-                    </>
-                  ) : (
-                    <span className="text-ink-muted">no data</span>
+                {/* Editable, because the food is often right when the number
+                    isn't. For a matched food this sets the weight; for an
+                    unmatched one it is the entry. */}
+                <span className="ml-auto flex items-center gap-1.5 text-sm tabular-nums">
+                  <input
+                    type="number"
+                    inputMode="numeric"
+                    aria-label={`Calories of ${item.food?.name ?? item.name}`}
+                    className="w-20 rounded-lg border border-line bg-card px-2 py-1.5 text-right text-sm font-semibold tabular-nums"
+                    value={item.nutrition ? Math.round(item.nutrition.calories) : ''}
+                    placeholder="—"
+                    onChange={(e) => setCals(index, Number(e.target.value))}
+                  />
+                  <span className="text-xs text-ink-secondary">cal</span>
+                  {item.range && item.range.low !== item.range.high && (
+                    <span className="text-[11px] text-ink-muted">
+                      {item.range.low}–{item.range.high}
+                    </span>
                   )}
                 </span>
 
@@ -222,7 +251,7 @@ export default function MealPhotoSheet({
           onClick={() => setPicking('new')}
           className="mt-2 w-full rounded-xl border border-dashed border-line py-2.5 text-sm font-medium text-accent"
         >
-          + Add something the photo missed
+          {items.length > 0 ? '+ Add something the photo missed' : '+ Add a food'}
         </button>
       )}
 
