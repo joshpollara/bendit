@@ -11,12 +11,27 @@
 // being silently priced at zero.
 
 /**
- * US dollars per million tokens. These are the rates the choice of model was
- * made on; see the note at the top of vision.mjs. When the model changes, or
- * the provider's prices do, this is the one place to change.
+ * US dollars per million tokens, on the paid tier. These are the rates the
+ * choice of model was made on; see the note at the top of vision.mjs. When the
+ * model changes, or the provider's prices do, this is the one place to change.
+ *
+ * Output covers thinking as well as the answer, which is how the provider bills
+ * it and how vision.mjs counts it — the Flash models here think, and the
+ * thinking is usually the larger half.
+ *
+ * The Flash rates are introductory and end on 31 December 2026, after which
+ * they double. A model priced from this table is being priced at today's rate,
+ * not the rate on the day it ran.
  */
 export const MODEL_PRICES = {
   'gemini-3.1-flash-lite': { input: 0.25, output: 1.5 },
+  'gemini-3.5-flash-lite': { input: 0.3, output: 2.5 },
+  // Dominated by 3.7-flash on both axes while the introductory rate holds.
+  'gemini-3.5-flash': { input: 1.5, output: 9 },
+  'gemini-3.6-flash': { input: 0.75, output: 3.75 },
+  'gemini-3.7-flash': { input: 0.75, output: 3.75 },
+  // Prompts over 200k tokens cost more; a photograph is nowhere near it.
+  'gemini-3.1-pro-preview': { input: 2, output: 12 },
 };
 
 /** The last calls listed one by one, newest first. */

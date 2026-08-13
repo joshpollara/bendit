@@ -37,6 +37,17 @@ const DEFAULT_MODEL = 'gemini-3.1-flash-lite';
 const ENDPOINT =
   process.env.VISION_ENDPOINT ?? 'https://generativelanguage.googleapis.com/v1beta/models';
 
+/**
+ * How hard a thinking model should think, when set: "low", "medium" or "high".
+ *
+ * Sent only when asked for, because the models that don't take it reject the
+ * request outright. It exists because thinking is billed at the output rate and
+ * the newer models can't be told not to think at all — so on those, this is the
+ * difference between a read costing what a read should and costing several
+ * times that. Left unset, nothing changes.
+ */
+const THINKING_LEVEL = process.env.VISION_THINKING_LEVEL;
+
 /** Long enough for a slow model, short enough that a phone isn't left hanging. */
 const TIMEOUT_MS = 20_000;
 const MAX_ATTEMPTS = 3;
@@ -57,6 +68,32 @@ function parseProviderMessage(text) {
 }
 
 const sleep = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
+
+/**
+ * What a call is billed for.
+ *
+ * A model that thinks before it answers charges those tokens at the output
+ * rate but reports them in a field of their own, so counting only the visible
+ * answer makes a thinking model look several times cheaper than the invoice
+ * says. They are added to the output count rather than kept apart: everything
+ * that reads these numbers is working out money, and money doesn't tell the
+ * two apart. Nulls are preserved — a call that reported nothing should not
+ * read as a call that cost nothing.
+ */
+export function usageOf(meta) {
+  const answer = meta?.candidatesTokenCount;
+  // The provider's own documentation and its responses disagree about what this
+  // field is called, and being wrong about the name is indistinguishable from a
+  // model that didn't think — silently, and in the direction of a smaller bill.
+  // Both spellings are read; only one will ever be present.
+  const thinking = meta?.thoughtsTokenCount ?? meta?.totalThoughtTokens;
+  return {
+    inputTokens: meta?.promptTokenCount ?? null,
+    outputTokens:
+      answer == null && thinking == null ? null : (answer ?? 0) + (thinking ?? 0),
+    totalTokens: meta?.totalTokenCount ?? null,
+  };
+}
 
 /**
  * Gemini rejects the parts of JSON Schema it doesn't implement, so the schema
@@ -120,6 +157,7 @@ export function createVisionProvider({
             responseMimeType: 'application/json',
             responseSchema: toGeminiSchema(schema),
             temperature: 0,
+            ...(THINKING_LEVEL ? { thinkingLevel: THINKING_LEVEL } : {}),
           },
         }),
       });
@@ -187,11 +225,7 @@ export function createVisionProvider({
             raw: answer,
             model,
             latencyMs: Date.now() - started,
-            usage: {
-              inputTokens: body?.usageMetadata?.promptTokenCount ?? null,
-              outputTokens: body?.usageMetadata?.candidatesTokenCount ?? null,
-              totalTokens: body?.usageMetadata?.totalTokenCount ?? null,
-            },
+            usage: usageOf(body?.usageMetadata),
           };
         } catch (error) {
           lastError = error;

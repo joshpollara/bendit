@@ -46,6 +46,40 @@ describe('vision provider', () => {
     expect(typeof result.latencyMs).toBe('number');
   });
 
+  it('counts thinking as output, because that is how it is billed', async () => {
+    // A model that thinks reports those tokens separately. Counting only the
+    // visible answer would report a call at a fraction of what it cost.
+    const result = await provider(async () =>
+      geminiResponse({ calories: 210 }, { candidatesTokenCount: 40, thoughtsTokenCount: 900 }),
+    ).extract(call);
+    expect(result.usage.outputTokens).toBe(940);
+  });
+
+  it('reads the thinking count under either name the provider gives it', async () => {
+    const result = await provider(async () =>
+      geminiResponse({ calories: 210 }, { candidatesTokenCount: 40, totalThoughtTokens: 500 }),
+    ).extract(call);
+    expect(result.usage.outputTokens).toBe(540);
+  });
+
+  it('asks for no particular thinking level unless one is set', async () => {
+    // The models that don't take the field reject the whole request for it.
+    const fetchImpl = vi.fn(async () => geminiResponse({ calories: 1 }));
+    await provider(fetchImpl).extract(call);
+    const body = JSON.parse(fetchImpl.mock.calls[0][1].body);
+    expect(body.generationConfig).not.toHaveProperty('thinkingLevel');
+  });
+
+  it('leaves a call that reported no tokens as unknown, not as free', async () => {
+    const result = await provider(async () => ({
+      ok: true,
+      status: 200,
+      json: async () => ({ candidates: [{ content: { parts: [{ text: '{"calories":1}' }] } }] }),
+    })).extract(call);
+    expect(result.usage.outputTokens).toBeNull();
+    expect(result.usage.inputTokens).toBeNull();
+  });
+
   it('sends the key in a header and never in the URL', async () => {
     // A key in a query string ends up in proxy logs and browser histories.
     const fetchImpl = vi.fn(async () => geminiResponse({ calories: 1 }));
