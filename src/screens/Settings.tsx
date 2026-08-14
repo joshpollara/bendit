@@ -299,6 +299,7 @@ export default function Settings({ profile }: { profile: Profile }) {
             { href: '/api/export/weights.csv', label: 'Weights CSV' },
             { href: '/api/export/exercise.csv', label: 'Exercise CSV' },
             { href: '/api/export/measurements.csv', label: 'Measurements CSV' },
+            { href: '/api/export/fasts.csv', label: 'Fasts CSV' },
           ].map((f) => (
             <a
               key={f.href}

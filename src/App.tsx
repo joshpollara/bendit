@@ -12,6 +12,7 @@ import Today from './screens/Today';
 import AddFood from './screens/AddFood';
 import AddExercise from './screens/AddExercise';
 import Weight from './screens/Weight';
+import Fasting from './screens/Fasting';
 import Foods from './screens/Foods';
 import Recipes from './screens/Recipes';
 import Reports from './screens/Reports';
@@ -41,6 +42,7 @@ function Shell({ profile }: { profile: Profile }) {
             <Route path="/add-food" element={<AddFood />} />
             <Route path="/add-exercise" element={<AddExercise profile={profile} />} />
             <Route path="/weight" element={<Weight profile={profile} />} />
+            <Route path="/fasting" element={<Fasting profile={profile} />} />
             <Route path="/reports" element={<Reports profile={profile} />} />
             <Route path="/foods" element={<Foods />} />
             <Route path="/recipes" element={<Recipes />} />

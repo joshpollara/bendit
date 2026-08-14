@@ -99,6 +99,15 @@ CREATE TABLE IF NOT EXISTS measurements (
 CREATE TABLE IF NOT EXISTS push_subscriptions (
   endpoint TEXT PRIMARY KEY, p256dh TEXT NOT NULL, auth TEXT NOT NULL, createdAt TEXT NOT NULL
 );
+-- A fast is a stretch of clock time, stored as two instants rather than as
+-- dates. It is not derived from the food log: eating from 8pm to 1am is one
+-- window, and a fast worked out from meal times would read the 1am plate as
+-- the next day's first meal and start counting from the wrong place. endedAt
+-- is null exactly while the fast is running.
+CREATE TABLE IF NOT EXISTS fasts (
+  id TEXT PRIMARY KEY, startedAt TEXT NOT NULL, endedAt TEXT, goalHours REAL
+);
+CREATE INDEX IF NOT EXISTS idx_fasts_started ON fasts(startedAt);
 `);
 
 createUsersTable(db);
@@ -329,6 +338,8 @@ ensureColumns('profile', {
   measuredTdee: 'REAL',
   reminderHour: 'INTEGER',
   timezone: 'TEXT',
+  // The length the next fast starts out aiming for. Null means no target.
+  fastGoalHours: 'REAL',
 });
 
 // Progress photos live next to the database — on Fly that's the persistent
@@ -764,15 +775,16 @@ app.put('/api/profile', (req, res) => {
     measuredTdee: null,
     reminderHour: null,
     timezone: null,
+    fastGoalHours: null,
     ...req.body,
     id: req.userId,
     userId: req.userId,
   };
   db.prepare(`INSERT OR REPLACE INTO profile
     (id, sex, birthDate, heightCm, startWeightKg, goalWeightKg, activityLevel, weeklyRateKg, units, createdAt,
-     proteinTargetG, budgetSource, measuredTdee, reminderHour, timezone, userId)
+     proteinTargetG, budgetSource, measuredTdee, reminderHour, timezone, fastGoalHours, userId)
     VALUES (@id, @sex, @birthDate, @heightCm, @startWeightKg, @goalWeightKg, @activityLevel, @weeklyRateKg, @units, @createdAt,
-     @proteinTargetG, @budgetSource, @measuredTdee, @reminderHour, @timezone, @userId)`).run(p);
+     @proteinTargetG, @budgetSource, @measuredTdee, @reminderHour, @timezone, @fastGoalHours, @userId)`).run(p);
   res.json(p);
 });
 
@@ -1423,6 +1435,145 @@ app.put('/api/day-done', (req, res) => {
   res.json({ date, done: !!done });
 });
 
+// ——— fasting ———
+//
+// A clock you start and stop, kept as instants rather than as days. Everything
+// here refuses to guess: a fast is where you said it was, and the only thing
+// the server works out is whether one interval runs into another.
+
+const HOUR_MS = 3_600_000;
+
+// Later than any real fast, so an unfinished one sorts and compares as though
+// it ran forever — which, for the purpose of "does this overlap?", it does.
+const FAR_FUTURE = '9999-12-31T00:00:00.000Z';
+
+// A few minutes of slack, because "end it now" is timestamped by the phone and
+// phones are not in step with the server to the second.
+const CLOCK_SKEW_MS = 5 * 60_000;
+
+/** An instant, normalised to UTC so two of them compare as plain strings. */
+function instant(value) {
+  const ms = Date.parse(value);
+  return Number.isFinite(ms) ? new Date(ms).toISOString() : null;
+}
+
+/** Hours to aim for, or null for a fast that just runs. */
+function goalHoursOf(value) {
+  if (value === null || value === undefined || value === '') return null;
+  const hours = Number(value);
+  return Number.isFinite(hours) && hours > 0 && hours <= 240 ? hours : null;
+}
+
+/** The fast this interval would run into, if any. */
+function overlappingFast(userId, startedAt, endedAt, excludeId = null) {
+  return db
+    .prepare(
+      `SELECT id, endedAt FROM fasts
+         WHERE userId = ? AND (? IS NULL OR id <> ?)
+           AND startedAt < ? AND COALESCE(endedAt, ?) > ?
+         LIMIT 1`,
+    )
+    .get(userId, excludeId, excludeId, endedAt ?? FAR_FUTURE, FAR_FUTURE, startedAt);
+}
+
+const clashError = (clash) =>
+  clash.endedAt ? 'That runs into a fast you have already recorded.' : 'A fast is already running.';
+
+app.get('/api/fasts', (req, res) => {
+  const rows = db
+    .prepare(
+      `SELECT id, startedAt, endedAt, goalHours FROM fasts
+         WHERE userId = ? ORDER BY startedAt DESC LIMIT 200`,
+    )
+    .all(req.userId);
+  res.json({
+    current: rows.find((f) => !f.endedAt) ?? null,
+    recent: rows.filter((f) => f.endedAt),
+  });
+});
+
+// Starting a fast and writing down one you forgot to start are the same call:
+// an interval with an end, or without one yet.
+app.post('/api/fasts', (req, res) => {
+  const startedAt = instant(req.body?.startedAt ?? new Date().toISOString());
+  if (!startedAt) return res.status(400).json({ error: "That start time isn't a time." });
+
+  const endedAt = req.body?.endedAt ? instant(req.body.endedAt) : null;
+  if (req.body?.endedAt && !endedAt) {
+    return res.status(400).json({ error: "That end time isn't a time." });
+  }
+  if (endedAt && endedAt <= startedAt) {
+    return res.status(400).json({ error: 'A fast has to end after it starts.' });
+  }
+  for (const [when, label] of [[startedAt, 'start'], [endedAt, 'end']]) {
+    if (when && Date.parse(when) > Date.now() + CLOCK_SKEW_MS) {
+      return res.status(400).json({ error: `A fast can't ${label} in the future.` });
+    }
+  }
+
+  const clash = overlappingFast(req.userId, startedAt, endedAt);
+  if (clash) return res.status(409).json({ error: clashError(clash) });
+
+  const fast = {
+    id: newId(),
+    startedAt,
+    endedAt,
+    goalHours: goalHoursOf(req.body?.goalHours),
+    userId: req.userId,
+  };
+  db.prepare(
+    `INSERT INTO fasts (id, startedAt, endedAt, goalHours, userId)
+     VALUES (@id, @startedAt, @endedAt, @goalHours, @userId)`,
+  ).run(fast);
+  const { userId, ...created } = fast;
+  res.json(created);
+});
+
+// Ending a fast is a change of end time like any other, so there is one path
+// for stopping the clock and for correcting it afterwards. A null endedAt puts
+// a fast back on the clock.
+app.patch('/api/fasts/:id', (req, res) => {
+  const existing = db
+    .prepare('SELECT * FROM fasts WHERE id = ? AND userId = ?')
+    .get(req.params.id, req.userId);
+  if (!existing) return res.status(404).json({ error: 'No such fast.' });
+
+  const changes = pick(req.body ?? {}, ['startedAt', 'endedAt', 'goalHours']);
+  const startedAt = 'startedAt' in changes ? instant(changes.startedAt) : existing.startedAt;
+  const endedAt =
+    'endedAt' in changes
+      ? changes.endedAt === null
+        ? null
+        : instant(changes.endedAt)
+      : existing.endedAt;
+  const goalHours = 'goalHours' in changes ? goalHoursOf(changes.goalHours) : existing.goalHours;
+
+  if (!startedAt) return res.status(400).json({ error: "That start time isn't a time." });
+  if ('endedAt' in changes && changes.endedAt !== null && !endedAt) {
+    return res.status(400).json({ error: "That end time isn't a time." });
+  }
+  if (endedAt && endedAt <= startedAt) {
+    return res.status(400).json({ error: 'A fast has to end after it starts.' });
+  }
+  for (const [when, label] of [[startedAt, 'start'], [endedAt, 'end']]) {
+    if (when && Date.parse(when) > Date.now() + CLOCK_SKEW_MS) {
+      return res.status(400).json({ error: `A fast can't ${label} in the future.` });
+    }
+  }
+
+  const clash = overlappingFast(req.userId, startedAt, endedAt, existing.id);
+  if (clash) return res.status(409).json({ error: clashError(clash) });
+
+  db.prepare('UPDATE fasts SET startedAt = ?, endedAt = ?, goalHours = ? WHERE id = ? AND userId = ?')
+    .run(startedAt, endedAt, goalHours, existing.id, req.userId);
+  res.json({ id: existing.id, startedAt, endedAt, goalHours });
+});
+
+app.delete('/api/fasts/:id', (req, res) => {
+  db.prepare('DELETE FROM fasts WHERE id = ? AND userId = ?').run(req.params.id, req.userId);
+  res.json({ ok: true });
+});
+
 // ——— vision proxy ———
 //
 // The one route to a model, mounted from lib so the provider can be swapped in
@@ -1763,6 +1914,21 @@ app.get('/api/export/measurements.csv', (req, res) => {
   sendCsv(res, 'bendit-measurements.csv', [
     ['date', 'site', 'cm', 'inches'],
     ...rows.map((r) => [r.date, r.site, r.valueCm, +(r.valueCm / 2.54).toFixed(2)]),
+  ]);
+});
+
+app.get('/api/export/fasts.csv', (req, res) => {
+  const rows = db
+    .prepare('SELECT startedAt, endedAt, goalHours FROM fasts WHERE userId = ? ORDER BY startedAt')
+    .all(req.userId);
+  sendCsv(res, 'bendit-fasts.csv', [
+    ['started_at', 'ended_at', 'hours', 'goal_hours'],
+    ...rows.map((r) => [
+      r.startedAt,
+      r.endedAt ?? '',
+      r.endedAt ? +((Date.parse(r.endedAt) - Date.parse(r.startedAt)) / HOUR_MS).toFixed(2) : '',
+      r.goalHours ?? '',
+    ]),
   ]);
 });
 

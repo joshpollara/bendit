@@ -2,6 +2,7 @@ import { NavLink } from 'react-router-dom';
 import {
   BookIcon,
   ChipIcon,
+  ClockIcon,
   FlameIcon,
   GaugeIcon,
   ListIcon,
@@ -25,6 +26,7 @@ const GROUPS = [
     label: 'Your day',
     links: [
       { to: '/', label: 'Today', icon: <GaugeIcon className="h-5 w-5" /> },
+      { to: '/fasting', label: 'Fasting', icon: <ClockIcon className="h-5 w-5" /> },
       { to: '/weight', label: 'Progress', icon: <ScaleIcon className="h-5 w-5" /> },
       { to: '/reports', label: 'Reports', icon: <TrendIcon className="h-5 w-5" /> },
     ],

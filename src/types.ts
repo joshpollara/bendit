@@ -22,6 +22,8 @@ export interface Profile {
   /** Local hour (0-23) for the evening reminder; null = no reminder. */
   reminderHour?: number | null;
   timezone?: string | null;
+  /** Hours the next fast starts out aiming for; null = no target. */
+  fastGoalHours?: number | null;
 }
 
 export const MEASUREMENT_SITES = ['waist', 'hips', 'chest', 'thigh', 'arm', 'neck'] as const;
@@ -105,6 +107,21 @@ export interface WeightEntry {
   date: string;
   weightKg: number;
 }
+
+/**
+ * A fast: two instants, not two dates. A window that opens at 8pm and closes at
+ * 1am crosses midnight without becoming two things, which is why nothing here
+ * is stored per day or read back out of the food log.
+ */
+export interface Fast {
+  id: string;
+  startedAt: string; // ISO instant
+  endedAt?: string | null; // null while it's running
+  goalHours?: number | null;
+}
+
+/** The usual lengths, in hours. Anything else can be typed. */
+export const FAST_GOALS = [13, 16, 18, 20, 24, 36] as const;
 
 export const MEALS: Meal[] = ['breakfast', 'lunch', 'dinner', 'snacks'];
 

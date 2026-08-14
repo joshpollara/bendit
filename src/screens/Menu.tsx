@@ -1,11 +1,12 @@
 import { Link } from 'react-router-dom';
-import { BookIcon, ChevronRightIcon, ChipIcon, ListIcon, MoreIcon } from '../components/Icons';
+import { BookIcon, ChevronRightIcon, ChipIcon, ClockIcon, ListIcon, MoreIcon } from '../components/Icons';
 
 // The rest of the app, for phones. On a wide screen these sit in the sidebar;
 // on a narrow one there is no room for them in a five-tab bar, so they live
 // one tap away here rather than being buried inside a settings page.
 
 const ITEMS = [
+  { to: '/fasting', label: 'Fasting', hint: 'The clock, your goal, and past fasts', icon: ClockIcon },
   { to: '/foods', label: 'Foods', hint: 'The food database, and the ones you added', icon: ListIcon },
   { to: '/recipes', label: 'Recipes', hint: 'Recipes, and what a serving of each comes to', icon: BookIcon },
   { to: '/settings', label: 'Settings', hint: 'Profile, goals, reminders, your data', icon: MoreIcon },

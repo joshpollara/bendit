@@ -1,5 +1,6 @@
 import type {
   ExerciseEntry,
+  Fast,
   Food,
   FoodLogEntry,
   Meal,
@@ -201,6 +202,12 @@ export interface VisionUsage {
   recent: VisionCall[];
 }
 
+/** The one that's running, if any, and the ones that have finished. */
+export interface FastsData {
+  current: Fast | null;
+  recent: Fast[];
+}
+
 export interface ProgressPhoto {
   id: string;
   date: string;
@@ -384,6 +391,13 @@ export const api = {
   deleteWeight: (id: string) => j<unknown>(`/api/weights/${id}`, { method: 'DELETE' }),
 
   setDayDone: (date: string, done: boolean) => post('/api/day-done', { date, done }, 'PUT'),
+
+  fasts: () => j<FastsData>('/api/fasts'),
+  startFast: (fast: { startedAt?: string; endedAt?: string | null; goalHours?: number | null }) =>
+    post('/api/fasts', fast) as Promise<Fast>,
+  updateFast: (id: string, changes: Partial<Pick<Fast, 'startedAt' | 'endedAt' | 'goalHours'>>) =>
+    post(`/api/fasts/${id}`, changes, 'PATCH') as Promise<Fast>,
+  deleteFast: (id: string) => j<unknown>(`/api/fasts/${id}`, { method: 'DELETE' }),
 
   pushConfig: () =>
     j<{ enabled: boolean; publicKey: string | null; subscriptions: number }>('/api/push/config'),

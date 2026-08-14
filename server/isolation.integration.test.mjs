@@ -180,6 +180,65 @@ describe('two accounts on one server', () => {
     expect((await as('bob', 'GET', `/api/day?date=${TODAY}&yesterday=${TODAY}`)).body.done).toBe(false);
   });
 
+  it('keeps fasts apart, and runs one at a time each', async () => {
+    const started = await as('ada', 'POST', '/api/fasts', {
+      startedAt: '2026-02-28T20:00:00Z',
+      goalHours: 16,
+    });
+    expect(started.status).toBe(200);
+
+    // A fast is one interval on the clock. Starting a second while the first
+    // is running is not two fasts, it is a mistake.
+    expect((await as('ada', 'POST', '/api/fasts', { startedAt: '2026-02-28T23:00:00Z' })).status).toBe(409);
+
+    // Bob fasting over the very same hours is his own business.
+    expect((await as('bob', 'POST', '/api/fasts', { startedAt: '2026-02-28T21:00:00Z' })).status).toBe(200);
+
+    const ada = await as('ada', 'GET', '/api/fasts');
+    expect(ada.body.current.startedAt).toBe('2026-02-28T20:00:00.000Z');
+    expect(ada.body.recent).toEqual([]);
+    expect((await as('bob', 'GET', '/api/fasts')).body.current.startedAt).toBe('2026-02-28T21:00:00.000Z');
+
+    // Neither can reach the other's.
+    expect((await as('bob', 'PATCH', `/api/fasts/${started.body.id}`, { goalHours: 24 })).status).toBe(404);
+    expect((await as('bob', 'DELETE', `/api/fasts/${started.body.id}`)).status).toBe(200);
+    expect((await as('ada', 'GET', '/api/fasts')).body.current.id).toBe(started.body.id);
+
+    // Ending is a change of end time, and it has to come after the start.
+    expect(
+      (await as('ada', 'PATCH', `/api/fasts/${started.body.id}`, { endedAt: '2026-02-28T19:00:00Z' })).status,
+    ).toBe(400);
+    expect(
+      (await as('ada', 'PATCH', `/api/fasts/${started.body.id}`, { endedAt: '2026-03-01T12:00:00Z' })).status,
+    ).toBe(200);
+
+    // A backdated start that runs into a fast already recorded is refused
+    // rather than quietly counted twice.
+    expect((await as('ada', 'POST', '/api/fasts', { startedAt: '2026-03-01T06:00:00Z' })).status).toBe(409);
+
+    const next = await as('ada', 'POST', '/api/fasts', {
+      startedAt: '2026-03-01T18:00:00Z',
+      goalHours: 18,
+    });
+    expect(next.status).toBe(200);
+    const after = await as('ada', 'GET', '/api/fasts');
+    expect(after.body.current.id).toBe(next.body.id);
+    expect(after.body.recent).toHaveLength(1);
+    expect(after.body.recent[0].endedAt).toBe('2026-03-01T12:00:00.000Z');
+
+    // One you forgot to write down at the time goes in whole, in one call,
+    // without disturbing the fast currently on the clock.
+    const forgotten = await as('ada', 'POST', '/api/fasts', {
+      startedAt: '2026-02-27T20:00:00Z',
+      endedAt: '2026-02-28T12:00:00Z',
+      goalHours: 16,
+    });
+    expect(forgotten.status).toBe(200);
+    const both = await as('ada', 'GET', '/api/fasts');
+    expect(both.body.current.id).toBe(next.body.id);
+    expect(both.body.recent).toHaveLength(2);
+  });
+
   it('keeps saved meals apart, and refuses to log or delete another’s', async () => {
     const made = await as('ada', 'POST', '/api/meal-templates', {
       name: "Ada's breakfast",
@@ -235,6 +294,10 @@ describe('two accounts on one server', () => {
     const adaCsv = (await as('ada', 'GET', '/api/export/food-log.csv')).body;
     expect(adaCsv).toContain("Ada's lunch");
     expect(adaCsv).not.toContain("Bob's lunch");
+
+    const adaFasts = (await as('ada', 'GET', '/api/export/fasts.csv')).body;
+    expect(adaFasts).toContain('2026-03-01T12:00:00.000Z');
+    expect(adaFasts).not.toContain('2026-02-28T21:00:00.000Z'); // Bob's
   });
 
   it('lets someone change their own password, and keeps them signed in', async () => {
@@ -297,12 +360,14 @@ describe('two accounts on one server', () => {
     expect((await as('ada', 'GET', `/api/day?date=${TODAY}&yesterday=${TODAY}`)).body.entries).toEqual([]);
     expect((await as('ada', 'GET', '/api/weights')).body).toEqual([]);
     expect((await as('ada', 'GET', '/api/profile')).body).toBeNull();
+    expect((await as('ada', 'GET', '/api/fasts')).body).toEqual({ current: null, recent: [] });
 
     // Bob is untouched.
     const bobDay = await as('bob', 'GET', `/api/day?date=${TODAY}&yesterday=${TODAY}`);
     expect(bobDay.body.entries.map((e) => e.label)).toEqual(["Bob's lunch"]);
     expect((await as('bob', 'GET', '/api/weights')).body.map((w) => w.weightKg)).toEqual([82]);
     expect((await as('bob', 'GET', '/api/profile')).body.heightCm).toBe(185);
+    expect((await as('bob', 'GET', '/api/fasts')).body.current.startedAt).toBe('2026-02-28T21:00:00.000Z');
 
     // The shared food database survives, and so does the scanned packet.
     expect((await as('bob', 'GET', '/api/foods/barcode/8712345678906')).body?.id).toBe('ada-scanned');

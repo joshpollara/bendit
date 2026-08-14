@@ -108,6 +108,7 @@ export const USER_TABLES = [
   'meal_templates',
   'measurements',
   'push_subscriptions',
+  'fasts',
 ];
 
 /** Deletes a user and everything of theirs. Returns what was removed. */

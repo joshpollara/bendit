@@ -8,6 +8,7 @@ import { formatCalories } from "../lib/units";
 import { STRINGS } from "../lib/strings";
 import { useUI } from "../store/ui";
 import MealGrade, { type MealGradeData } from "../components/MealGrade";
+import FastingCard from "../components/FastingCard";
 import { pendingForDate, useQueue } from "../lib/offlineQueue";
 import {
   MEAL_LABELS,
@@ -535,6 +536,8 @@ export default function Today({ profile }: { profile: Profile }) {
           <BudgetSummary budget={budget} food={foodCalories} />
           <WeekLine date={date} dailyBudget={budget} />
           <MacroRow entries={joined} proteinTargetG={profile.proteinTargetG} />
+          {/* A fast is running now, not on the day you happen to be reading. */}
+          {date === todayStr() && <FastingCard profile={profile} />}
           <div className="hidden lg:block">
             {day && <DayDone date={date} done={day.done} left={left} />}
           </div>
