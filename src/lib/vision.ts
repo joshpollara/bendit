@@ -84,7 +84,18 @@ export async function toBase64(blob: Blob): Promise<string> {
   return btoa(binary);
 }
 
-type ExtractOptions = { fetchImpl?: typeof fetch; online?: boolean };
+type ExtractOptions = { fetchImpl?: typeof fetch; online?: boolean; deadlineMs?: number };
+
+/**
+ * How long the screen will wait before saying so.
+ *
+ * The server has a shorter deadline of its own, so an answer or a coded failure
+ * normally arrives well inside this. This is for the case where nothing arrives
+ * at all — a phone that changed network mid-read, or a request the browser
+ * suspended when the app went into the background. Without it that request never
+ * settles, and the spinner stays up until the app is closed.
+ */
+const DEADLINE_MS = 45_000;
 
 /**
  * Posts to one of the model-backed endpoints and turns any failure into a
@@ -94,11 +105,14 @@ type ExtractOptions = { fetchImpl?: typeof fetch; online?: boolean };
 export async function postToModel<T>(
   endpoint: string,
   payload: Record<string, unknown>,
-  { fetchImpl = fetch, online = navigator.onLine }: ExtractOptions = {},
+  { fetchImpl = fetch, online = navigator.onLine, deadlineMs = DEADLINE_MS }: ExtractOptions = {},
 ): Promise<T> {
   // Worth checking first: this is the branch where the offline OCR path takes
   // over, and a doomed request would only delay it.
   if (!online) throw new VisionRequestError('offline', visionErrorMessage('offline'));
+
+  const controller = new AbortController();
+  const timer = setTimeout(() => controller.abort(), deadlineMs);
 
   let response: Response;
   try {
@@ -106,9 +120,15 @@ export async function postToModel<T>(
       method: 'POST',
       headers: { 'content-type': 'application/json' },
       body: JSON.stringify(payload),
+      signal: controller.signal,
     });
-  } catch {
-    throw new VisionRequestError('network_error', visionErrorMessage('network_error'));
+  } catch (error) {
+    // Our own deadline, not the network's: told apart so the screen says the
+    // read took too long rather than blaming a connection that was fine.
+    const code = (error as Error)?.name === 'AbortError' ? 'timeout' : 'network_error';
+    throw new VisionRequestError(code, visionErrorMessage(code));
+  } finally {
+    clearTimeout(timer);
   }
 
   const body = await response.json().catch(() => null);

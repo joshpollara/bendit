@@ -62,6 +62,28 @@ describe('requestExtraction', () => {
     expect(error.code).toBe('network_error');
   });
 
+  it('gives up on a request that never comes back, instead of waiting forever', async () => {
+    // A request the phone suspended when the app went into the background never
+    // settles on its own, and the screen would wait for it until the app closed.
+    const fetchImpl = vi.fn(
+      (_url: string, init: RequestInit) =>
+        new Promise<Response>((_resolve, reject) => {
+          init.signal?.addEventListener('abort', () => {
+            const error = new Error('aborted');
+            error.name = 'AbortError';
+            reject(error);
+          });
+        }),
+    );
+    await expect(
+      requestExtraction('label', 'AAAA', {
+        fetchImpl: fetchImpl as unknown as typeof fetch,
+        ...online,
+        deadlineMs: 10,
+      }),
+    ).rejects.toMatchObject({ code: 'timeout' });
+  });
+
   it('still fails cleanly when the error body is unreadable', async () => {
     const fetchImpl = vi.fn(
       async () => ({ ok: false, status: 500, json: async () => { throw new Error('not json'); } }) as unknown as Response,

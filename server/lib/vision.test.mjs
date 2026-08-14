@@ -150,6 +150,25 @@ describe('vision provider', () => {
     });
   });
 
+  it('stops retrying once the deadline leaves no room for another attempt', async () => {
+    // Three full timeouts and the backoff between them is over a minute of a
+    // phone showing a spinner. The budget is the whole call, not each try.
+    const fetchImpl = vi.fn(
+      async (_url, init) =>
+        new Promise((_resolve, reject) => {
+          init.signal.addEventListener('abort', () => {
+            const error = new Error('aborted');
+            error.name = 'AbortError';
+            reject(error);
+          });
+        }),
+    );
+    await expect(
+      provider(fetchImpl, { timeoutMs: 50, deadlineMs: 700 }).extract(call),
+    ).rejects.toMatchObject({ code: 'timeout' });
+    expect(fetchImpl).toHaveBeenCalledTimes(2);
+  });
+
   it('refuses to guess when the model returns something that is not JSON', async () => {
     const fetchImpl = async () => ({
       ok: true,

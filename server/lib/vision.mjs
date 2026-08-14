@@ -54,6 +54,15 @@ const THINKING_LEVEL = process.env.VISION_THINKING_LEVEL?.trim().toUpperCase();
 
 /** Long enough for a slow model, short enough that a phone isn't left hanging. */
 const TIMEOUT_MS = 20_000;
+/**
+ * And the whole call, retries included, may not take longer than this.
+ *
+ * The timeout above is per attempt, so three of them and their backoff is over
+ * a minute of a phone showing a spinner — long past the point where the person
+ * has put it down and decided the feature is broken. A retry is for the failure
+ * that clears on its own; it is not worth multiplying the wait for.
+ */
+const DEADLINE_MS = 30_000;
 const MAX_ATTEMPTS = 3;
 
 /** 429 and 5xx are worth retrying; a 400 means the request itself is wrong. */
@@ -130,14 +139,15 @@ export function createVisionProvider({
   model = process.env.VISION_MODEL ?? DEFAULT_MODEL,
   fetchImpl = globalThis.fetch,
   timeoutMs = TIMEOUT_MS,
+  deadlineMs = DEADLINE_MS,
   maxAttempts = MAX_ATTEMPTS,
   onRetryDelay = sleep,
 } = {}) {
   const configured = Boolean(apiKey);
 
-  async function callOnce({ imageBase64, mimeType, prompt, schema, text }) {
+  async function callOnce({ imageBase64, mimeType, prompt, schema, text, attemptMs }) {
     const controller = new AbortController();
-    const timer = setTimeout(() => controller.abort(), timeoutMs);
+    const timer = setTimeout(() => controller.abort(), attemptMs);
     try {
       const response = await fetchImpl(`${ENDPOINT}/${model}:generateContent`, {
         method: 'POST',
@@ -208,11 +218,18 @@ export function createVisionProvider({
       if (!imageBase64 && !text) {
         throw new VisionError('bad_request', 'Nothing was sent to read.');
       }
+      const deadline = Date.now() + deadlineMs;
+      const timeLeft = () => deadline - Date.now();
+
       let lastError;
       for (let attempt = 1; attempt <= maxAttempts; attempt++) {
+        // No attempt is allowed to run past the deadline: a second try given
+        // the full timeout again is how one slow read becomes a minute of
+        // waiting for an answer that was never coming.
+        const attemptMs = Math.min(timeoutMs, timeLeft());
         try {
           const started = Date.now();
-          const body = await callOnce({ imageBase64, mimeType, prompt, schema, text });
+          const body = await callOnce({ imageBase64, mimeType, prompt, schema, text, attemptMs });
           const answer = body?.candidates?.[0]?.content?.parts?.[0]?.text;
           if (typeof answer !== 'string') {
             // A response with no text part is a refusal or a safety block.
@@ -233,8 +250,12 @@ export function createVisionProvider({
           };
         } catch (error) {
           lastError = error;
+          const delay = backoffMs(attempt);
           if (!error.retryable || attempt === maxAttempts) throw error;
-          await onRetryDelay(backoffMs(attempt));
+          // A retry that can't finish before the deadline is a wait with no
+          // answer at the end of it, and it is billed like any other call.
+          if (timeLeft() - delay <= 0) throw error;
+          await onRetryDelay(delay);
         }
       }
       throw lastError;
