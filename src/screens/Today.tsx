@@ -208,8 +208,9 @@ function WeekLine({
   );
 }
 
-// Macros come from the foods behind the entries; quick adds contribute
-// calories only, so the totals are a floor, not a claim of completeness.
+// Macros come from the food behind an entry, or from the entry itself when it
+// has none and they were typed with it. Anything that knows neither counts as
+// nothing, so the totals are a floor, not a claim of completeness.
 function MacroRow({
   entries,
   proteinTargetG,
@@ -219,15 +220,16 @@ function MacroRow({
 }) {
   const total = (
     get: (f: NonNullable<JoinedEntry["food"]>) => number | undefined,
+    typed: (e: JoinedEntry) => number | null | undefined,
   ) =>
-    entries.reduce(
-      (sum, e) => sum + (e.food ? (get(e.food) ?? 0) * e.servings : 0),
-      0,
-    );
+    entries.reduce((sum, e) => {
+      if (e.food) return sum + (get(e.food) ?? 0) * e.servings;
+      return sum + (typed(e) ?? 0);
+    }, 0);
 
-  const protein = Math.round(total((f) => f.protein));
-  const carbs = Math.round(total((f) => f.carbs));
-  const fat = Math.round(total((f) => f.fat));
+  const protein = Math.round(total((f) => f.protein, (e) => e.proteinCached));
+  const carbs = Math.round(total((f) => f.carbs, (e) => e.carbsCached));
+  const fat = Math.round(total((f) => f.fat, (e) => e.fatCached));
   if (protein + carbs + fat === 0) return null;
 
   const target = proteinTargetG ?? 0;

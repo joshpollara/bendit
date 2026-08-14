@@ -224,10 +224,39 @@ if (needsBackfill.length > 0) {
   console.log(`Backfilled per-100g nutrition for ${needsBackfill.length} foods`);
 }
 
+// Migration: older databases have food_log without `label` and with a NOT NULL
+// foodId. SQLite can't relax NOT NULL in place, so rebuild the table once. This
+// runs before every food_log column migration below, because the rebuild copies
+// the columns it names and nothing else.
+const logColumns = db.prepare('PRAGMA table_info(food_log)').all().map((c) => c.name);
+if (!logColumns.includes('label')) {
+  db.exec(`
+    BEGIN;
+    ALTER TABLE food_log RENAME TO food_log_old;
+    CREATE TABLE food_log (
+      id TEXT PRIMARY KEY, date TEXT NOT NULL, meal TEXT NOT NULL, foodId TEXT,
+      servings REAL NOT NULL, caloriesCached REAL NOT NULL, label TEXT
+    );
+    INSERT INTO food_log (id, date, meal, foodId, servings, caloriesCached)
+      SELECT id, date, meal, foodId, servings, caloriesCached FROM food_log_old;
+    DROP TABLE food_log_old;
+    CREATE INDEX IF NOT EXISTS idx_log_date ON food_log(date);
+    COMMIT;
+  `);
+  console.log('Migrated food_log for quick-add entries');
+}
+
 // An entry from a photographed plate is an estimate; one from a barcode is a
 // lookup. The day's list says which, because presenting them alike would give
 // a guess the authority of a measurement.
 ensureColumns('food_log', { estimated: 'INTEGER NOT NULL DEFAULT 0' });
+
+// Macros for entries with no food behind them: grams for the whole entry, not
+// per serving. Null means unknown, which is not the same as zero — a quick add
+// left blank must not count as 0 g of protein against the day's total.
+const ENTRY_MACROS = { proteinCached: 'REAL', carbsCached: 'REAL', fatCached: 'REAL' };
+ensureColumns('food_log', ENTRY_MACROS);
+ensureColumns('meal_template_items', ENTRY_MACROS);
 
 // Three tables were unique on a date alone, which is right for one person and
 // wrong for several: your weigh-in on Tuesday would collide with mine. SQLite
@@ -306,26 +335,6 @@ ensureColumns('profile', {
 // volume, so they survive deploys like everything else.
 const PHOTOS_DIR = process.env.PHOTOS_PATH ?? path.join(path.dirname(DB_PATH), 'photos');
 fs.mkdirSync(PHOTOS_DIR, { recursive: true });
-
-// Migration: older databases have food_log without `label` and with a NOT NULL
-// foodId. SQLite can't relax NOT NULL in place, so rebuild the table once.
-const logColumns = db.prepare('PRAGMA table_info(food_log)').all().map((c) => c.name);
-if (!logColumns.includes('label')) {
-  db.exec(`
-    BEGIN;
-    ALTER TABLE food_log RENAME TO food_log_old;
-    CREATE TABLE food_log (
-      id TEXT PRIMARY KEY, date TEXT NOT NULL, meal TEXT NOT NULL, foodId TEXT,
-      servings REAL NOT NULL, caloriesCached REAL NOT NULL, label TEXT
-    );
-    INSERT INTO food_log (id, date, meal, foodId, servings, caloriesCached)
-      SELECT id, date, meal, foodId, servings, caloriesCached FROM food_log_old;
-    DROP TABLE food_log_old;
-    CREATE INDEX IF NOT EXISTS idx_log_date ON food_log(date);
-    COMMIT;
-  `);
-  console.log('Migrated food_log for quick-add entries');
-}
 
 const seedCount = db.prepare("SELECT COUNT(*) AS c FROM foods WHERE source = 'seed'").get().c;
 
@@ -781,6 +790,9 @@ app.get('/api/day', (req, res) => {
       servings: row.servings,
       caloriesCached: row.caloriesCached,
       label: row.label ?? undefined,
+      proteinCached: row.proteinCached,
+      carbsCached: row.carbsCached,
+      fatCached: row.fatCached,
     estimated: row.estimated === 1,
     food: rowFood(row),
   }));
@@ -937,12 +949,14 @@ app.get('/api/report', (req, res) => {
     d.entries += row.n;
     d.meals[row.meal] = row.calories;
   }
-  // Macros only exist for entries backed by a food that carries them.
+  // Macros come from the food behind an entry, or — for one typed straight into
+  // a meal — from the entry itself. Entries with neither contribute nothing.
   for (const row of db
     .prepare(
-      `SELECT l.date, SUM(f.protein * l.servings) AS protein
-       FROM food_log l JOIN foods f ON f.id = l.foodId
-       WHERE l.date BETWEEN ? AND ? AND l.userId = ? AND f.protein IS NOT NULL GROUP BY l.date`,
+      `SELECT l.date, SUM(COALESCE(l.proteinCached, f.protein * l.servings)) AS protein
+       FROM food_log l LEFT JOIN foods f ON f.id = l.foodId
+       WHERE l.date BETWEEN ? AND ? AND l.userId = ?
+         AND (l.proteinCached IS NOT NULL OR f.protein IS NOT NULL) GROUP BY l.date`,
     )
     .all(from, to, req.userId)) {
     day(row.date).protein = Math.round(row.protein * 10) / 10;
@@ -1045,13 +1059,25 @@ app.delete('/api/foods/:id', (req, res) => {
   if (food.ownerId && food.ownerId !== req.userId) {
     return res.status(403).json({ error: 'that food belongs to someone else' });
   }
-  // Past log entries keep their calories; stamp the name so history stays readable.
+  // Past log entries keep their calories; stamp the name so history stays
+  // readable, and the macros the food carried so the day's totals don't shift.
   db.transaction(() => {
     db
       .prepare(
-        'UPDATE food_log SET label = COALESCE(label, ?), foodId = NULL WHERE foodId = ? AND userId = ?',
+        `UPDATE food_log SET label = COALESCE(label, @label), foodId = NULL,
+           proteinCached = COALESCE(proteinCached, @protein * servings),
+           carbsCached = COALESCE(carbsCached, @carbs * servings),
+           fatCached = COALESCE(fatCached, @fat * servings)
+         WHERE foodId = @foodId AND userId = @userId`,
       )
-      .run(food.brand ? `${food.name} (${food.brand})` : food.name, food.id, req.userId);
+      .run({
+        label: food.brand ? `${food.name} (${food.brand})` : food.name,
+        protein: food.protein,
+        carbs: food.carbs,
+        fat: food.fat,
+        foodId: food.id,
+        userId: req.userId,
+      });
     db.prepare('DELETE FROM foods WHERE id = ?').run(food.id);
   })();
   res.json({ ok: true });
@@ -1073,26 +1099,49 @@ app.get('/api/recents', (req, res) => {
 app.get('/api/recent-quick-adds', (req, res) => {
   res.json(
     db
-      .prepare(`SELECT label, caloriesCached AS calories, MAX(rowid) AS r
+      .prepare(`SELECT label, caloriesCached AS calories,
+                       proteinCached, carbsCached, fatCached, MAX(rowid) AS r
                 FROM food_log
                 WHERE foodId IS NULL AND label IS NOT NULL AND label != '' AND userId = ?
                 GROUP BY label COLLATE NOCASE
                 ORDER BY r DESC LIMIT 10`)
       .all(req.userId)
-      .map(({ label, calories }) => ({ label, calories: Math.round(calories) })),
+      .map(({ label, calories, proteinCached, carbsCached, fatCached }) => ({
+        label,
+        calories: Math.round(calories),
+        protein: proteinCached,
+        carbs: carbsCached,
+        fat: fatCached,
+      })),
   );
 });
 
 app.post('/api/food-log', (req, res) => {
-  const e = { id: newId(), foodId: null, label: null, servings: 1, estimated: 0, ...req.body };
+  const e = {
+    id: newId(),
+    foodId: null,
+    label: null,
+    servings: 1,
+    estimated: 0,
+    proteinCached: null,
+    carbsCached: null,
+    fatCached: null,
+    ...req.body,
+  };
   e.estimated = e.estimated ? 1 : 0;
+  for (const macro of Object.keys(ENTRY_MACROS)) {
+    const grams = Number(e[macro]);
+    e[macro] = e[macro] == null || !Number.isFinite(grams) ? null : grams;
+  }
   e.userId = req.userId; // from the session, never from the body
   // INSERT OR IGNORE, not INSERT: an entry queued offline may be sent twice if
   // the reply is lost on a flaky connection. The client generates the id, so a
   // repeat is the same row and lands as a no-op rather than a duplicate meal.
   db.prepare(`INSERT OR IGNORE INTO food_log
-      (id, date, meal, foodId, servings, caloriesCached, label, estimated, userId)
-    VALUES (@id, @date, @meal, @foodId, @servings, @caloriesCached, @label, @estimated, @userId)`).run(e);
+      (id, date, meal, foodId, servings, caloriesCached, label, estimated,
+       proteinCached, carbsCached, fatCached, userId)
+    VALUES (@id, @date, @meal, @foodId, @servings, @caloriesCached, @label, @estimated,
+       @proteinCached, @carbsCached, @fatCached, @userId)`).run(e);
   res.json(e);
 });
 
@@ -1109,11 +1158,25 @@ app.patch('/api/food-log/:id', (req, res) => {
   if (!existing) return res.status(404).json({ error: 'not found' });
   const e = {
     ...existing,
-    ...pick(req.body, ['meal', 'servings', 'caloriesCached', 'label']),
+    ...pick(req.body, [
+      'meal',
+      'servings',
+      'caloriesCached',
+      'label',
+      'proteinCached',
+      'carbsCached',
+      'fatCached',
+    ]),
     id: existing.id,
   };
+  for (const macro of Object.keys(ENTRY_MACROS)) {
+    const grams = Number(e[macro]);
+    e[macro] = e[macro] == null || !Number.isFinite(grams) ? null : grams;
+  }
   db.prepare(`UPDATE food_log SET meal = @meal, servings = @servings,
-    caloriesCached = @caloriesCached, label = @label WHERE id = @id AND userId = @userId`).run(e);
+    caloriesCached = @caloriesCached, label = @label, proteinCached = @proteinCached,
+    carbsCached = @carbsCached, fatCached = @fatCached
+    WHERE id = @id AND userId = @userId`).run(e);
   res.json(e);
 });
 
@@ -1133,6 +1196,9 @@ function templateWithItems(row) {
       servings: i.servings,
       caloriesCached: i.caloriesCached,
       label: i.label ?? undefined,
+      proteinCached: i.proteinCached,
+      carbsCached: i.carbsCached,
+      fatCached: i.fatCached,
       food: rowFood(i),
     })),
   };
@@ -1149,8 +1215,10 @@ const insertTemplate = db.prepare(
   'INSERT INTO meal_templates (id, name, createdAt, userId) VALUES (@id, @name, @createdAt, @userId)',
 );
 const insertTemplateItem = db.prepare(
-  `INSERT INTO meal_template_items (id, templateId, foodId, servings, caloriesCached, label, position)
-   VALUES (@id, @templateId, @foodId, @servings, @caloriesCached, @label, @position)`,
+  `INSERT INTO meal_template_items (id, templateId, foodId, servings, caloriesCached, label,
+     proteinCached, carbsCached, fatCached, position)
+   VALUES (@id, @templateId, @foodId, @servings, @caloriesCached, @label,
+     @proteinCached, @carbsCached, @fatCached, @position)`,
 );
 
 function createTemplate(name, items, userId) {
@@ -1165,6 +1233,9 @@ function createTemplate(name, items, userId) {
         servings: item.servings ?? 1,
         caloriesCached: Math.round(item.caloriesCached ?? 0),
         label: item.label ?? null,
+        proteinCached: item.proteinCached ?? null,
+        carbsCached: item.carbsCached ?? null,
+        fatCached: item.fatCached ?? null,
         position,
       }),
     );
@@ -1204,8 +1275,10 @@ app.post('/api/meal-templates/:id/log', (req, res) => {
   const items = templateItems.all(req.params.id);
   if (items.length === 0) return res.status(404).json({ error: 'not found' });
   const insert = db.prepare(`INSERT INTO food_log
-      (id, date, meal, foodId, servings, caloriesCached, label, userId)
-    VALUES (@id, @date, @meal, @foodId, @servings, @caloriesCached, @label, @userId)`);
+      (id, date, meal, foodId, servings, caloriesCached, label,
+       proteinCached, carbsCached, fatCached, userId)
+    VALUES (@id, @date, @meal, @foodId, @servings, @caloriesCached, @label,
+       @proteinCached, @carbsCached, @fatCached, @userId)`);
   db.transaction(() => {
     for (const item of items) {
       insert.run({
@@ -1216,6 +1289,9 @@ app.post('/api/meal-templates/:id/log', (req, res) => {
         servings: item.servings,
         caloriesCached: item.caloriesCached,
         label: item.label,
+        proteinCached: item.proteinCached,
+        carbsCached: item.carbsCached,
+        fatCached: item.fatCached,
         userId: req.userId,
       });
     }
@@ -1240,7 +1316,14 @@ app.post('/api/meal-templates/:id/as-food', (req, res) => {
     total.calories += item.caloriesCached;
     const food = rowFood(item);
     if (!food) {
-      macrosKnown = false; // a label-only item contributes calories and nothing else
+      // A label-only item knows its macros only if they were typed with it.
+      if (item.proteinCached == null && item.carbsCached == null && item.fatCached == null) {
+        macrosKnown = false;
+        continue;
+      }
+      total.protein += item.proteinCached ?? 0;
+      total.carbs += item.carbsCached ?? 0;
+      total.fat += item.fatCached ?? 0;
       continue;
     }
     total.protein += (food.protein ?? 0) * item.servings;
@@ -1627,7 +1710,9 @@ app.get('/api/export/food-log.csv', (req, res) => {
   const rows = db
     .prepare(`SELECT l.date, l.meal, COALESCE(f.name, l.label, '') AS item, f.brand,
                      l.servings, f.servingLabel, l.caloriesCached,
-                     f.protein, f.carbs, f.fat
+                     COALESCE(l.proteinCached, f.protein * l.servings) AS protein,
+                     COALESCE(l.carbsCached, f.carbs * l.servings) AS carbs,
+                     COALESCE(l.fatCached, f.fat * l.servings) AS fat
               FROM food_log l LEFT JOIN foods f ON f.id = l.foodId
               WHERE l.userId = ?
               ORDER BY l.date, l.meal, l.rowid`)
@@ -1642,9 +1727,9 @@ app.get('/api/export/food-log.csv', (req, res) => {
       r.servings,
       r.servingLabel,
       Math.round(r.caloriesCached),
-      r.protein == null ? '' : +(r.protein * r.servings).toFixed(1),
-      r.carbs == null ? '' : +(r.carbs * r.servings).toFixed(1),
-      r.fat == null ? '' : +(r.fat * r.servings).toFixed(1),
+      r.protein == null ? '' : +r.protein.toFixed(1),
+      r.carbs == null ? '' : +r.carbs.toFixed(1),
+      r.fat == null ? '' : +r.fat.toFixed(1),
     ]),
   ]);
 });

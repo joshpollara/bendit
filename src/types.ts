@@ -77,6 +77,14 @@ export interface FoodLogEntry {
   caloriesCached: number; // denormalized for fast day totals
   label?: string; // name for entries with no food behind them
   /**
+   * Macros in grams for the whole entry, typed alongside the calories when
+   * there's no food to take them from. Null means unknown, which the day's
+   * totals treat differently from zero.
+   */
+  proteinCached?: number | null;
+  carbsCached?: number | null;
+  fatCached?: number | null;
+  /**
    * True when the amount was estimated from a photograph rather than measured
    * or scanned. Shown in the day's list, because a guess presented like a
    * lookup is a guess wearing a lookup's authority.

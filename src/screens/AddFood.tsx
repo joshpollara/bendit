@@ -11,6 +11,12 @@ import { MEALS, MEAL_LABELS, type Food, type Meal } from '../types';
 import { estimateMealFromPhoto, type MealEstimate, type MealItem } from '../lib/mealPhoto';
 import ServingSheet from '../components/ServingSheet';
 import FoodForm from '../components/FoodForm';
+import MacroInputs, {
+  EMPTY_MACROS,
+  macroFields,
+  macroGrams,
+  type MacroFields,
+} from '../components/MacroFields';
 import { BarcodeIcon, CameraIcon, ChevronLeftIcon, SearchIcon, TrashIcon } from '../components/Icons';
 
 // zxing is heavy; only load it when the user actually opens the scanner.
@@ -20,6 +26,16 @@ const MealPhotoSheet = lazy(() => import('../components/MealPhotoSheet'));
 const CameraCapture = lazy(() => import('../components/CameraCapture'));
 
 type Tab = 'quick' | 'search' | 'recent' | 'meals' | 'mine' | 'create';
+
+/** A quick add as typed: calories, an optional name, and optional macros. */
+interface QuickAddInput {
+  calories: number;
+  label: string;
+  meal: Meal;
+  protein: number | null;
+  carbs: number | null;
+  fat: number | null;
+}
 
 function defaultMeal(): Meal {
   const h = new Date().getHours();
@@ -138,10 +154,11 @@ function QuickAddForm({
   onAdd,
 }: {
   initialMeal: Meal;
-  onAdd: (calories: number, label: string, meal: Meal) => void;
+  onAdd: (entry: QuickAddInput) => void;
 }) {
   const [calories, setCalories] = useState('');
   const [label, setLabel] = useState('');
+  const [macros, setMacros] = useState<MacroFields>(EMPTY_MACROS);
   const [meal, setMeal] = useState<Meal>(initialMeal);
   // Quick adds never reach the Recent tab — they have no food behind them — so
   // the ones you've typed before come back here instead.
@@ -156,7 +173,15 @@ function QuickAddForm({
       className="flex flex-col gap-3 px-4 py-4"
       onSubmit={(e) => {
         e.preventDefault();
-        if (valid) onAdd(Math.round(value), label.trim(), meal);
+        if (!valid) return;
+        onAdd({
+          calories: Math.round(value),
+          label: label.trim(),
+          meal,
+          protein: macroGrams(macros.protein),
+          carbs: macroGrams(macros.carbs),
+          fat: macroGrams(macros.fat),
+        });
       }}
     >
       <label className="flex flex-col items-center gap-1">
@@ -181,6 +206,8 @@ function QuickAddForm({
         onChange={(e) => setLabel(e.target.value)}
       />
 
+      <MacroInputs values={macros} onChange={setMacros} />
+
       {(recent?.length ?? 0) > 0 && (
         <div className="flex flex-wrap gap-1.5">
           {recent!.map((r) => (
@@ -190,6 +217,13 @@ function QuickAddForm({
               onClick={() => {
                 setLabel(r.label);
                 setCalories(String(r.calories));
+                setMacros(
+                  macroFields({
+                    proteinCached: r.protein,
+                    carbsCached: r.carbs,
+                    fatCached: r.fat,
+                  }),
+                );
               }}
               className="rounded-full border border-line px-3 py-1.5 text-xs text-ink-secondary hover:bg-surface"
             >
@@ -338,6 +372,11 @@ export default function AddFood() {
         label: item.food ? undefined : item.name,
         servings: item.food ? (item.servings ?? item.grams / 100) : 1,
         caloriesCached: Math.round(item.nutrition.calories),
+        // With no food to take them from, the macros the photo worked out are
+        // carried on the entry itself.
+        proteinCached: item.food ? null : item.nutrition.protein,
+        carbsCached: item.food ? null : item.nutrition.carbs,
+        fatCached: item.food ? null : item.nutrition.fat,
         // Only the portions still carrying an error band are estimates; one the
         // user typed or picked a unit for is as good as any other entry.
         estimated: (item.error ?? 0) > 0,
@@ -374,13 +413,16 @@ export default function AddFood() {
   const recents = useData(() => api.recentFoods(), []);
   const mine = useData(() => api.customFoods(), []);
 
-  async function quickAdd(calories: number, label: string, chosenMeal: Meal) {
+  async function quickAdd(entry: QuickAddInput) {
     await api.addLogEntry({
       date,
-      meal: chosenMeal,
+      meal: entry.meal,
       servings: 1,
-      caloriesCached: calories,
-      label: label || 'Quick add',
+      caloriesCached: entry.calories,
+      label: entry.label || 'Quick add',
+      proteinCached: entry.protein,
+      carbsCached: entry.carbs,
+      fatCached: entry.fat,
     });
     bump();
     setDate(date);

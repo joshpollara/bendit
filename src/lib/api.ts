@@ -17,6 +17,15 @@ export interface JoinedEntry extends FoodLogEntry {
   food?: Food;
 }
 
+/** A quick add you've typed before, offered back with whatever it recorded. */
+export interface QuickAddSuggestion {
+  label: string;
+  calories: number;
+  protein?: number | null;
+  carbs?: number | null;
+  fat?: number | null;
+}
+
 export interface BrowsedFood extends Food {
   usageCount: number;
 }
@@ -64,6 +73,10 @@ export interface MealTemplateItem {
   servings: number;
   caloriesCached: number;
   label?: string;
+  /** Grams for the whole item, as on a quick add with no food behind it. */
+  proteinCached?: number | null;
+  carbsCached?: number | null;
+  fatCached?: number | null;
   food?: Food;
 }
 
@@ -309,7 +322,18 @@ export const api = {
 
   updateLogEntry: (
     id: string,
-    changes: Partial<Pick<FoodLogEntry, 'meal' | 'servings' | 'caloriesCached' | 'label'>>,
+    changes: Partial<
+      Pick<
+        FoodLogEntry,
+        | 'meal'
+        | 'servings'
+        | 'caloriesCached'
+        | 'label'
+        | 'proteinCached'
+        | 'carbsCached'
+        | 'fatCached'
+      >
+    >,
   ) => post(`/api/food-log/${id}`, changes, 'PATCH'),
 
   recipes: () => j<Recipe[]>('/api/recipes'),
@@ -339,7 +363,8 @@ export const api = {
     post('/api/measurements', m, 'PUT'),
   deleteMeasurement: (id: string) => j<unknown>(`/api/measurements/${id}`, { method: 'DELETE' }),
 
-  recentQuickAdds: () => j<{ label: string; calories: number }[]>('/api/recent-quick-adds'),
+  recentQuickAdds: () =>
+    j<QuickAddSuggestion[]>('/api/recent-quick-adds'),
 
   addExercise: (e: Omit<ExerciseEntry, 'id'> & { id?: string }) =>
     queueableWrite('/api/exercise', { ...e, id: e.id ?? crypto.randomUUID() }),

@@ -153,6 +153,18 @@ const get = async (path, { auth = true } = {}) => {
   return { status: response.status, body: await response.json().catch(() => null) };
 };
 
+const patch = async (path, body) => {
+  const response = await fetch(`${base}${path}`, {
+    method: 'PATCH',
+    headers: {
+      'content-type': 'application/json',
+      authorization: 'Bearer tester:test-password',
+    },
+    body: JSON.stringify(body),
+  });
+  return { status: response.status, body: await response.json().catch(() => null) };
+};
+
 describe('the assembled server', () => {
   it('reads a photographed label sent at the size a phone sends', async () => {
     const { status, body, text } = await post('/api/labels/extract', { image: A_REAL_PHOTO });
@@ -220,5 +232,89 @@ describe('the assembled server', () => {
     expect(rows.length).toBeGreaterThanOrEqual(4);
     expect(rows.every((r) => r.totalTokens === 1480 || r.status === 'error')).toBe(true);
     expect(new Set(rows.map((r) => r.task))).toEqual(new Set(['label', 'meal']));
+  });
+});
+
+// A quick add has no food behind it, so anything it knows about its macros has
+// to be carried on the entry — through the day, the report, the chips it is
+// offered back on, and any saved meal it ends up in.
+describe('macros typed onto a quick add', () => {
+  const DAY = '2026-04-02';
+
+  const day = async (date) => (await get(`/api/day?date=${date}&yesterday=${date}`)).body;
+
+  it('comes back on the day it was logged to', async () => {
+    await post('/api/food-log', {
+      id: 'qa-yoghurt',
+      date: DAY,
+      meal: 'breakfast',
+      label: 'Yoghurt from the canteen',
+      servings: 1,
+      caloriesCached: 220,
+      proteinCached: 18,
+      carbsCached: 24.5,
+      fatCached: 5,
+    });
+    const [entry] = (await day(DAY)).entries;
+    expect(entry.proteinCached).toBe(18);
+    expect(entry.carbsCached).toBe(24.5);
+    expect(entry.fatCached).toBe(5);
+  });
+
+  it('leaves a quick add typed without them unknown, not zero', async () => {
+    await post('/api/food-log', {
+      id: 'qa-pastry',
+      date: DAY,
+      meal: 'snacks',
+      label: 'Pastry',
+      servings: 1,
+      caloriesCached: 300,
+    });
+    const entry = (await day(DAY)).entries.find((e) => e.id === 'qa-pastry');
+    expect(entry.proteinCached).toBeNull();
+    expect(entry.carbsCached).toBeNull();
+    expect(entry.fatCached).toBeNull();
+  });
+
+  it("counts towards the day's protein in the report", async () => {
+    const { body } = await get(`/api/report?from=${DAY}&to=${DAY}`);
+    expect(body.days.find((d) => d.date === DAY).protein).toBe(18);
+  });
+
+  it('can be edited, and cleared back to unknown', async () => {
+    await patch('/api/food-log/qa-yoghurt', { proteinCached: 20 });
+    expect((await day(DAY)).entries.find((e) => e.id === 'qa-yoghurt').proteinCached).toBe(20);
+
+    await patch('/api/food-log/qa-yoghurt', { proteinCached: null });
+    const entry = (await day(DAY)).entries.find((e) => e.id === 'qa-yoghurt');
+    expect(entry.proteinCached).toBeNull();
+    // Only what was sent changed: the other two are as they were typed.
+    expect(entry.carbsCached).toBe(24.5);
+    expect(entry.fatCached).toBe(5);
+  });
+
+  it('is offered back with the label on the quick-add chips', async () => {
+    const { body } = await get('/api/recent-quick-adds');
+    const suggestion = body.find((r) => r.label === 'Yoghurt from the canteen');
+    expect(suggestion.calories).toBe(220);
+    expect(suggestion.carbs).toBe(24.5);
+    expect(suggestion.fat).toBe(5);
+  });
+
+  it('survives being saved as a meal and logged again', async () => {
+    await post('/api/meal-templates/from-day', {
+      name: 'Canteen breakfast',
+      date: DAY,
+      meal: 'breakfast',
+    });
+    const templates = (await get('/api/meal-templates')).body;
+    const template = templates.find((t) => t.name === 'Canteen breakfast');
+    expect(template.items[0].carbsCached).toBe(24.5);
+
+    const later = '2026-04-09';
+    await post(`/api/meal-templates/${template.id}/log`, { date: later, meal: 'breakfast' });
+    const [logged] = (await day(later)).entries;
+    expect(logged.carbsCached).toBe(24.5);
+    expect(logged.fatCached).toBe(5);
   });
 });

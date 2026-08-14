@@ -3,6 +3,7 @@ import { api, type JoinedEntry } from '../lib/api';
 import { formatCalories } from '../lib/units';
 import { MEALS, MEAL_LABELS, type Meal } from '../types';
 import Sheet from './Sheet';
+import MacroInputs, { macroFields, macroGrams } from './MacroFields';
 
 // Edit something already logged: change the amount, move it to another meal, or
 // remove it — without deleting and re-adding.
@@ -22,6 +23,7 @@ export default function EntrySheet({
   const [servings, setServings] = useState(entry.servings);
   const [calories, setCalories] = useState(String(Math.round(entry.caloriesCached)));
   const [label, setLabel] = useState(entry.label ?? '');
+  const [macros, setMacros] = useState(macroFields(entry));
   const [meal, setMeal] = useState<Meal>(entry.meal);
   const [byWeight, setByWeight] = useState(false);
 
@@ -37,6 +39,11 @@ export default function EntrySheet({
       servings: food ? servings : 1,
       caloriesCached: nextCalories,
       label: food ? entry.label : label.trim() || 'Quick add',
+      // A food's macros scale with the servings above; only an entry standing on
+      // its own carries its own.
+      proteinCached: food ? entry.proteinCached : macroGrams(macros.protein),
+      carbsCached: food ? entry.carbsCached : macroGrams(macros.carbs),
+      fatCached: food ? entry.fatCached : macroGrams(macros.fat),
     });
     onChanged();
   }
@@ -56,7 +63,7 @@ export default function EntrySheet({
         <p className="text-sm text-ink-muted">
           {food
             ? `${food.caloriesPerServing} cal per ${food.servingLabel}`
-            : 'Calories only — no food behind this one'}
+            : 'No food behind this one'}
         </p>
       </div>
 
@@ -154,6 +161,7 @@ export default function EntrySheet({
             value={label}
             onChange={(e) => setLabel(e.target.value)}
           />
+          <MacroInputs values={macros} onChange={setMacros} />
         </div>
       )}
 
