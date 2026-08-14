@@ -47,12 +47,27 @@ export default function AddExercise({ profile }: { profile: Profile }) {
     setCalsOverride('');
   }
 
+  const [failed, setFailed] = useState<string | null>(null);
+
   async function save(name: string, kcal: number) {
-    await api.addExercise({ date, name, minutes, caloriesBurned: kcal });
+    // A refused write used to leave by the same door as a saved one: back to
+    // the day, where the workout simply wasn't. If it didn't save, stay here
+    // and say so — the sheet still holds everything needed to try again.
+    setFailed(null);
+    try {
+      await api.addExercise({ date, name, minutes, caloriesBurned: kcal });
+    } catch (e) {
+      setFailed(e instanceof Error ? e.message : "That didn't save.");
+      return;
+    }
     bump();
     setDate(date);
     navigate('/');
   }
+
+  const failure = failed && (
+    <p className="mb-3 rounded-xl bg-over-soft px-3 py-2 text-sm text-over">{failed}</p>
+  );
 
   const minutesField = (
     <label className="flex flex-col gap-1 text-sm">
@@ -144,6 +159,7 @@ export default function AddExercise({ profile }: { profile: Profile }) {
               />
             </label>
           </div>
+          {failure}
           <button
             type="button"
             onClick={() => save(selected.name, calories)}
@@ -183,6 +199,7 @@ export default function AddExercise({ profile }: { profile: Profile }) {
               </label>
             </div>
           </div>
+          {failure}
           <button
             type="button"
             disabled={customName.trim() === '' || calories <= 0}

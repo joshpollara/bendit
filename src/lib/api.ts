@@ -202,29 +202,50 @@ export const UNAUTHORIZED_EVENT = 'bendit:unauthorized';
  * ignores a repeat, so a lost reply costs nothing.
  */
 async function queueableWrite(path: string, body: { id: string; date?: string }): Promise<unknown> {
+  const park = async () => {
+    const { useQueue } = await import('./offlineQueue');
+    useQueue.getState().enqueue({ id: body.id, path, body, date: body.date, queuedAt: Date.now() });
+  };
+
+  let res: Response;
   try {
-    const res = await fetch(path, {
+    res = await fetch(path, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify(body),
     });
-    if (res.status === 401) {
-      window.dispatchEvent(new Event(UNAUTHORIZED_EVENT));
-      throw new Error('Not signed in.');
-    }
-    if (res.ok) return res.json();
-    if (res.status < 500) {
-      const problem = await res.json().catch(() => null);
-      throw new Error(problem?.error ?? `${res.status} ${res.statusText}`);
-    }
-    throw new Error('server');
-  } catch (err) {
-    // No network (or the server is down): park it and let the app carry on.
-    const { useQueue } = await import('./offlineQueue');
-    useQueue.getState().enqueue({ id: body.id, path, body, date: body.date, queuedAt: Date.now() });
-    if (err instanceof Error && err.message === 'Not signed in.') throw err;
+  } catch {
+    // Nothing reached the server: park it and let the app carry on.
+    await park();
     return body;
   }
+
+  // Everything below here is the server answering, which is a different thing
+  // from not reaching it. Catching both together is what made a refused write
+  // look like a saved one: it was queued, the caller was told it succeeded, and
+  // the next flush dropped it on the floor for being a refusal — so it appeared
+  // in the log, survived until the next sync, and then quietly wasn't there.
+  if (res.status === 401) {
+    window.dispatchEvent(new Event(UNAUTHORIZED_EVENT));
+    // Worth keeping: signing back in replays it, which is why the queue holds
+    // on to a 401 rather than discarding it.
+    await park();
+    throw new Error('Not signed in.');
+  }
+
+  if (res.ok) {
+    // A success with an unreadable body is still a success. The row is on the
+    // server; re-sending it would be the only way to get it wrong.
+    return res.json().catch(() => body);
+  }
+
+  if (res.status >= 500) {
+    await park();
+    return body;
+  }
+
+  const problem = await res.json().catch(() => null);
+  throw new Error(problem?.error ?? `${res.status} ${res.statusText}`);
 }
 
 async function j<T>(path: string, init?: RequestInit): Promise<T> {
