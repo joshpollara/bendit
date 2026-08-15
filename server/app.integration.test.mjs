@@ -44,6 +44,19 @@ const MEAL_ANSWER = {
   ],
 };
 
+const HOLISTIC_ANSWER = {
+  mealType: 'simple_plate',
+  energyKcal: { low: 420, median: 520, high: 650 },
+  macrosG: {
+    protein: { low: 40, median: 50, high: 65 },
+    carbs: { low: 45, median: 60, high: 80 },
+    fat: { low: 5, median: 10, high: 20 },
+    fiber: { low: 1, median: 3, high: 6 },
+  },
+  hiddenIngredientRisks: [],
+  uncertaintyReasons: ['Portions are inferred from one photograph.'],
+};
+
 let server;
 let stub;
 let base;
@@ -68,11 +81,13 @@ function startStub(port) {
       req.on('end', () => {
         modelCalls++;
         const sent = JSON.parse(body);
-        const isMeal = 'items' in sent.generationConfig.responseSchema.properties;
+        const properties = sent.generationConfig.responseSchema.properties;
+        const answer =
+          'energyKcal' in properties ? HOLISTIC_ANSWER : 'items' in properties ? MEAL_ANSWER : LABEL_ANSWER;
         res.writeHead(200, { 'content-type': 'application/json' }).end(
           JSON.stringify({
             candidates: [
-              { content: { parts: [{ text: JSON.stringify(isMeal ? MEAL_ANSWER : LABEL_ANSWER) }] } },
+              { content: { parts: [{ text: JSON.stringify(answer) }] } },
             ],
             usageMetadata: { promptTokenCount: 1300, candidatesTokenCount: 180, totalTokenCount: 1480 },
           }),
@@ -184,7 +199,7 @@ describe('the assembled server', () => {
     expect(body.items[0].food.name).toMatch(/rice/i);
     expect(body.total.calories).toBeGreaterThan(300);
     expect(body.total.low).toBeLessThan(body.total.calories);
-    // Nothing nutritional came from the model; every figure is a lookup.
+    // Every item with a database match retains traceable per-100g nutrition.
     expect(body.items.every((i) => i.food === null || i.food.kcal100 > 0)).toBe(true);
   });
 
@@ -196,7 +211,7 @@ describe('the assembled server', () => {
   });
 
   it('stops at the daily ceiling', async () => {
-    // Two calls are already spent; the limit is four.
+    // A label and the two meal paths are already spent; the limit is four.
     await post('/api/meals/estimate', { image: A_REAL_PHOTO });
     await post('/api/meals/estimate', { image: A_REAL_PHOTO });
     const { status, body } = await post('/api/meals/estimate', { image: A_REAL_PHOTO });
@@ -214,7 +229,7 @@ describe('the assembled server', () => {
     expect(body.windows.today.calls).toBe(4);
     expect(body.windows.all.inputTokens).toBe(4 * 1300);
     expect(body.windows.all.costUsd).toBeGreaterThan(0);
-    expect(body.byTask.map((t) => t.task).sort()).toEqual(['label', 'meal']);
+    expect(body.byTask.map((t) => t.task).sort()).toEqual(['label', 'meal', 'mealHolistic']);
     expect(body.recent).toHaveLength(4);
     // The quota rejection never reached the model, so it was never logged.
     expect(body.byError).toEqual([]);
@@ -231,7 +246,13 @@ describe('the assembled server', () => {
     db.close();
     expect(rows.length).toBeGreaterThanOrEqual(4);
     expect(rows.every((r) => r.totalTokens === 1480 || r.status === 'error')).toBe(true);
-    expect(new Set(rows.map((r) => r.task))).toEqual(new Set(['label', 'meal']));
+    expect(new Set(rows.map((r) => r.task))).toEqual(new Set(['label', 'meal', 'mealHolistic']));
+    expect(new Set(rows.filter((r) => r.task === 'meal').map((r) => r.model))).toEqual(
+      new Set(['gemini-3.5-flash-lite']),
+    );
+    expect(new Set(rows.filter((r) => r.task === 'mealHolistic').map((r) => r.model))).toEqual(
+      new Set(['gemini-3.7-flash']),
+    );
   });
 });
 

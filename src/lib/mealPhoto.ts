@@ -10,12 +10,18 @@ import { postToModel, resizeForModel, type VisionMeta } from './vision';
 
 export type ItemConfidence = 'high' | 'medium' | 'low';
 
+export type PortionRange = { low: number; median: number; high: number };
+
 export type MealItem = {
+  id?: string;
+  kind?: 'food' | 'adjustment';
   /** What the model called it — kept even when nothing matched. */
   name: string;
   /** The model's words, once the matched food has its own name on screen. */
   seenAs?: string;
   grams: number;
+  /** Visual portion evidence. The median is used for arithmetic; the bounds stay editable. */
+  portionG?: PortionRange;
   confidence: ItemConfidence;
   food: {
     id: string;
@@ -35,6 +41,37 @@ export type MealItem = {
   servings?: number;
 };
 
+export type MealQuestion = {
+  id: string;
+  targetItemId: string;
+  question: string;
+  expectedReductionKcal: number;
+  choices: { id: string; label: string; grams: number }[];
+};
+
+export type MealCaptureQuality = {
+  needsRetake: boolean;
+  retakeReason?: string | null;
+  fullMealVisible?: boolean;
+  blurProbability?: number;
+  glareProbability?: number;
+  occlusionProbability?: number;
+  underexposureProbability?: number;
+};
+
+export type MealEstimatePath = {
+  selected: 'database' | 'hybrid' | 'holistic';
+  database: {
+    calories: number;
+    low: number;
+    high: number;
+    matchedItems: number;
+    totalItems: number;
+  };
+  holistic: { calories: number; low: number; high: number } | null;
+  disagreementKcal: number | null;
+};
+
 export type MealEstimate = {
   items: MealItem[];
   total: {
@@ -46,6 +83,19 @@ export type MealEstimate = {
     high: number;
   };
   unmatched: number;
+  status?: 'ready' | 'retake' | 'needs_question';
+  mealType?:
+    | 'simple_plate'
+    | 'mixed_dish'
+    | 'packaged'
+    | 'restaurant'
+    | 'drink'
+    | 'other'
+    | 'not_food';
+  captureQuality?: MealCaptureQuality | null;
+  question?: MealQuestion | null;
+  uncertaintyReasons?: string[];
+  path?: MealEstimatePath;
   meta: VisionMeta;
 };
 
@@ -77,6 +127,7 @@ export function rescaleItem(item: MealItem, grams: number): MealItem {
   return {
     ...item,
     grams,
+    portionG: { low: grams, median: grams, high: grams },
     error,
     nutrition: {
       calories,
@@ -133,6 +184,7 @@ export function itemFromFood(food: Food, grams: number, seenAs?: string): MealIt
 
   return {
     name: food.name,
+    kind: 'food',
     seenAs,
     grams,
     confidence: 'high',
@@ -158,6 +210,71 @@ export function itemFromFood(food: Food, grams: number, seenAs?: string): MealIt
     range: { low: Math.round((kcal100 ?? 0) * factor), high: Math.round((kcal100 ?? 0) * factor) },
     servings: food.servingGrams ? grams / food.servingGrams : grams / 100,
   };
+}
+
+/**
+ * Changes only the identity behind an estimated item. The person has resolved
+ * what the food was, but that does not turn a visually estimated portion into a
+ * weighed one, so its original bounds are repriced against the new food.
+ */
+export function replaceItemFood(item: MealItem, food: Food): MealItem {
+  const replacement = itemFromFood(food, item.grams, item.name);
+  const kcal100 = replacement.food?.kcal100;
+  const portion = item.portionG;
+  let range = replacement.range;
+
+  if (kcal100 != null && portion) {
+    range = {
+      low: Math.round((kcal100 * portion.low) / 100),
+      high: Math.round((kcal100 * portion.high) / 100),
+    };
+  } else if (item.range && item.nutrition?.calories && replacement.nutrition?.calories != null) {
+    const ratio = replacement.nutrition.calories / item.nutrition.calories;
+    range = {
+      low: Math.round(item.range.low * ratio),
+      high: Math.round(item.range.high * ratio),
+    };
+  }
+
+  return {
+    ...replacement,
+    id: item.id,
+    portionG: portion,
+    confidence: item.confidence,
+    error: item.error,
+    range,
+  };
+}
+
+/** Applies the one server-selected portion answer without another model call. */
+export function applyMealQuestionChoice(
+  items: MealItem[],
+  question: MealQuestion,
+  choiceId: string,
+): MealItem[] {
+  const choice = question.choices.find((candidate) => candidate.id === choiceId);
+  if (!choice || !(choice.grams > 0)) return items;
+
+  return items.map((item) => {
+    if (item.id !== question.targetItemId) return item;
+    const repriced = rescaleItem(item, choice.grams);
+    const calories = repriced.nutrition?.calories ?? 0;
+    // A small/medium/large answer is better evidence than the photograph alone,
+    // but it is still approximate. Keep a narrow band instead of calling it exact.
+    return {
+      ...repriced,
+      error: 0.1,
+      portionG: {
+        low: Math.round(choice.grams * 0.9),
+        median: choice.grams,
+        high: Math.round(choice.grams * 1.1),
+      },
+      range: {
+        low: Math.round(calories * 0.9),
+        high: Math.round(calories * 1.1),
+      },
+    };
+  });
 }
 
 /**

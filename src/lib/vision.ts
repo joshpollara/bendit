@@ -4,13 +4,13 @@
 // sends an image. What comes back is either parsed data or a coded failure, so
 // the screen can say what went wrong instead of spinning forever.
 //
-// The photo is downscaled here, not on the server. A 768px longest edge is one
-// image tile to the model; a full-resolution phone photo is several times the
-// cost for no more legible digits, and it wastes the upload too.
+// The photo is downscaled here, not on the server. Meal portions and package
+// text lose useful evidence at thumbnail resolution, while full-resolution
+// phone photos waste upload time. 1536px keeps roughly 1-2MP for the model.
 
 import { compressPhoto } from './photo';
 
-export const VISION_MAX_EDGE = 768;
+export const VISION_MAX_EDGE = 1536;
 
 export type VisionErrorCode =
   | 'offline'
@@ -33,6 +33,15 @@ export type VisionMeta = {
   latencyMs: number;
   usage: { inputTokens: number | null; outputTokens: number | null; totalTokens: number | null };
   callsRemainingToday: number;
+  models?: Record<string, string>;
+  calls?: {
+    role: string;
+    model: string;
+    promptVersion: string;
+    latencyMs: number;
+    usage: { inputTokens: number | null; outputTokens: number | null; totalTokens: number | null };
+  }[];
+  partialFailures?: { role: string; code: string }[];
 };
 
 export class VisionRequestError extends Error {
@@ -146,9 +155,9 @@ export const requestExtraction = <T>(task: string, imageBase64: string, options?
     options,
   );
 
-/** Down to one image tile before it leaves the device. Not optional: it's the cost control. */
+/** Keep useful meal detail while bounding upload size and model cost. */
 export async function resizeForModel(photo: Blob): Promise<string> {
-  const resized = await compressPhoto(photo, { maxEdge: VISION_MAX_EDGE, quality: 0.85 });
+  const resized = await compressPhoto(photo, { maxEdge: VISION_MAX_EDGE, quality: 0.88 });
   return toBase64(resized);
 }
 

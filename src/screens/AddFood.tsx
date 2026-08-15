@@ -643,6 +643,14 @@ export default function AddFood() {
             meal={meal}
             onLog={logMealPhoto}
             onClose={() => setEstimate(null)}
+            onRetake={() => {
+              setEstimate(null);
+              setShootingMeal(true);
+            }}
+            onScanBarcode={() => {
+              setEstimate(null);
+              setScanning(true);
+            }}
           />
         </Suspense>
       )}

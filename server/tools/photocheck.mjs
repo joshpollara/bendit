@@ -27,8 +27,12 @@
 // default, --expected elsewhere — keyed by filename:
 //
 //   {
-//     "chicken-rice.jpg": { "kcal": 640, "items": ["chicken", "rice", "broccoli"] },
-//     "porridge.jpg":     { "kcal": 310, "items": ["oat", "milk"] }
+//     "chicken-rice.jpg": {
+//       "kcal": 640,
+//       "items": ["chicken", "rice", "broccoli"],
+//       "portions": { "chicken": 160, "rice": 220, "broccoli": 90 }
+//     },
+//     "porridge.jpg": { "kcal": 310, "items": ["oat", "milk"] }
 //   }
 //
 // kcal is what the meal actually was — weighed, or added up from the packets.
@@ -36,10 +40,9 @@
 // case where the calories are right by luck and the foods are wrong. A photo
 // with no entry is still run and shown; it just isn't scored.
 //
-// --repeat N runs each photo N times. Since the same photo asked twice gives
-// two different weights, the spread is itself a measurement: it says how much
-// of the error is noise that averaging several reads would remove, and how
-// much is a bias that averaging would not.
+// --repeat N runs each photo N times. Since the same photo asked twice can give
+// different weights, the spread is itself a stability measurement. Repetition
+// is an evaluation option, not a production averaging strategy.
 
 import fs from 'node:fs';
 import path from 'node:path';
@@ -52,8 +55,8 @@ const here = path.dirname(fileURLToPath(import.meta.url));
 // Prices come from the same table the app bills itself with, so a comparison
 // between two models is costed the same way the running app would cost them.
 
-/** The size the client sends. A bigger photo costs more for no more accuracy. */
-const CLIENT_MAX_EDGE = 768;
+/** The size the client sends. The evaluator warns when it is not testing that path. */
+const CLIENT_MAX_EDGE = 1536;
 
 function arg(name, fallback) {
   const index = process.argv.indexOf(`--${name}`);
@@ -92,6 +95,25 @@ function costOf(model, usage) {
   const price = MODEL_PRICES[model];
   if (!price) return null;
   return ((usage?.inputTokens ?? 0) * price.input + (usage?.outputTokens ?? 0) * price.output) / 1e6;
+}
+
+/** Cost every role at its own model rate. Older servers expose one top-level call. */
+function costForMeta(meta = {}) {
+  const calls = Array.isArray(meta.calls) && meta.calls.length
+    ? meta.calls
+    : [{ role: null, model: meta.model, promptVersion: meta.promptVersion, usage: meta.usage }];
+  let cost = 0;
+  let priced = 0;
+  const missing = [];
+  for (const call of calls) {
+    const value = costOf(call.model, call.usage);
+    if (value == null) missing.push(call.model ?? '?');
+    else {
+      cost += value;
+      priced++;
+    }
+  }
+  return { calls, cost: priced ? cost : null, missing };
 }
 
 function showLabel(body) {
@@ -146,6 +168,16 @@ function median(values) {
   return sorted.length % 2 ? sorted[middle] : (sorted[middle - 1] + sorted[middle]) / 2;
 }
 
+function quantile(values, probability) {
+  if (!values.length) return null;
+  const sorted = [...values].sort((a, b) => a - b);
+  const index = (sorted.length - 1) * probability;
+  const low = Math.floor(index);
+  const high = Math.ceil(index);
+  if (low === high) return sorted[low];
+  return sorted[low] + (sorted[high] - sorted[low]) * (index - low);
+}
+
 /**
  * How many of the foods that should have been found, were. Matched on the
  * database name and on the model's own words, because either one appearing is
@@ -160,6 +192,20 @@ function foodsFound(body, wanted = []) {
     .join(' | ')
     .toLowerCase();
   return wanted.filter((term) => seen.includes(String(term).toLowerCase())).length;
+}
+
+function portionErrors(body, expectedPortions = {}) {
+  const errors = [];
+  for (const [term, expectedGrams] of Object.entries(expectedPortions)) {
+    if (!(Number(expectedGrams) > 0)) continue;
+    const match = (body.items ?? []).find((item) =>
+      [item.name, item.food?.name]
+        .filter(Boolean)
+        .some((name) => String(name).toLowerCase().includes(term.toLowerCase())),
+    );
+    if (Number.isFinite(match?.grams)) errors.push(Math.abs(match.grams - Number(expectedGrams)));
+  }
+  return errors;
 }
 
 /** One call to one endpoint. Throws on anything that isn't a usable answer. */
@@ -221,7 +267,12 @@ for (const file of files) {
 
     const { body, elapsed } = result;
     calls++;
-    models.add(`${body.meta?.model ?? '?'} (prompt v${body.meta?.promptVersion ?? '?'})`);
+    const pricedMeta = costForMeta(body.meta);
+    for (const call of pricedMeta.calls) {
+      models.add(
+        `${call.role ? `${call.role}:` : ''}${call.model ?? '?'} (prompt v${call.promptVersion ?? '?'})`,
+      );
+    }
 
     // The first read is shown in full; the rest only need their bottom line,
     // which is the number the spread is measured on.
@@ -232,21 +283,25 @@ for (const file of files) {
       process.stdout.write(`  run ${attempt}: ${body.total?.calories} cal\n`);
     }
 
-    const cost = costOf(body.meta?.model, body.meta?.usage);
-    if (cost == null) unpriced.add(body.meta?.model ?? '?');
-    else spend += cost;
+    const { cost } = pricedMeta;
+    for (const model of pricedMeta.missing) unpriced.add(model);
+    if (cost != null) spend += cost;
     if (attempt === 1 || task === 'label') {
       const usage = body.meta?.usage;
       process.stdout.write(
         `  ${elapsed}ms · ${usage?.inputTokens ?? '?'} in + ${usage?.outputTokens ?? '?'} out` +
-          ` · ${cost == null ? 'no rate for this model' : money(cost)}` +
-          ` · ${body.meta?.model ?? '?'} (prompt v${body.meta?.promptVersion ?? '?'})\n`,
+          ` · ${cost == null ? 'no priced model call' : money(cost)}` +
+          `${pricedMeta.missing.length ? ' plus unpriced call' : ''}` +
+          ` · ${pricedMeta.calls.map((call) => `${call.role ? `${call.role}:` : ''}${call.model ?? '?'}`).join(', ')}\n`,
       );
     }
 
     runs.push({
       calories: body.total?.calories ?? null,
+      low: body.total?.low ?? null,
+      high: body.total?.high ?? null,
       found: foodsFound(body, answer?.items),
+      portionErrors: portionErrors(body, answer?.portions),
       unmatched: body.unmatched ?? 0,
       cost,
       elapsed,
@@ -261,24 +316,40 @@ for (const file of files) {
   if (totals.length === 0) continue;
 
   const got = median(totals);
+  const errorKcal = got - answer.kcal;
   const errorPct = ((got - answer.kcal) / answer.kcal) * 100;
   const spreadPct = totals.length > 1 ? ((Math.max(...totals) - Math.min(...totals)) / got) * 100 : null;
   const recall = answer.items?.length ? mean(runs.map((r) => r.found ?? 0)) / answer.items.length : null;
+  const lows = runs.map((run) => run.low).filter(Number.isFinite);
+  const highs = runs.map((run) => run.high).filter(Number.isFinite);
+  const intervalLow = median(lows);
+  const intervalHigh = median(highs);
+  const intervalCovered = intervalLow == null || intervalHigh == null
+    ? null
+    : intervalLow <= answer.kcal && answer.kcal <= intervalHigh;
+  const portionErrorValues = runs.flatMap((run) => run.portionErrors);
 
   scored.push({
     file: path.basename(file),
     expected: answer.kcal,
     got,
+    errorKcal,
     errorPct,
     spreadPct,
     recall,
+    intervalLow,
+    intervalHigh,
+    intervalCovered,
+    portionErrors: portionErrorValues,
     unmatched: mean(runs.map((r) => r.unmatched)),
   });
 
   process.stdout.write(
     `  SCORE: ${got} vs ${answer.kcal} cal → ${errorPct >= 0 ? '+' : ''}${errorPct.toFixed(0)}%` +
+      `${intervalCovered == null ? '' : `, interval ${intervalLow}–${intervalHigh} ${intervalCovered ? 'covers' : 'misses'}`}` +
       `${spreadPct == null ? '' : `, spread ${spreadPct.toFixed(0)}% across ${totals.length} reads`}` +
-      `${recall == null ? '' : `, foods ${(recall * 100).toFixed(0)}%`}\n`,
+      `${recall == null ? '' : `, foods ${(recall * 100).toFixed(0)}%`}` +
+      `${portionErrorValues.length ? `, portion MAE ${mean(portionErrorValues).toFixed(0)}g` : ''}\n`,
   );
 }
 
@@ -294,12 +365,23 @@ let summary = null;
 if (scored.length) {
   const errors = scored.map((s) => s.errorPct);
   const absolute = errors.map(Math.abs);
+  const errorsKcal = scored.map((s) => s.errorKcal);
+  const absoluteKcal = errorsKcal.map(Math.abs);
   const withinBand = scored.filter((s) => Math.abs(s.errorPct) <= 20).length;
+  const within50Kcal = scored.filter((s) => Math.abs(s.errorKcal) <= 50).length;
+  const within100Kcal = scored.filter((s) => Math.abs(s.errorKcal) <= 100).length;
   const recalls = scored.map((s) => s.recall).filter((r) => r != null);
   const spreads = scored.map((s) => s.spreadPct).filter((s) => s != null);
+  const intervals = scored.filter((s) => s.intervalCovered != null);
+  const intervalWidths = intervals.map((s) => s.intervalHigh - s.intervalLow);
+  const portions = scored.flatMap((s) => s.portionErrors);
 
   summary = {
     photos: scored.length,
+    calorieMae: mean(absoluteKcal),
+    medianAbsErrorKcal: median(absoluteKcal),
+    p90AbsErrorKcal: quantile(absoluteKcal, 0.9),
+    biasKcal: mean(errorsKcal),
     medianAbsErrorPct: median(absolute),
     meanAbsErrorPct: mean(absolute),
     // Signed, and kept separate on purpose: an estimator that is 20% out at
@@ -307,17 +389,29 @@ if (scored.length) {
     // prompt or the portion figures changed.
     biasPct: mean(errors),
     withinBand,
+    within50Kcal,
+    within100Kcal,
     foodRecallPct: recalls.length ? mean(recalls) * 100 : null,
+    portionMaeG: portions.length ? mean(portions) : null,
+    intervalCoveragePct: intervals.length
+      ? (intervals.filter((s) => s.intervalCovered).length / intervals.length) * 100
+      : null,
+    meanIntervalWidthKcal: intervalWidths.length ? mean(intervalWidths) : null,
     meanSpreadPct: spreads.length ? mean(spreads) : null,
   };
 
   process.stdout.write(
     `\nScored ${summary.photos} meal${summary.photos === 1 ? '' : 's'} against known answers:\n` +
+      `  calorie MAE    ${summary.calorieMae.toFixed(0)} kcal  (median ${summary.medianAbsErrorKcal.toFixed(0)}, P90 ${summary.p90AbsErrorKcal.toFixed(0)})\n` +
+      `  calorie bias   ${summary.biasKcal >= 0 ? '+' : ''}${summary.biasKcal.toFixed(0)} kcal\n` +
       `  median error   ${summary.medianAbsErrorPct.toFixed(0)}%  (mean ${summary.meanAbsErrorPct.toFixed(0)}%)\n` +
       `  bias           ${summary.biasPct >= 0 ? '+' : ''}${summary.biasPct.toFixed(0)}%  ` +
       `(${summary.biasPct < 0 ? 'reads low' : 'reads high'} on average)\n` +
       `  within ±20%    ${summary.withinBand}/${summary.photos}\n` +
+      `  within 50/100  ${summary.within50Kcal}/${summary.photos}, ${summary.within100Kcal}/${summary.photos}\n` +
+      `${summary.intervalCoveragePct == null ? '' : `  interval cover ${summary.intervalCoveragePct.toFixed(0)}%  (mean width ${summary.meanIntervalWidthKcal.toFixed(0)} kcal)\n`}` +
       `${summary.foodRecallPct == null ? '' : `  foods found    ${summary.foodRecallPct.toFixed(0)}%\n`}` +
+      `${summary.portionMaeG == null ? '' : `  portion MAE    ${summary.portionMaeG.toFixed(0)}g\n`}` +
       `${summary.meanSpreadPct == null ? '' : `  read-to-read   ${summary.meanSpreadPct.toFixed(0)}% spread over ${repeat} reads\n`}` +
       `  read by        ${[...models].join(', ')}\n`,
   );

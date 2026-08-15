@@ -13,8 +13,8 @@ export default function Sheet({ onClose, children }: { onClose: () => void; chil
         onClick={onClose}
       />
       <div
-        className="absolute bottom-0 left-1/2 w-full max-w-md -translate-x-1/2 rounded-t-2xl bg-card p-4 pb-[calc(1rem+env(safe-area-inset-bottom))] shadow-2xl
-                   md:relative md:bottom-auto md:left-auto md:max-h-[85vh] md:translate-x-0 md:overflow-y-auto md:rounded-2xl md:border md:border-line md:p-6 md:pb-6"
+        className="absolute bottom-0 left-1/2 max-h-dvh w-full max-w-md -translate-x-1/2 overflow-y-auto rounded-t-2xl bg-card p-4 pb-[calc(1rem+env(safe-area-inset-bottom))] shadow-2xl
+                   md:relative md:bottom-auto md:left-auto md:max-h-[85vh] md:translate-x-0 md:rounded-2xl md:border md:border-line md:p-6 md:pb-6"
       >
         <div className="mx-auto mb-3 h-1 w-10 rounded-full bg-line md:hidden" />
         {children}

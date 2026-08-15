@@ -11,8 +11,8 @@
 import crypto from 'node:crypto';
 import { getTask } from './visionTasks.mjs';
 
-/** Images arrive already downscaled to ~768px; anything much bigger is a mistake. */
-export const MAX_IMAGE_BYTES = 2 * 1024 * 1024;
+/** Images arrive already resized on-device; this fits a detailed 1536px JPEG. */
+export const MAX_IMAGE_BYTES = Math.floor(2.75 * 1024 * 1024);
 
 /**
  * A page's text is stripped of markup before it gets here and truncated to
@@ -48,6 +48,13 @@ const INSERT = `
     (@id, @createdAt, @task, @promptVersion, @model, @imageHash, @imageBytes, @status, @errorCode,
      @latencyMs, @inputTokens, @outputTokens, @totalTokens, @responseJson)`;
 
+const UPDATE = `
+  UPDATE vision_requests SET
+    status = @status, errorCode = @errorCode, latencyMs = @latencyMs,
+    inputTokens = @inputTokens, outputTokens = @outputTokens,
+    totalTokens = @totalTokens, responseJson = @responseJson
+  WHERE id = @id`;
+
 /**
  * Builds the POST /api/vision/extract handler.
  *
@@ -55,8 +62,9 @@ const INSERT = `
  * session can't run up an unbounded bill. Failed calls count too: a loop that
  * fails every time is exactly the loop worth stopping.
  */
-export function createVisionExtractHandler({ db, provider, dailyLimit = 100 }) {
-  const logRequest = db.prepare(INSERT);
+export function createVisionExtractHandler({ db, provider, providers = {}, dailyLimit = 100 }) {
+  const reserveRequest = db.prepare(INSERT);
+  const finishRequest = db.prepare(UPDATE);
   const countToday = db.prepare(
     "SELECT COUNT(*) AS n FROM vision_requests WHERE createdAt >= datetime('now', 'start of day')",
   );
@@ -68,6 +76,7 @@ export function createVisionExtractHandler({ db, provider, dailyLimit = 100 }) {
     const { task: taskName, image, text, mimeType = 'image/jpeg' } = req.body ?? {};
     const task = getTask(taskName);
     if (!task) return fail('unknown_task', `There is no vision task called "${taskName}".`);
+    const taskProvider = providers[taskName] ?? provider;
 
     // Either a bare base64 string or a data: URL — both are one line of client
     // code away from each other.
@@ -87,7 +96,7 @@ export function createVisionExtractHandler({ db, provider, dailyLimit = 100 }) {
     if (!base64 && inputBytes > MAX_TEXT_BYTES) {
       return fail('text_too_large', 'That page is too long to read.');
     }
-    if (!provider.configured) {
+    if (!taskProvider?.configured) {
       return fail('unconfigured', 'Photo reading is not switched on for this server.');
     }
 
@@ -107,14 +116,18 @@ export function createVisionExtractHandler({ db, provider, dailyLimit = 100 }) {
       createdAt: new Date().toISOString(),
       task: taskName,
       promptVersion: task.version,
-      model: provider.model,
+      model: taskProvider.model,
       imageHash: crypto
         .createHash('sha256')
         .update(base64 || pageText)
         .digest('hex')
         .slice(0, 32),
       imageBytes: inputBytes,
-      status: 'error',
+      // Inserted before the network call. Besides preserving an audit row if the
+      // process exits mid-call, this reserves quota synchronously. Concurrent
+      // requests therefore see one another instead of all passing the same
+      // count-then-call check and overshooting the daily ceiling.
+      status: 'pending',
       errorCode: null,
       latencyMs: null,
       inputTokens: null,
@@ -123,8 +136,10 @@ export function createVisionExtractHandler({ db, provider, dailyLimit = 100 }) {
       responseJson: null,
     };
 
+    reserveRequest.run(record);
+
     try {
-      const result = await provider.extract({
+      const result = await taskProvider.extract({
         imageBase64: base64,
         text: pageText,
         mimeType,
@@ -139,7 +154,7 @@ export function createVisionExtractHandler({ db, provider, dailyLimit = 100 }) {
         totalTokens: result.usage?.totalTokens ?? null,
         responseJson: result.raw,
       });
-      logRequest.run(record);
+      finishRequest.run(record);
       return res.json({
         data: result.data,
         meta: {
@@ -152,7 +167,8 @@ export function createVisionExtractHandler({ db, provider, dailyLimit = 100 }) {
       });
     } catch (error) {
       record.errorCode = error?.code ?? 'unknown';
-      logRequest.run(record);
+      record.status = 'error';
+      finishRequest.run(record);
       const code = error?.code in HTTP_STATUS ? error.code : 'provider_error';
       return fail(code, error?.message ?? 'The photo could not be read.');
     }

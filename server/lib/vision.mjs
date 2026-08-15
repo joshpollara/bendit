@@ -20,37 +20,15 @@ export class VisionError extends Error {
   }
 }
 
-// Flash-Lite 3.1: the cheapest tier that actually reads images for a new API
-// key. 2.5 is cheaper on paper and is still listed by the models endpoint, but
-// calling it returns "no longer available to new users" — a 404 that says
-// nothing until the provider's own message is read, which is why that message
-// is now included in the error.
-//
-// Measured on a real photographed panel: ~1,400 input tokens and ~100 output,
-// so about $0.0005 a read at $0.25/M in and $1.50/M out. A 768px photo is more
-// than the one 258-token tile the docs quote — a portrait shot spans two.
-// 3.5-flash-lite read the same panel identically and costs twice as much.
-// Overridable with VISION_MODEL.
-const DEFAULT_MODEL = 'gemini-3.1-flash-lite';
+// Pin the exact generation rather than relying on a moving alias. Model
+// generations differ materially on meal and portion estimation, so the model
+// id is part of the result's provenance. Overridable with VISION_MODEL for a
+// bakeoff or a later, deliberate upgrade.
+const DEFAULT_MODEL = 'gemini-3.5-flash-lite';
 // Overridable so the whole path can be exercised against a local stand-in,
 // without a key and without spending anything.
 const ENDPOINT =
   process.env.VISION_ENDPOINT ?? 'https://generativelanguage.googleapis.com/v1beta/models';
-
-/**
- * How hard a thinking model should think, when set: LOW, MEDIUM or HIGH.
- *
- * Sent only when asked for, because the models that don't take it reject the
- * request outright. It exists because thinking is billed at the output rate and
- * the newer models can't be told not to think at all — so on those, this is the
- * difference between a read costing what a read should and costing several
- * times that. Left unset, nothing changes.
- *
- * It goes inside thinkingConfig, not beside it. Flat, it is a field the API
- * doesn't know, which is the worst of both: either every read fails, or the
- * setting is quietly ignored and the bill arrives at the default anyway.
- */
-const THINKING_LEVEL = process.env.VISION_THINKING_LEVEL?.trim().toUpperCase();
 
 /** Long enough for a slow model, short enough that a phone isn't left hanging. */
 const TIMEOUT_MS = 20_000;
@@ -115,7 +93,7 @@ export function usageOf(meta) {
  */
 export function toGeminiSchema(schema) {
   if (!schema || typeof schema !== 'object') return schema;
-  const allowed = ['type', 'description', 'enum', 'nullable', 'format'];
+  const allowed = ['type', 'description', 'enum', 'nullable', 'format', 'minItems', 'maxItems'];
   const out = {};
   for (const key of allowed) if (schema[key] !== undefined) out[key] = schema[key];
   if (schema.type === 'object' && schema.properties) {
@@ -137,6 +115,8 @@ export function toGeminiSchema(schema) {
 export function createVisionProvider({
   apiKey = process.env.GEMINI_API_KEY,
   model = process.env.VISION_MODEL ?? DEFAULT_MODEL,
+  thinkingLevel = process.env.VISION_THINKING_LEVEL,
+  temperature,
   fetchImpl = globalThis.fetch,
   timeoutMs = TIMEOUT_MS,
   deadlineMs = DEADLINE_MS,
@@ -144,6 +124,9 @@ export function createVisionProvider({
   onRetryDelay = sleep,
 } = {}) {
   const configured = Boolean(apiKey);
+  // It goes inside thinkingConfig, not beside it. Sent only when configured:
+  // models that do not support thinking reject the entire request for it.
+  const normalizedThinkingLevel = String(thinkingLevel ?? '').trim().toUpperCase();
 
   async function callOnce({ imageBase64, mimeType, prompt, schema, text, attemptMs }) {
     const controller = new AbortController();
@@ -170,8 +153,13 @@ export function createVisionProvider({
             // than asked nicely for JSON and parsed hopefully.
             responseMimeType: 'application/json',
             responseSchema: toGeminiSchema(schema),
-            temperature: 0,
-            ...(THINKING_LEVEL ? { thinkingConfig: { thinkingLevel: THINKING_LEVEL } } : {}),
+            // Newer Gemini models no longer accept temperature. Leave it out by
+            // default, but retain an explicit per-provider override for model
+            // bakeoffs and older compatible models.
+            ...(temperature == null ? {} : { temperature }),
+            ...(normalizedThinkingLevel
+              ? { thinkingConfig: { thinkingLevel: normalizedThinkingLevel } }
+              : {}),
           },
         }),
       });
