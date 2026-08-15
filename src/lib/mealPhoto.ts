@@ -9,6 +9,7 @@ import type { Food } from '../types';
 import { postToModel, resizeForModel, type VisionMeta } from './vision';
 
 export type ItemConfidence = 'high' | 'medium' | 'low';
+export type MealPhotoStage = 'preparing' | 'analyzing';
 
 export type PortionRange = { low: number; median: number; high: number };
 
@@ -99,9 +100,15 @@ export type MealEstimate = {
   meta: VisionMeta;
 };
 
-export async function estimateMealFromPhoto(photo: Blob): Promise<MealEstimate> {
+export async function estimateMealFromPhoto(
+  photo: Blob,
+  { onStage }: { onStage?: (stage: MealPhotoStage) => void } = {},
+): Promise<MealEstimate> {
+  onStage?.('preparing');
+  const image = await resizeForModel(photo);
+  onStage?.('analyzing');
   const estimate = await postToModel<MealEstimate>('/api/meals/estimate', {
-    image: await resizeForModel(photo),
+    image,
     mimeType: 'image/jpeg',
   });
   // Remember the model's own words before the matched food's name takes over on

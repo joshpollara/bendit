@@ -103,3 +103,24 @@ input[type='number'] {
   -moz-appearance: textfield;
   appearance: textfield;
 }
+
+@keyframes meal-photo-progress {
+  from {
+    transform: translateX(-100%);
+  }
+  to {
+    transform: translateX(300%);
+  }
+}
+
+.meal-photo-progress {
+  animation: meal-photo-progress 1.4s ease-in-out infinite;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .meal-photo-progress {
+    width: 100%;
+    animation: none;
+    opacity: 0.55;
+  }
+}
