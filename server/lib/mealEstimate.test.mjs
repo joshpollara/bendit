@@ -501,10 +501,10 @@ describe('POST /api/meals/estimate', () => {
     expect(res.body.error.code).toBe('unconfigured');
   });
 
-  it('keeps the database result when the independent whole-meal call fails', async () => {
+  it('keeps the database result when the independent whole-meal call is rate limited', async () => {
     const visionHandler = vi.fn(async (req, res) => {
       if (req.body.task === 'mealHolistic') {
-        return res.status(504).json({ error: { code: 'timeout', message: 'slow' } });
+        return res.status(429).json({ error: { code: 'rate_limited', message: 'model quota' } });
       }
       return res.json({
         data: { items: [{ name: 'white rice', grams: 200, confidence: 'high' }] },
@@ -521,7 +521,18 @@ describe('POST /api/meals/estimate', () => {
     expect(res.statusCode).toBe(200);
     expect(res.body.total.calories).toBe(260);
     expect(res.body.path.holistic).toBeNull();
-    expect(res.body.meta.partialFailures).toEqual([{ role: 'holistic', code: 'timeout' }]);
+    expect(res.body.meta.partialFailures).toEqual([{ role: 'holistic', code: 'rate_limited' }]);
+  });
+
+  it('returns one rate-limit failure when both meal paths are unavailable', async () => {
+    const visionHandler = vi.fn(async (_req, res) =>
+      res.status(429).json({ error: { code: 'rate_limited', message: 'model quota' } }),
+    );
+    const res = await post(createMealEstimateHandler({ db, visionHandler }), { image });
+
+    expect(res.statusCode).toBe(429);
+    expect(res.body.error.code).toBe('rate_limited');
+    expect(visionHandler).toHaveBeenCalledTimes(2);
   });
 
   it('returns a loggable whole-meal fallback when item parsing fails', async () => {

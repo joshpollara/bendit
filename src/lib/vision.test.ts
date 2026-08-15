@@ -99,6 +99,8 @@ describe('visionErrorMessage', () => {
     expect(visionErrorMessage('quota_exceeded')).not.toBe(visionErrorMessage('timeout'));
     expect(visionErrorMessage('unconfigured')).not.toBe(visionErrorMessage('provider_error'));
     expect(visionErrorMessage('offline')).toMatch(/offline/i);
+    expect(visionErrorMessage('rate_limited')).toMatch(/capacity/i);
+    expect(visionErrorMessage('rate_limited')).not.toMatch(/photos at once/i);
   });
 
   it('never leaves a code without words', () => {

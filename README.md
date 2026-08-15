@@ -24,6 +24,10 @@ MEAL_PARSER_THINKING_LEVEL=MINIMAL
 MEAL_HOLISTIC_THINKING_LEVEL=LOW
 ```
 
+`VISION_MODEL` configures the general label and recipe provider only. Use the
+role-specific variables above for meal-photo bakeoffs so the two paths remain
+independently pinned.
+
 Run weighed photos through the actual API path with an `expected.json` manifest:
 
 ```sh
