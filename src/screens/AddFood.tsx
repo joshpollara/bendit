@@ -8,9 +8,15 @@ import { formatCalories } from '../lib/units';
 import { STRINGS } from '../lib/strings';
 import { useUI } from '../store/ui';
 import { MEALS, MEAL_LABELS, type Food, type Meal } from '../types';
-import { estimateMealFromPhoto, type MealEstimate, type MealItem } from '../lib/mealPhoto';
+import {
+  estimateMealFromPhoto,
+  type MealEstimate,
+  type MealItem,
+  type MealPhotoStage,
+} from '../lib/mealPhoto';
 import ServingSheet from '../components/ServingSheet';
 import FoodForm from '../components/FoodForm';
+import MealPhotoProgress from '../components/MealPhotoProgress';
 import MacroInputs, {
   EMPTY_MACROS,
   macroFields,
@@ -272,7 +278,7 @@ export default function AddFood() {
   const [query, setQuery] = useState('');
   const [selected, setSelected] = useState<Food | null>(null);
   const [scanning, setScanning] = useState(false);
-  const [mealPhoto, setMealPhoto] = useState<'idle' | 'reading'>('idle');
+  const [mealPhoto, setMealPhoto] = useState<'idle' | MealPhotoStage>('idle');
   const [shootingMeal, setShootingMeal] = useState(false);
   const [estimate, setEstimate] = useState<MealEstimate | null>(null);
   const mealPhotoInput = useRef<HTMLInputElement>(null);
@@ -354,10 +360,14 @@ export default function AddFood() {
     if (mealReadInFlight.current) return;
     mealReadInFlight.current = true;
     setShootingMeal(false);
-    setMealPhoto('reading');
+    setMealPhoto('preparing');
     setBanner(null);
     try {
-      setEstimate(await estimateMealFromPhoto(file));
+      setEstimate(
+        await estimateMealFromPhoto(file, {
+          onStage: (stage) => setMealPhoto(stage),
+        }),
+      );
     } catch (e) {
       setBanner(e instanceof Error ? e.message : "Couldn't read that photo.");
     } finally {
@@ -491,7 +501,7 @@ export default function AddFood() {
         <button
           type="button"
           aria-label="Photograph a meal"
-          disabled={mealPhoto === 'reading'}
+          disabled={mealPhoto !== 'idle'}
           onClick={() => setShootingMeal(true)}
           className="flex h-10 w-10 items-center justify-center rounded-xl border border-line bg-card text-accent disabled:opacity-50"
         >
@@ -514,11 +524,7 @@ export default function AddFood() {
       {banner && (
         <p className="mx-4 mt-3 rounded-xl bg-over-soft px-3 py-2.5 text-sm text-over lg:mx-0">{banner}</p>
       )}
-      {mealPhoto === 'reading' && (
-        <p className="mx-4 mt-3 rounded-xl bg-accent-soft px-3 py-2.5 text-sm text-accent-deep lg:mx-0">
-          Looking at your photo…
-        </p>
-      )}
+      {mealPhoto !== 'idle' && <MealPhotoProgress stage={mealPhoto} />}
 
       <div className="mx-4 mt-3 grid grid-cols-6 rounded-xl bg-card p-1 text-center text-[11px] font-semibold lg:mx-0">
         {tabs.map((t) => (
