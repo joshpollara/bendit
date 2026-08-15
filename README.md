@@ -13,6 +13,27 @@ npm run dev                                     # UI on :5173 (proxies /api)
 npm test
 ```
 
+Meal photos require `GEMINI_API_KEY`. The visual parser and independent
+whole-meal check are pinned separately and can be overridden for paired model
+evaluation:
+
+```sh
+MEAL_PARSER_MODEL=gemini-3.5-flash-lite
+MEAL_HOLISTIC_MODEL=gemini-3.7-flash
+MEAL_PARSER_THINKING_LEVEL=MINIMAL
+MEAL_HOLISTIC_THINKING_LEVEL=LOW
+```
+
+Run weighed photos through the actual API path with an `expected.json` manifest:
+
+```sh
+BENDIT_PASSWORD=dev node server/tools/photocheck.mjs \
+  --expected server/photos/expected.json server/photos/*.jpg
+```
+
+The report includes calorie MAE, bias, P90 error, item recall, optional portion
+MAE, displayed-interval coverage, latency, and cost by model role.
+
 ## Deploy
 
 Merging to `main` deploys automatically (GitHub Actions → Fly.io). The workflow

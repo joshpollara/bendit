@@ -144,6 +144,67 @@ describe('POST /api/vision/extract', () => {
     expect(provider.extract).toHaveBeenCalledTimes(3); // the fourth never reached the model
   });
 
+  it('reserves quota before awaiting the provider, so concurrent calls cannot overshoot', async () => {
+    let finish;
+    const provider = {
+      ...okProvider(),
+      extract: vi.fn(
+        () =>
+          new Promise((resolve) => {
+            finish = () =>
+              resolve({
+                data: { basis: 'g', confidence: 'high' },
+                raw: '{}',
+                model: 'gemini-2.5-flash-lite',
+                latencyMs: 10,
+                usage: { inputTokens: 1, outputTokens: 1, totalTokens: 2 },
+              });
+          }),
+      ),
+    };
+    const handler = createVisionExtractHandler({ db, provider, dailyLimit: 1 });
+
+    const first = post(handler, { task: 'label', image });
+    const second = await post(handler, { task: 'label', image });
+
+    expect(second.statusCode).toBe(429);
+    expect(second.body.error.code).toBe('quota_exceeded');
+    expect(rows()).toHaveLength(1);
+    expect(rows()[0].status).toBe('pending');
+
+    finish();
+    await first;
+    expect(rows()[0].status).toBe('ok');
+  });
+
+  it('can pin a stronger provider to one task without changing the others', async () => {
+    const regular = okProvider();
+    const holistic = {
+      ...okProvider({ energyKcal: { low: 300, median: 400, high: 550 } }),
+      model: 'gemini-3.6-flash',
+    };
+    holistic.extract = vi.fn(async () => ({
+      data: { energyKcal: { low: 300, median: 400, high: 550 } },
+      raw: '{}',
+      model: holistic.model,
+      latencyMs: 20,
+      usage: { inputTokens: 2, outputTokens: 2, totalTokens: 4 },
+    }));
+    const handler = createVisionExtractHandler({
+      db,
+      provider: regular,
+      providers: { mealHolistic: holistic },
+    });
+
+    const res = await post(handler, { task: 'mealHolistic', image });
+
+    expect(res.statusCode).toBe(200);
+    expect(res.body.meta.model).toBe('gemini-3.6-flash');
+    expect(holistic.extract).toHaveBeenCalledOnce();
+    expect(regular.extract).not.toHaveBeenCalled();
+    expect(rows()[0].model).toBe('gemini-3.6-flash');
+  });
+
   it('counts failed calls against the ceiling', async () => {
     // A loop that fails every time is exactly the loop worth stopping.
     const provider = failingProvider(new VisionError('provider_error', 'upstream is down'));
@@ -174,7 +235,7 @@ describe('POST /api/vision/extract', () => {
 
   it('rejects an image that was never resized', async () => {
     const provider = okProvider();
-    const huge = 'A'.repeat(3 * 1024 * 1024);
+    const huge = 'A'.repeat(4 * 1024 * 1024);
     const res = await post(createVisionExtractHandler({ db, provider }), { task: 'label', image: huge });
     expect(res.statusCode).toBe(413);
     expect(provider.extract).not.toHaveBeenCalled();

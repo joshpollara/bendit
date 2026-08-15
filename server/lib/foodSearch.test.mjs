@@ -30,6 +30,7 @@ const FOODS = [
   ['usda-17', 'usda', 'Egg, whole, cooked, hard-boiled', null, 155],
   ['off-5', 'openfoodfacts', 'Texas Toast Garlic & Butter Flavored Croutons', null, 500],
   ['usda-18', 'usda', 'Butter, salted', null, 717],
+  ['nevo-1', 'nevo', 'Rice, white, cooked', null, 128],
   // A row with no nutrition: findable, but never the answer for an estimate.
   ['usda-11', 'usda', 'Chicken breast, unprepared', null, null],
 ];
@@ -113,7 +114,7 @@ describe('searchFoods — what a meal photo actually sends', () => {
 
   it('handles two-word foods where both words matter', () => {
     expect(top('brown rice')).toBe('Rice, brown, long-grain, cooked');
-    expect(top('white rice')).toBe('Rice, white, long-grain, regular, enriched, cooked');
+    expect(top('white rice')).toBe('Rice, white, cooked');
   });
 
   it('does not answer "chicken" with the skin off a chicken', () => {
@@ -207,6 +208,10 @@ describe('matchFood — the single answer the photo path commits to', () => {
     // out-ranks the reference row on bm25 alone. A photo that says "greek
     // yogurt" means the food, not somebody's tub of it.
     expect(matchFood(db, 'greek yogurt')?.source).toBe('usda');
+  });
+
+  it('prefers a Dutch NEVO record over an international generic fallback', () => {
+    expect(matchFood(db, 'white rice')?.source).toBe('nevo');
   });
 
   it('still falls back to a packaged product when nothing generic matches', () => {

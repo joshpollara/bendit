@@ -1,39 +1,110 @@
-// POST /api/meals/estimate — a photograph of a plate becomes a draft meal.
-//
-// The model reads the photo; the database supplies every number. Kept beside
-// the label route and built the same way, on top of the vision handler, so
-// quota, logging and typed errors are shared rather than reimplemented.
+// POST /api/meals/estimate - two independent model paths reconciled in code.
 
-import { estimateMeal } from './mealEstimate.mjs';
+import { estimateMeal, reconcileMealEstimates } from './mealEstimate.mjs';
+
+function proxyResponse() {
+  const captured = { statusCode: 200, body: null };
+  const res = {
+    status(code) {
+      captured.statusCode = code;
+      return res;
+    },
+    json(payload) {
+      captured.body = payload;
+      return res;
+    },
+  };
+  return { captured, res };
+}
+
+async function runVisionTask(visionHandler, req, task) {
+  const proxy = proxyResponse();
+  await visionHandler({ ...req, body: { ...req.body, task } }, proxy.res);
+  return proxy.captured;
+}
+
+const succeeded = (result) => result.statusCode === 200 && result.body?.data;
+
+function aggregateMeta(parser, holistic) {
+  const calls = [
+    succeeded(parser) ? { role: 'parser', ...parser.body.meta } : null,
+    succeeded(holistic) ? { role: 'holistic', ...holistic.body.meta } : null,
+  ].filter(Boolean);
+  const numeric = (pick, combine) => {
+    const values = calls.map(pick).filter((value) => typeof value === 'number');
+    return values.length ? combine(values) : null;
+  };
+  const sum = (values) => values.reduce((total, value) => total + value, 0);
+
+  return {
+    // Kept for clients built against the original one-model response.
+    model: calls[0]?.model ?? calls[1]?.model ?? 'unavailable',
+    promptVersion: calls.map((call) => `${call.role}:${call.promptVersion}`).join(','),
+    latencyMs: numeric((call) => call.latencyMs, (values) => Math.max(...values)),
+    usage: {
+      inputTokens: numeric((call) => call.usage?.inputTokens, sum),
+      outputTokens: numeric((call) => call.usage?.outputTokens, sum),
+      totalTokens: numeric((call) => call.usage?.totalTokens, sum),
+    },
+    callsRemainingToday: numeric(
+      (call) => call.callsRemainingToday,
+      (values) => Math.min(...values),
+    ),
+    models: Object.fromEntries(calls.map((call) => [call.role, call.model])),
+    calls: calls.map((call) => ({
+      role: call.role,
+      model: call.model,
+      promptVersion: call.promptVersion,
+      latencyMs: call.latencyMs,
+      usage: call.usage,
+    })),
+    partialFailures: [
+      !succeeded(parser) ? { role: 'parser', code: parser.body?.error?.code ?? 'unknown' } : null,
+      !succeeded(holistic)
+        ? { role: 'holistic', code: holistic.body?.error?.code ?? 'unknown' }
+        : null,
+    ].filter(Boolean),
+  };
+}
 
 export function createMealEstimateHandler({ db, visionHandler }) {
   return async function mealEstimateHandler(req, res) {
-    const captured = { statusCode: 200, body: null };
-    const proxyRes = {
-      status(code) {
-        captured.statusCode = code;
-        return proxyRes;
-      },
-      json(payload) {
-        captured.body = payload;
-        return proxyRes;
-      },
-    };
+    // The calls see the same image but no output from one another. The vision
+    // handler reserves quota before awaiting either provider, so this remains
+    // safe when the two requests start together.
+    const [parser, holistic] = await Promise.all([
+      runVisionTask(visionHandler, req, 'meal'),
+      runVisionTask(visionHandler, req, 'mealHolistic'),
+    ]);
 
-    await visionHandler({ ...req, body: { ...req.body, task: 'meal' } }, proxyRes);
-
-    if (captured.statusCode !== 200 || !captured.body?.data) {
-      return res.status(captured.statusCode).json(captured.body ?? { error: { code: 'unknown' } });
+    if (!succeeded(parser) && !succeeded(holistic)) {
+      const failure = parser.body?.error ? parser : holistic;
+      return res
+        .status(failure.statusCode)
+        .json(failure.body ?? { error: { code: 'unknown', message: 'The meal could not be read.' } });
     }
 
-    // An empty list is an answer, not a failure: the model looked and found
-    // nothing it could name. It comes back as a meal with no items rather than
-    // an error, because the alternative was a dead end — a banner, and a
-    // photograph that had already been paid for thrown away. Everything needed
-    // to rescue it is on the screen the estimate opens: the food search, and a
-    // box to type the calories into.
-    const items = Array.isArray(captured.body.data.items) ? captured.body.data.items : [];
+    const holisticData = succeeded(holistic) ? holistic.body.data : null;
+    const evidence = succeeded(parser)
+      ? parser.body.data
+      : { items: [], mealType: holisticData?.mealType ?? 'other', uncertainties: [] };
+    const databaseEstimate = estimateMeal(db, evidence, {
+      ownerId: req.userId,
+    });
+    const estimate = reconcileMealEstimates(databaseEstimate, holisticData, { evidence });
 
-    return res.json({ ...estimateMeal(db, items), meta: captured.body.meta });
+    if (!succeeded(parser)) {
+      estimate.uncertaintyReasons = [
+        'The item-by-item visual analysis was unavailable; this result uses the whole-meal fallback.',
+        ...(estimate.uncertaintyReasons ?? []),
+      ];
+    } else if (!succeeded(holistic)) {
+      estimate.uncertaintyReasons = [
+        ...(estimate.uncertaintyReasons ?? []),
+        'The independent whole-meal check was unavailable; the food-record estimate is shown.',
+      ];
+    }
+
+    return res.json({ ...estimate, meta: aggregateMeta(parser, holistic) });
   };
 }

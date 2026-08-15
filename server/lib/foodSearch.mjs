@@ -159,7 +159,7 @@ export function buildMatchPlan(query) {
 
 // Whole-food references beat crowd-sourced packaged data for a generic name
 // like "rice"; a barcode lookup would have gone down a different path entirely.
-const SOURCE_BONUS = { usda: 2.5, seed: 2, custom: 1, openfoodfacts: 0 };
+const SOURCE_BONUS = { nevo: 3, usda: 2.5, seed: 2, custom: 1, openfoodfacts: 0 };
 
 /**
  * Words that head a *derived or prepared* product rather than the ingredient.
@@ -330,7 +330,7 @@ export function searchFoodsTiered(db, query, { limit = 25, ...options } = {}) {
   const reference = searchFoods(db, query, {
     ...options,
     limit,
-    sources: ['usda', 'seed', 'custom'],
+    sources: ['nevo', 'usda', 'seed', 'custom'],
   }).filter((row) => row.coverage >= MIN_COVERAGE);
 
   if (reference.length === 0) return searchFoods(db, query, { ...options, limit });
@@ -352,7 +352,7 @@ export const MIN_COVERAGE = 0.75;
  * rice", never "Jumbo White Rice 1kg", and the reference tables are where a
  * generic name has an authoritative answer.
  */
-export const GENERIC_SOURCES = ['usda', 'seed'];
+export const GENERIC_SOURCES = ['nevo', 'usda', 'seed'];
 
 /**
  * The single best match, or null. Used by the meal-photo path, where a wrong

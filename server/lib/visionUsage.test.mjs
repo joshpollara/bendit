@@ -37,6 +37,12 @@ describe('costOf', () => {
     expect(costOf(call())).toBeCloseTo(0.0005, 6);
   });
 
+  it('prices the pinned holistic model at its own rate', () => {
+    expect(
+      costOf(call({ model: 'gemini-3.7-flash', inputTokens: 1_000_000, outputTokens: 1_000_000 })),
+    ).toBe(4.5);
+  });
+
   it('returns nothing for a model it has no rate for', () => {
     expect(costOf(call({ model: 'some-future-model' }))).toBeNull();
   });

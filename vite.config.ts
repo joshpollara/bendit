@@ -7,7 +7,7 @@ export default defineConfig({
   plugins: [react(), tailwindcss()],
   server: {
     proxy: {
-      '/api': 'http://localhost:8080',
+      '/api': process.env.BENDIT_API_ORIGIN ?? 'http://localhost:8080',
     },
   },
   test: {

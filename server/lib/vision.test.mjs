@@ -31,6 +31,7 @@ const provider = (fetchImpl, options = {}) =>
   createVisionProvider({
     apiKey: 'test-key',
     fetchImpl,
+    thinkingLevel: null,
     // No real waiting between retries.
     onRetryDelay: async () => {},
     ...options,
@@ -71,18 +72,25 @@ describe('vision provider', () => {
     expect(body.generationConfig).not.toHaveProperty('thinkingLevel');
   });
 
-  it('nests the thinking level where the provider expects it', async () => {
+  it('accepts a per-instance thinking level and nests it where the provider expects it', async () => {
     // Beside thinkingConfig rather than inside it, this is an unknown field:
     // the request either fails or the setting is ignored and billed at the
     // default. Neither announces itself.
-    process.env.VISION_THINKING_LEVEL = 'high';
-    vi.resetModules();
-    const { createVisionProvider: fresh } = await import(`./vision.mjs?level=high`);
     const fetchImpl = vi.fn(async () => geminiResponse({ calories: 1 }));
-    await fresh({ apiKey: 'k', fetchImpl, onRetryDelay: async () => {} }).extract(call);
-    delete process.env.VISION_THINKING_LEVEL;
+    await provider(fetchImpl, { thinkingLevel: 'high' }).extract(call);
     const body = JSON.parse(fetchImpl.mock.calls[0][1].body);
     expect(body.generationConfig.thinkingConfig).toEqual({ thinkingLevel: 'HIGH' });
+  });
+
+  it('pins the default model generation', () => {
+    const configuredModel = process.env.VISION_MODEL;
+    delete process.env.VISION_MODEL;
+    try {
+      expect(provider(vi.fn()).model).toBe('gemini-3.5-flash-lite');
+    } finally {
+      if (configuredModel === undefined) delete process.env.VISION_MODEL;
+      else process.env.VISION_MODEL = configuredModel;
+    }
   });
 
   it('leaves a call that reported no tokens as unknown, not as free', async () => {
@@ -110,6 +118,13 @@ describe('vision provider', () => {
     const body = JSON.parse(fetchImpl.mock.calls[0][1].body);
     expect(body.generationConfig.responseMimeType).toBe('application/json');
     expect(body.generationConfig.responseSchema.properties.calories.type).toBe('number');
+    expect(body.generationConfig).not.toHaveProperty('temperature');
+  });
+
+  it('sends temperature only when the provider instance explicitly requests it', async () => {
+    const fetchImpl = vi.fn(async () => geminiResponse({ calories: 1 }));
+    await provider(fetchImpl, { temperature: 0 }).extract(call);
+    const body = JSON.parse(fetchImpl.mock.calls[0][1].body);
     expect(body.generationConfig.temperature).toBe(0);
   });
 
@@ -226,8 +241,11 @@ describe('schema translation', () => {
   it('translates nested objects and arrays', () => {
     const translated = toGeminiSchema({
       type: 'array',
+      minItems: 1,
+      maxItems: 3,
       items: { type: 'object', properties: { name: { type: 'string', pattern: '.*' } } },
     });
+    expect(translated).toMatchObject({ minItems: 1, maxItems: 3 });
     expect(translated.items.properties.name).toEqual({ type: 'string' });
   });
 });
@@ -264,5 +282,55 @@ describe('tasks', () => {
     const translated = toGeminiSchema(TASKS.label.schema);
     expect(translated.properties.basis.enum).toEqual(['g', 'ml']);
     expect(translated.properties.per100.properties.calories.nullable).toBe(true);
+  });
+
+  it('uses structured visual evidence for meal parsing without nutrition fields', () => {
+    const meal = TASKS.meal;
+    const item = meal.schema.properties.items.items;
+
+    expect(meal.version).toBe('3');
+    expect(meal.schema.required).toEqual([
+      'captureQuality',
+      'mealType',
+      'scaleEvidence',
+      'items',
+      'uncertainties',
+    ]);
+    expect(meal.schema.properties.captureQuality.properties).toHaveProperty('needsRetake');
+    expect(meal.schema.properties.captureQuality.properties).toHaveProperty('retakeReason');
+    expect(meal.schema.properties.mealType.enum).toEqual(
+      expect.arrayContaining(['simple_plate', 'mixed_dish', 'packaged']),
+    );
+    expect(item.properties.identityCandidates.maxItems).toBe(3);
+    expect(item.properties.identityCandidates.minItems).toBe(1);
+    expect(item.properties.portionG.required).toEqual(['low', 'median', 'high']);
+    expect(item.properties.confidence.required).toEqual([
+      'identity',
+      'portion',
+      'preparation',
+    ]);
+    expect(
+      item.properties.hiddenIngredientRisks.items.properties.quantityG.required,
+    ).toEqual(['low', 'high']);
+    expect(JSON.stringify(meal.schema)).not.toMatch(/calorie|protein|carb|fat|kcal/i);
+    expect(meal.prompt).toMatch(/Never assume a standard plate/i);
+    expect(meal.prompt).toMatch(/do not silently/i);
+  });
+
+  it('defines a separate independent whole-meal estimate', () => {
+    const holistic = TASKS.mealHolistic;
+
+    expect(holistic.version).toBe('1');
+    expect(holistic.schema.properties.energyKcal.required).toEqual(['low', 'median', 'high']);
+    for (const macro of ['protein', 'carbs', 'fat', 'fiber']) {
+      expect(holistic.schema.properties.macrosG.properties[macro].required).toEqual([
+        'low',
+        'median',
+        'high',
+      ]);
+    }
+    expect(holistic.schema.properties).toHaveProperty('uncertaintyReasons');
+    expect(holistic.prompt).toMatch(/never see the application database result/i);
+    expect(holistic.prompt).toMatch(/hidden possibilities/i);
   });
 });

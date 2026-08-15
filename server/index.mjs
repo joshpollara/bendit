@@ -1580,12 +1580,28 @@ app.delete('/api/fasts/:id', (req, res) => {
 // tests. The key is read from the environment here and never leaves the server.
 
 const vision = createVisionProvider();
+// Meal analysis uses two deliberately separate roles. Exact model ids are
+// pinned so a provider alias cannot silently change accuracy between releases;
+// both remain overridable for paired local bakeoffs.
+const mealParserVision = createVisionProvider({
+  model: process.env.MEAL_PARSER_MODEL ?? process.env.VISION_MODEL ?? 'gemini-3.5-flash-lite',
+  thinkingLevel:
+    process.env.MEAL_PARSER_THINKING_LEVEL ?? process.env.VISION_THINKING_LEVEL ?? 'MINIMAL',
+});
+const mealHolisticVision = createVisionProvider({
+  model: process.env.MEAL_HOLISTIC_MODEL ?? 'gemini-3.7-flash',
+  thinkingLevel: process.env.MEAL_HOLISTIC_THINKING_LEVEL ?? 'LOW',
+});
 const bigJson = express.json({ limit: '4mb' });
 const visionDailyLimit = Number(process.env.VISION_DAILY_LIMIT ?? 100);
 
 const visionHandler = createVisionExtractHandler({
   db,
   provider: vision,
+  providers: {
+    meal: mealParserVision,
+    mealHolistic: mealHolisticVision,
+  },
   dailyLimit: visionDailyLimit,
 });
 
@@ -1610,8 +1626,9 @@ app.post('/api/labels/validate', express.json(), createLabelValidateHandler());
 
 // ——— meal photos ———
 //
-// The model names the foods and estimates the portions; every calorie comes
-// from the foods table, looked up by the same search the picker uses.
+// A cheap parser extracts visible evidence and portion ranges while a stronger,
+// independent call estimates the meal as a whole. Database arithmetic and the
+// reconciliation rules live in the route below.
 
 app.post('/api/meals/estimate', bigJson, createMealEstimateHandler({ db, visionHandler }));
 

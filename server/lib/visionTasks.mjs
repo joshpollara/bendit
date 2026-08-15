@@ -93,82 +93,299 @@ export const TASKS = {
  * models are good at, so that is the part they are asked for.
  */
 TASKS.meal = {
-  // 2: asks for a search term separately from the name, for the cooked state,
-  //    and for the scale reference before any weight is given.
-  version: '2',
+  version: '3',
   prompt: [
-    'You are looking at a photograph of a meal, to help someone log what they ate.',
+    'You are a visual meal evidence extractor for a nutrition application.',
+    'Locale is nl-NL. Use familiar Dutch user-facing terminology for name, while query',
+    'and alternate must be normalized plain English terms for the food database.',
+    'Report only what the photograph supports and make visual uncertainty explicit.',
     '',
-    'First, scale. Say what in the photograph tells you how big things are — a',
-    'dinner plate is about 26cm across, a fork about 19cm long, a can 66mm wide.',
-    'If there is nothing to judge against, say so; do not invent one.',
+    'Assess capture quality first. Request a retake only when blur, glare, darkness,',
+    'cropping, or occlusion makes the meal materially unreadable. fullMealVisible is',
+    'false when any eaten food or relevant container edge is outside the frame.',
     '',
-    'Then list each distinct food. For each one give:',
-    '  • name — what it is, as you would say it to someone: "grilled chicken',
-    '    breast", "shredded cheddar".',
-    '  • query — the same food as it would be catalogued, which is not always how',
-    '    it is said. Use the singular, plainest form of the food, and say whether',
-    '    it is cooked: "chicken breast, grilled", "rice, white, cooked", "cheddar',
-    '    cheese". Leave out brands, and leave out what shape it is in — sliced,',
-    '    shredded and grated cheddar are all cheddar. Cooked and raw are not:',
-    '    100g of dry pasta is two and a half times the calories of 100g cooked,',
-    '    so say which you are looking at.',
-    '  • alternate — a second, broader search term to fall back on, or null.',
-    '    "cheese" for a cheese you can only half identify.',
-    '  • grams — how much of it is there, as edible weight. Work from the scale',
-    '    you gave: judge the volume against something in the photograph, then',
-    '    the weight from what the food is. Do not weigh the bone, skin, rind or',
-    '    packaging.',
-    '  • confidence — "high" if both the food and the amount are clear, "medium"',
-    '    if the amount is a judgement call, "low" if you are unsure what it is.',
+    'Record scale evidence only when its real dimension is explicitly known from the',
+    'image. Never assume a standard plate, bowl, fork, hand, can, or package size.',
+    'If no exact reference is present, mark scale unavailable and widen portion ranges.',
     '',
-    'One food per item. A yoghurt with seeds on it is a yoghurt and some seeds,',
-    'listed separately, because they are looked up separately. Oil, butter and',
-    'dressing count: they are usually the largest thing nobody lists.',
+    'List each visually distinct food once. Use a stable id such as item_1. name is the',
+    'familiar user-facing Dutch term. query is its normalized English database term,',
+    'including cooked or raw state. alternate is one broader English fallback or null.',
+    'Give between one and three identity candidates; their probabilities must sum to 1.',
     '',
-    'Do not give calories, protein, carbohydrate, fat or any other nutrition',
-    'figure. They are looked up from the food, not taken from you.',
+    'Give edible served weight as low, median, and high grams. low must be no greater',
+    'than median, and median no greater than high. Judge identity, portion, and',
+    'preparation confidence separately from 0 to 1.',
     '',
-    'Ignore anything not eaten: the plate, cutlery, packaging, the table.',
-    'Combine what is genuinely one food — a scattering of peas is one item.',
-    'If the photo is not of food, return an empty list.',
+    'Oil, butter, sugar, cream, dressing, and concealed sauce cannot normally be seen.',
+    'If directly visible, list the food as an item. Otherwise record it only as a',
+    'hiddenIngredientRisk with a plausible quantity range and evidence; do not silently',
+    'include an unobserved ingredient as a visible fact. Do not split a mixed dish into',
+    'ingredients that cannot be distinguished in the photograph.',
+    '',
+    'Do not give calories, protein, carbohydrate, fat, or any nutrition value. Nutrition',
+    'comes from a food database after this extraction. If the image is not food, return',
+    'mealType "not_food" and an empty items list.',
   ].join('\n'),
-  // Field order is generation order, so this is also the order the model is
-  // made to think in: what it can measure against, then what the food is, and
-  // only then how much of it there is. A weight given before the food has been
-  // named is a guess dressed up as a measurement.
   schema: {
     type: 'object',
     properties: {
-      scale: {
+      captureQuality: {
+        type: 'object',
+        properties: {
+          blurProbability: { type: 'number', description: 'Probability from 0 to 1' },
+          glareProbability: { type: 'number', description: 'Probability from 0 to 1' },
+          occlusionProbability: { type: 'number', description: 'Probability from 0 to 1' },
+          underexposureProbability: { type: 'number', description: 'Probability from 0 to 1' },
+          fullMealVisible: { type: 'boolean' },
+          needsRetake: { type: 'boolean' },
+          retakeReason: { type: 'string', nullable: true },
+        },
+        required: [
+          'blurProbability',
+          'glareProbability',
+          'occlusionProbability',
+          'underexposureProbability',
+          'fullMealVisible',
+          'needsRetake',
+          'retakeReason',
+        ],
+      },
+      mealType: {
         type: 'string',
-        nullable: true,
-        description: 'What in the photo the sizes were judged against, or null if nothing was',
+        enum: ['simple_plate', 'mixed_dish', 'packaged', 'restaurant', 'drink', 'other', 'not_food'],
+      },
+      scaleEvidence: {
+        type: 'object',
+        properties: {
+          available: { type: 'boolean' },
+          source: {
+            type: 'string',
+            nullable: true,
+            description: 'Exact reference visible in the image; never an assumed standard size',
+          },
+          knownDimensionMm: {
+            type: 'number',
+            nullable: true,
+            description: 'Exact printed or supplied dimension, otherwise null',
+          },
+          confidence: { type: 'number', description: 'Confidence from 0 to 1' },
+        },
+        required: ['available', 'source', 'knownDimensionMm', 'confidence'],
       },
       items: {
         type: 'array',
-        description: 'Each distinct food on the plate',
+        description: 'Each visually distinct edible food',
         items: {
           type: 'object',
           properties: {
-            name: { type: 'string', description: 'The food, as someone would say it' },
+            id: { type: 'string', description: 'Stable id such as item_1' },
+            name: { type: 'string', description: 'Familiar Dutch user-facing food name' },
             query: {
               type: 'string',
-              description: 'The food as catalogued: singular, plain, no brand, cooked state stated',
+              description: 'Normalized English database term with raw or cooked state',
             },
             alternate: {
               type: 'string',
               nullable: true,
-              description: 'A broader search term to fall back on',
+              description: 'Broader normalized English fallback term',
             },
-            grams: { type: 'number', description: 'Estimated edible weight in grams' },
-            confidence: { type: 'string', enum: ['high', 'medium', 'low'] },
+            identityCandidates: {
+              type: 'array',
+              minItems: 1,
+              maxItems: 3,
+              items: {
+                type: 'object',
+                properties: {
+                  name: { type: 'string' },
+                  probability: { type: 'number', description: 'Probability from 0 to 1' },
+                  visualEvidence: { type: 'string' },
+                },
+                required: ['name', 'probability', 'visualEvidence'],
+              },
+            },
+            preparation: {
+              type: 'string',
+              enum: [
+                'raw',
+                'boiled',
+                'steamed',
+                'baked',
+                'fried',
+                'sauteed',
+                'grilled',
+                'roasted',
+                'mixed',
+                'unknown',
+              ],
+            },
+            portionG: {
+              type: 'object',
+              properties: {
+                low: { type: 'number' },
+                median: { type: 'number' },
+                high: { type: 'number' },
+              },
+              required: ['low', 'median', 'high'],
+            },
+            confidence: {
+              type: 'object',
+              properties: {
+                identity: { type: 'number', description: 'Confidence from 0 to 1' },
+                portion: { type: 'number', description: 'Confidence from 0 to 1' },
+                preparation: { type: 'number', description: 'Confidence from 0 to 1' },
+              },
+              required: ['identity', 'portion', 'preparation'],
+            },
+            hiddenIngredientRisks: {
+              type: 'array',
+              items: {
+                type: 'object',
+                properties: {
+                  ingredient: { type: 'string' },
+                  likelihood: { type: 'number', description: 'Likelihood from 0 to 1' },
+                  quantityG: {
+                    type: 'object',
+                    description: 'Possible hidden amount, not part of visible-item evidence',
+                    properties: {
+                      low: { type: 'number' },
+                      high: { type: 'number' },
+                    },
+                    required: ['low', 'high'],
+                  },
+                  evidence: { type: 'string' },
+                },
+                required: ['ingredient', 'likelihood', 'quantityG', 'evidence'],
+              },
+            },
+            uncertainties: { type: 'array', items: { type: 'string' } },
           },
-          required: ['name', 'query', 'grams', 'confidence'],
+          required: [
+            'id',
+            'name',
+            'query',
+            'alternate',
+            'identityCandidates',
+            'preparation',
+            'portionG',
+            'confidence',
+            'hiddenIngredientRisks',
+            'uncertainties',
+          ],
         },
       },
+      uncertainties: { type: 'array', items: { type: 'string' } },
     },
-    required: ['items'],
+    required: ['captureQuality', 'mealType', 'scaleEvidence', 'items', 'uncertainties'],
+  },
+};
+
+/**
+ * A deliberately independent whole-meal estimate. It is kept separate from
+ * the database path so disagreement is evidence for the reconciler rather
+ * than two nominally independent answers sharing the same anchor.
+ */
+TASKS.mealHolistic = {
+  version: '1',
+  prompt: [
+    'You independently estimate the nutrition of the complete meal in the photograph.',
+    'You never see the application database result or database-path estimate. Do not',
+    'invent one, refer to one, or try to agree with one.',
+    '',
+    'Return low, median, and high estimates for whole-meal energy and macros. low must',
+    'be no greater than median, and median no greater than high. Treat every image as',
+    'another view of the same meal, never as another serving.',
+    '',
+    'Distinguish visible facts from hidden possibilities. Oil, butter, sugar, cream,',
+    'dressing, absorbed frying fat, and concealed sauce are not visually observed unless',
+    'the image directly shows them. Put plausible invisible ingredients in',
+    'hiddenIngredientRisks with their likelihood and possible energy effect. Widen the',
+    'meal range for them and state the main uncertainty reasons instead of presenting',
+    'them as facts. Do not report model confidence as a calibrated probability.',
+    '',
+    'Return only the structured result. Keep the estimate independent and concise.',
+  ].join('\n'),
+  schema: {
+    type: 'object',
+    properties: {
+      mealType: {
+        type: 'string',
+        enum: ['simple_plate', 'mixed_dish', 'packaged', 'restaurant', 'drink', 'other'],
+      },
+      energyKcal: {
+        type: 'object',
+        properties: {
+          low: { type: 'number' },
+          median: { type: 'number' },
+          high: { type: 'number' },
+        },
+        required: ['low', 'median', 'high'],
+      },
+      macrosG: {
+        type: 'object',
+        properties: {
+          protein: {
+            type: 'object',
+            properties: {
+              low: { type: 'number' },
+              median: { type: 'number' },
+              high: { type: 'number' },
+            },
+            required: ['low', 'median', 'high'],
+          },
+          carbs: {
+            type: 'object',
+            properties: {
+              low: { type: 'number' },
+              median: { type: 'number' },
+              high: { type: 'number' },
+            },
+            required: ['low', 'median', 'high'],
+          },
+          fat: {
+            type: 'object',
+            properties: {
+              low: { type: 'number' },
+              median: { type: 'number' },
+              high: { type: 'number' },
+            },
+            required: ['low', 'median', 'high'],
+          },
+          fiber: {
+            type: 'object',
+            properties: {
+              low: { type: 'number' },
+              median: { type: 'number' },
+              high: { type: 'number' },
+            },
+            required: ['low', 'median', 'high'],
+          },
+        },
+        required: ['protein', 'carbs', 'fat', 'fiber'],
+      },
+      hiddenIngredientRisks: {
+        type: 'array',
+        items: {
+          type: 'object',
+          properties: {
+            ingredient: { type: 'string' },
+            likelihood: { type: 'number', description: 'Likelihood from 0 to 1' },
+            energyKcalEffect: {
+              type: 'object',
+              properties: {
+                low: { type: 'number' },
+                high: { type: 'number' },
+              },
+              required: ['low', 'high'],
+            },
+            reason: { type: 'string' },
+          },
+          required: ['ingredient', 'likelihood', 'energyKcalEffect', 'reason'],
+        },
+      },
+      uncertaintyReasons: { type: 'array', items: { type: 'string' } },
+    },
+    required: ['mealType', 'energyKcal', 'macrosG', 'hiddenIngredientRisks', 'uncertaintyReasons'],
   },
 };
 

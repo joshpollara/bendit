@@ -1,6 +1,8 @@
 import { describe, expect, it } from 'vitest';
 import {
+  applyMealQuestionChoice,
   itemFromFood,
+  replaceItemFood,
   rescaleItem,
   setCalories,
   totalsFor,
@@ -167,6 +169,66 @@ describe('itemFromFood', () => {
 
   it('expresses the amount in servings, which is what the log counts', () => {
     expect(itemFromFood(rice, 79).servings).toBe(0.5);
+  });
+});
+
+describe('replaceItemFood', () => {
+  it('reprices the original portion range instead of treating an identity correction as weighed', () => {
+    const original = estimated({
+      id: 'item_1',
+      portionG: { low: 150, median: 210, high: 280 },
+    });
+
+    const replaced = replaceItemFood(original, rice);
+
+    expect(replaced.food?.id).toBe(rice.id);
+    expect(replaced.id).toBe('item_1');
+    expect(replaced.portionG).toEqual({ low: 150, median: 210, high: 280 });
+    expect(replaced.range).toEqual({ low: 195, high: 364 });
+    expect(replaced.error).toBe(0.25);
+  });
+});
+
+describe('applyMealQuestionChoice', () => {
+  it('applies only the selected item and keeps a narrow approximate range', () => {
+    const items = [
+      estimated({ id: 'rice', portionG: { low: 120, median: 210, high: 320 } }),
+      estimated({ id: 'other', grams: 100 }),
+    ];
+    const answered = applyMealQuestionChoice(
+      items,
+      {
+        id: 'portion:rice',
+        targetItemId: 'rice',
+        question: 'Which amount is closest?',
+        expectedReductionKcal: 200,
+        choices: [{ id: 'small', label: 'Small (150 g)', grams: 150 }],
+      },
+      'small',
+    );
+
+    expect(answered[0].grams).toBe(150);
+    expect(answered[0].nutrition?.calories).toBe(195);
+    expect(answered[0].range).toEqual({ low: 176, high: 215 });
+    expect(answered[0].error).toBe(0.1);
+    expect(answered[1]).toEqual(items[1]);
+  });
+
+  it('does nothing for an unknown answer', () => {
+    const items = [estimated({ id: 'rice' })];
+    expect(
+      applyMealQuestionChoice(
+        items,
+        {
+          id: 'portion:rice',
+          targetItemId: 'rice',
+          question: 'Which amount is closest?',
+          expectedReductionKcal: 200,
+          choices: [],
+        },
+        'missing',
+      ),
+    ).toBe(items);
   });
 });
 
