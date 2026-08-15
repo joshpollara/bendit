@@ -11,12 +11,13 @@
 
 /** What a caller gets when a call fails, rather than an exception of unknown shape. */
 export class VisionError extends Error {
-  constructor(code, message, { status = null, retryable = false } = {}) {
+  constructor(code, message, { status = null, retryable = false, retryAfterMs = null } = {}) {
     super(message);
     this.name = 'VisionError';
     this.code = code;
     this.status = status;
     this.retryable = retryable;
+    this.retryAfterMs = retryAfterMs;
   }
 }
 
@@ -48,14 +49,43 @@ const isRetryable = (status) => status === 429 || (status >= 500 && status < 600
 
 const backoffMs = (attempt) => 400 * 2 ** (attempt - 1);
 
-/** The human-readable part of an error body, if it has one. */
-function parseProviderMessage(text) {
-  if (!text) return '';
-  try {
-    return String(JSON.parse(text)?.error?.message ?? '').slice(0, 200);
-  } catch {
-    return text.slice(0, 200);
+function durationMs(value) {
+  if (value && typeof value === 'object') {
+    const seconds = Number(value.seconds ?? 0);
+    const nanos = Number(value.nanos ?? 0);
+    return Number.isFinite(seconds) && Number.isFinite(nanos)
+      ? Math.max(0, seconds * 1_000 + nanos / 1_000_000)
+      : null;
   }
+  const match = String(value ?? '').trim().match(/^(\d+(?:\.\d+)?)s$/);
+  return match ? Number(match[1]) * 1_000 : null;
+}
+
+function retryAfterHeaderMs(value) {
+  const text = String(value ?? '').trim();
+  if (!text) return null;
+  if (/^\d+(?:\.\d+)?$/.test(text)) return Number(text) * 1_000;
+  const at = Date.parse(text);
+  return Number.isFinite(at) ? Math.max(0, at - Date.now()) : null;
+}
+
+/** The useful, non-secret parts of a provider failure. */
+function parseProviderFailure(text, response) {
+  let body = null;
+  try {
+    body = JSON.parse(text);
+  } catch {
+    // Plain-text failures still carry a useful message below.
+  }
+  const message = String(body?.error?.message ?? text ?? '').slice(0, 300);
+  const retryInfo = Array.isArray(body?.error?.details)
+    ? body.error.details.find((detail) => String(detail?.['@type'] ?? '').endsWith('RetryInfo'))
+    : null;
+  const delays = [
+    durationMs(retryInfo?.retryDelay),
+    retryAfterHeaderMs(response?.headers?.get?.('retry-after')),
+  ].filter((value) => value != null);
+  return { message, retryAfterMs: delays.length ? Math.max(...delays) : null };
 }
 
 const sleep = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
@@ -122,6 +152,7 @@ export function createVisionProvider({
   deadlineMs = DEADLINE_MS,
   maxAttempts = MAX_ATTEMPTS,
   onRetryDelay = sleep,
+  random = Math.random,
 } = {}) {
   const configured = Boolean(apiKey);
   // It goes inside thinkingConfig, not beside it. Sent only when configured:
@@ -169,11 +200,15 @@ export function createVisionProvider({
         // it a retired model reads as an unexplained 404, which is three round
         // trips of guessing instead of one line of text.
         const detail = await response.text().catch(() => '');
-        const reason = parseProviderMessage(detail);
+        const failure = parseProviderFailure(detail, response);
         throw new VisionError(
           response.status === 429 ? 'rate_limited' : 'provider_error',
-          `Vision provider returned ${response.status}${reason ? `: ${reason}` : ''}`,
-          { status: response.status, retryable: isRetryable(response.status) },
+          `Vision provider returned ${response.status}${failure.message ? `: ${failure.message}` : ''}`,
+          {
+            status: response.status,
+            retryable: isRetryable(response.status),
+            retryAfterMs: failure.retryAfterMs,
+          },
         );
       }
       return await response.json();
@@ -238,8 +273,15 @@ export function createVisionProvider({
           };
         } catch (error) {
           lastError = error;
-          const delay = backoffMs(attempt);
           if (!error.retryable || attempt === maxAttempts) throw error;
+          // A bare 429 is often a daily or spend limit. Three retries within a
+          // second only multiply the failure. Retry it only when the provider
+          // says how long to wait; add jitter so parallel roles do not wake up
+          // on the same millisecond.
+          if (error.code === 'rate_limited' && error.retryAfterMs == null) throw error;
+          const instructed = error.retryAfterMs ?? 0;
+          const jitter = error.code === 'rate_limited' ? Math.floor(random() * 250) : 0;
+          const delay = Math.max(backoffMs(attempt), instructed) + jitter;
           // A retry that can't finish before the deadline is a wait with no
           // answer at the end of it, and it is billed like any other call.
           if (timeLeft() - delay <= 0) throw error;

@@ -168,9 +168,24 @@ export function createVisionExtractHandler({ db, provider, providers = {}, daily
     } catch (error) {
       record.errorCode = error?.code ?? 'unknown';
       record.status = 'error';
+      // Failed provider responses contain the distinction we need in order to
+      // diagnose RPM versus daily/spend quota. Keep only bounded error metadata,
+      // never the image or request body.
+      record.responseJson = JSON.stringify({
+        error: {
+          code: record.errorCode,
+          status: error?.status ?? null,
+          message: String(error?.message ?? 'The photo could not be read.').slice(0, 500),
+          retryAfterMs: error?.retryAfterMs ?? null,
+        },
+      });
       finishRequest.run(record);
       const code = error?.code in HTTP_STATUS ? error.code : 'provider_error';
-      return fail(code, error?.message ?? 'The photo could not be read.');
+      return fail(code, error?.message ?? 'The photo could not be read.', {
+        ...(error?.retryAfterMs == null
+          ? {}
+          : { retryAfterSeconds: Math.ceil(error.retryAfterMs / 1_000) }),
+      });
     }
   };
 }

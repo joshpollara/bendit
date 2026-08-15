@@ -68,7 +68,7 @@ export function visionErrorMessage(code: VisionErrorCode): string {
     case 'quota_exceeded':
       return "That's today's limit on photo reads.";
     case 'rate_limited':
-      return 'Too many photos at once — wait a moment and try again.';
+      return 'Photo analysis is at capacity right now. Try again later.';
     case 'timeout':
       return 'Reading the photo took too long. Try again.';
     case 'image_too_large':

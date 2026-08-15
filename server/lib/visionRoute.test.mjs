@@ -118,6 +118,33 @@ describe('POST /api/vision/extract', () => {
     expect(res.statusCode).toBe(504);
     expect(res.body.error.code).toBe('timeout');
     expect(rows()[0]).toMatchObject({ status: 'error', errorCode: 'timeout' });
+    expect(JSON.parse(rows()[0].responseJson)).toEqual({
+      error: {
+        code: 'timeout',
+        status: null,
+        message: 'took too long',
+        retryAfterMs: null,
+      },
+    });
+  });
+
+  it('returns and records the provider retry delay for a rate limit', async () => {
+    const provider = failingProvider(
+      new VisionError('rate_limited', 'model requests exhausted', {
+        status: 429,
+        retryable: true,
+        retryAfterMs: 12_500,
+      }),
+    );
+    const res = await post(createVisionExtractHandler({ db, provider }), { task: 'label', image });
+
+    expect(res.statusCode).toBe(429);
+    expect(res.body.error).toMatchObject({ code: 'rate_limited', retryAfterSeconds: 13 });
+    expect(JSON.parse(rows()[0].responseJson).error).toMatchObject({
+      status: 429,
+      message: 'model requests exhausted',
+      retryAfterMs: 12_500,
+    });
   });
 
   it('refuses a task it does not define', async () => {

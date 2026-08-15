@@ -276,6 +276,7 @@ export default function AddFood() {
   const [shootingMeal, setShootingMeal] = useState(false);
   const [estimate, setEstimate] = useState<MealEstimate | null>(null);
   const mealPhotoInput = useRef<HTMLInputElement>(null);
+  const mealReadInFlight = useRef(false);
   const [banner, setBanner] = useState<string | null>(null);
   const [pendingBarcode, setPendingBarcode] = useState<string | undefined>();
   const [offResults, setOffResults] = useState<Food[]>([]);
@@ -347,6 +348,11 @@ export default function AddFood() {
   }
 
   async function readMealPhoto(file: Blob) {
+    // Camera confirmation and file-picker events can arrive before React has
+    // painted the disabled state. One photograph must still become one meal
+    // request, even after a rapid double tap.
+    if (mealReadInFlight.current) return;
+    mealReadInFlight.current = true;
     setShootingMeal(false);
     setMealPhoto('reading');
     setBanner(null);
@@ -355,6 +361,7 @@ export default function AddFood() {
     } catch (e) {
       setBanner(e instanceof Error ? e.message : "Couldn't read that photo.");
     } finally {
+      mealReadInFlight.current = false;
       setMealPhoto('idle');
     }
   }

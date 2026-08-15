@@ -119,6 +119,9 @@ beforeAll(async () => {
       SQLITE_PATH: dbPath,
       GEMINI_API_KEY: 'test-key',
       VISION_ENDPOINT: `http://127.0.0.1:${stubPort}/models`,
+      // The generic provider can be overridden without silently moving either
+      // pinned meal role onto that model.
+      VISION_MODEL: 'gemini-3.1-flash-lite',
       VISION_DAILY_LIMIT: '4',
     },
     stdio: ['ignore', 'pipe', 'pipe'],

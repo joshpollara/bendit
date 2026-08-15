@@ -1584,7 +1584,10 @@ const vision = createVisionProvider();
 // pinned so a provider alias cannot silently change accuracy between releases;
 // both remain overridable for paired local bakeoffs.
 const mealParserVision = createVisionProvider({
-  model: process.env.MEAL_PARSER_MODEL ?? process.env.VISION_MODEL ?? 'gemini-3.5-flash-lite',
+  // VISION_MODEL belongs to the general label/recipe provider. Letting that
+  // legacy setting leak into this role can put both meal calls on the same
+  // model and exhaust one model's quota with a single burst.
+  model: process.env.MEAL_PARSER_MODEL ?? 'gemini-3.5-flash-lite',
   thinkingLevel:
     process.env.MEAL_PARSER_THINKING_LEVEL ?? process.env.VISION_THINKING_LEVEL ?? 'MINIMAL',
 });

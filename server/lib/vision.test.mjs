@@ -21,10 +21,11 @@ const geminiResponse = (payload, usage = {}) => ({
   }),
 });
 
-const errorResponse = (status) => ({
+const errorResponse = (status, { retryAfter = null, body = null } = {}) => ({
   ok: false,
   status,
-  text: async () => `error ${status}`,
+  headers: { get: (name) => (name.toLowerCase() === 'retry-after' ? retryAfter : null) },
+  text: async () => body ?? `error ${status}`,
 });
 
 const provider = (fetchImpl, options = {}) =>
@@ -128,15 +129,49 @@ describe('vision provider', () => {
     expect(body.generationConfig.temperature).toBe(0);
   });
 
-  it('retries a rate limit and succeeds', async () => {
+  it('retries a rate limit when the provider says how long to wait', async () => {
     let attempts = 0;
     const fetchImpl = vi.fn(async () => {
       attempts++;
-      return attempts < 3 ? errorResponse(429) : geminiResponse({ calories: 99 });
+      return attempts < 3
+        ? errorResponse(429, { retryAfter: '1' })
+        : geminiResponse({ calories: 99 });
     });
-    const result = await provider(fetchImpl).extract(call);
+    const onRetryDelay = vi.fn(async () => {});
+    const result = await provider(fetchImpl, { onRetryDelay, random: () => 0 }).extract(call);
     expect(result.data.calories).toBe(99);
     expect(attempts).toBe(3);
+    expect(onRetryDelay).toHaveBeenNthCalledWith(1, 1000);
+    expect(onRetryDelay).toHaveBeenNthCalledWith(2, 1000);
+  });
+
+  it('does not amplify a rate limit that gives no retry timing', async () => {
+    const fetchImpl = vi.fn(async () => errorResponse(429));
+    await expect(provider(fetchImpl).extract(call)).rejects.toMatchObject({
+      code: 'rate_limited',
+      retryAfterMs: null,
+    });
+    expect(fetchImpl).toHaveBeenCalledOnce();
+  });
+
+  it('reads Gemini RetryInfo as well as the HTTP header', async () => {
+    const fetchImpl = vi.fn(async () =>
+      errorResponse(429, {
+        body: JSON.stringify({
+          error: {
+            message: 'Quota exceeded for this model.',
+            details: [
+              { '@type': 'type.googleapis.com/google.rpc.RetryInfo', retryDelay: '12.5s' },
+            ],
+          },
+        }),
+      }),
+    );
+    await expect(provider(fetchImpl, { maxAttempts: 1 }).extract(call)).rejects.toMatchObject({
+      code: 'rate_limited',
+      retryAfterMs: 12_500,
+      message: expect.stringMatching(/Quota exceeded/),
+    });
   });
 
   it('gives up after the last attempt rather than retrying forever', async () => {
