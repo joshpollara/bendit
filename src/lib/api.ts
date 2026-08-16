@@ -19,6 +19,24 @@ export interface JoinedEntry extends FoodLogEntry {
   food?: Food;
 }
 
+/** A server refusal with enough structure for the screen to offer the right recovery. */
+export class ApiError extends Error {
+  code: string | null;
+  status: number;
+  retryAfterSeconds: number | null;
+
+  constructor(
+    message: string,
+    { code = null, status, retryAfterSeconds = null }: { code?: string | null; status: number; retryAfterSeconds?: number | null },
+  ) {
+    super(message);
+    this.name = 'ApiError';
+    this.code = code;
+    this.status = status;
+    this.retryAfterSeconds = retryAfterSeconds;
+  }
+}
+
 /** A quick add you've typed before, offered back with whatever it recorded. */
 export interface QuickAddSuggestion {
   label: string;
@@ -141,6 +159,9 @@ export interface RecipeDraft {
     carbs: number | null;
     fat: number | null;
   } | null;
+  /** Whether AI could verify that a photographed source contained the whole recipe. */
+  sourceComplete?: boolean;
+  sourceWarnings?: string[];
   /** 'page' when AI was unavailable and the site's own recipe data was used. */
   readBy?: 'page' | 'model';
   total: { grams: number | null; calories: number | null };
@@ -316,13 +337,55 @@ async function j<T>(path: string, init?: RequestInit): Promise<T> {
   if (!res.ok) {
     // Server errors carry a human-readable message; fall back to the status.
     const body = await res.json().catch(() => null);
-    throw new Error(body?.error ?? `${res.status} ${res.statusText}`);
+    const problem = body?.error;
+    if (problem && typeof problem === 'object') {
+      throw new ApiError(
+        typeof problem.message === 'string'
+          ? problem.message
+          : `${res.status} ${res.statusText}`,
+        {
+          code: typeof problem.code === 'string' ? problem.code : null,
+          status: res.status,
+          retryAfterSeconds:
+            typeof problem.retryAfterSeconds === 'number' ? problem.retryAfterSeconds : null,
+        },
+      );
+    }
+    throw new ApiError(
+      typeof problem === 'string' ? problem : `${res.status} ${res.statusText}`,
+      { status: res.status },
+    );
   }
   return res.json() as Promise<T>;
 }
 
 const post = (path: string, body: unknown, method = 'POST') =>
   j<unknown>(path, { method, body: JSON.stringify(body) });
+
+// The server allows a long recipe read and one complete provider retry. Keep a
+// slightly larger browser deadline so a suspended connection cannot spin
+// forever, without cutting off a response the server is still producing.
+const RECIPE_PHOTO_DEADLINE_MS = 75_000;
+
+async function recipeFromPhoto(image: string): Promise<RecipeDraft> {
+  const controller = new AbortController();
+  const timer = setTimeout(() => controller.abort(), RECIPE_PHOTO_DEADLINE_MS);
+  try {
+    return await j<RecipeDraft>('/api/recipes/from-photo', {
+      method: 'POST',
+      body: JSON.stringify({ image, mimeType: 'image/jpeg' }),
+      signal: controller.signal,
+    });
+  } catch (error) {
+    if (error instanceof ApiError) throw error;
+    if (error instanceof Error && (error.name === 'AbortError' || error.name === 'TimeoutError')) {
+      throw new ApiError('AI took too long to read that photo.', { code: 'timeout', status: 504 });
+    }
+    throw error;
+  } finally {
+    clearTimeout(timer);
+  }
+}
 
 export const api = {
   session: () =>
@@ -385,8 +448,7 @@ export const api = {
   recipes: () => j<Recipe[]>('/api/recipes'),
   recipe: (id: string) => j<Recipe>(`/api/recipes/${id}`),
   recipeFromUrl: (url: string) => post('/api/recipes/from-url', { url }) as Promise<RecipeDraft>,
-  recipeFromPhoto: (image: string) =>
-    post('/api/recipes/from-photo', { image, mimeType: 'image/jpeg' }) as Promise<RecipeDraft>,
+  recipeFromPhoto,
   priceRecipe: (ingredients: RecipeIngredientInput[], servings: number) =>
     post('/api/recipes/price', { ingredients, servings }) as Promise<RecipeDraft>,
   saveRecipe: (recipe: RecipeInput, id?: string) =>

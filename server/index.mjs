@@ -1613,6 +1613,19 @@ app.delete('/api/fasts/:id', (req, res) => {
 // tests. The key is read from the environment here and never leaves the server.
 
 const vision = createVisionProvider();
+// A photographed cookbook page asks for much more output than a label read.
+// Give it enough room for one full retry on a faster fallback model: the
+// general provider's 30-second whole-call budget can leave a retry only a few
+// seconds after a slow 503.
+const recipeVision = createVisionProvider({
+  model: process.env.RECIPE_MODEL ?? process.env.VISION_MODEL,
+  fallbackModel: process.env.RECIPE_FALLBACK_MODEL ?? 'gemini-3.5-flash-lite',
+  thinkingLevel:
+    process.env.RECIPE_THINKING_LEVEL ?? process.env.VISION_THINKING_LEVEL ?? 'LOW',
+  timeoutMs: Number(process.env.RECIPE_VISION_TIMEOUT_MS ?? 30_000),
+  deadlineMs: Number(process.env.RECIPE_VISION_DEADLINE_MS ?? 65_000),
+  maxAttempts: Number(process.env.RECIPE_VISION_MAX_ATTEMPTS ?? 2),
+});
 // Meal analysis uses two deliberately separate roles. Exact model ids are
 // pinned so a provider alias cannot silently change accuracy between releases;
 // both remain overridable for paired local bakeoffs.
@@ -1635,6 +1648,7 @@ const visionHandler = createVisionExtractHandler({
   db,
   provider: vision,
   providers: {
+    recipePhoto: recipeVision,
     meal: mealParserVision,
     mealHolistic: mealHolisticVision,
   },

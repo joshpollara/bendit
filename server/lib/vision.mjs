@@ -145,6 +145,7 @@ export function toGeminiSchema(schema) {
 export function createVisionProvider({
   apiKey = process.env.GEMINI_API_KEY,
   model = process.env.VISION_MODEL ?? DEFAULT_MODEL,
+  fallbackModel,
   thinkingLevel = process.env.VISION_THINKING_LEVEL,
   temperature,
   fetchImpl = globalThis.fetch,
@@ -159,11 +160,11 @@ export function createVisionProvider({
   // models that do not support thinking reject the entire request for it.
   const normalizedThinkingLevel = String(thinkingLevel ?? '').trim().toUpperCase();
 
-  async function callOnce({ imageBase64, mimeType, prompt, schema, text, attemptMs }) {
+  async function callOnce({ imageBase64, mimeType, prompt, schema, text, attemptMs, attemptModel }) {
     const controller = new AbortController();
     const timer = setTimeout(() => controller.abort(), attemptMs);
     try {
-      const response = await fetchImpl(`${ENDPOINT}/${model}:generateContent`, {
+      const response = await fetchImpl(`${ENDPOINT}/${attemptModel}:generateContent`, {
         method: 'POST',
         headers: { 'content-type': 'application/json', 'x-goog-api-key': apiKey },
         signal: controller.signal,
@@ -201,8 +202,19 @@ export function createVisionProvider({
         // trips of guessing instead of one line of text.
         const detail = await response.text().catch(() => '');
         const failure = parseProviderFailure(detail, response);
+        // Gemini sometimes reports its own execution deadline as a 5xx. That
+        // is still a timeout from the caller's point of view: it is retryable,
+        // and the UI can tell the person that reading took too long instead of
+        // presenting an unexplained provider failure.
+        const providerTimedOut =
+          response.status >= 500 &&
+          /\b(?:deadline (?:expired|exceeded)|timed out|timeout)\b/i.test(failure.message);
         throw new VisionError(
-          response.status === 429 ? 'rate_limited' : 'provider_error',
+          response.status === 429
+            ? 'rate_limited'
+            : providerTimedOut
+              ? 'timeout'
+              : 'provider_error',
           `Vision provider returned ${response.status}${failure.message ? `: ${failure.message}` : ''}`,
           {
             status: response.status,
@@ -250,9 +262,22 @@ export function createVisionProvider({
         // the full timeout again is how one slow read becomes a minute of
         // waiting for an answer that was never coming.
         const attemptMs = Math.min(timeoutMs, timeLeft());
+        // A task may nominate a faster fallback for its retry. Recipe photos
+        // are long structured reads: if the stronger model hits its own
+        // deadline, repeating the exact call is less useful than trying the
+        // already-supported flash-lite model with the remaining budget.
+        const attemptModel = attempt > 1 && fallbackModel ? fallbackModel : model;
         try {
           const started = Date.now();
-          const body = await callOnce({ imageBase64, mimeType, prompt, schema, text, attemptMs });
+          const body = await callOnce({
+            imageBase64,
+            mimeType,
+            prompt,
+            schema,
+            text,
+            attemptMs,
+            attemptModel,
+          });
           const answer = body?.candidates?.[0]?.content?.parts?.[0]?.text;
           if (typeof answer !== 'string') {
             // A response with no text part is a refusal or a safety block.
@@ -267,11 +292,12 @@ export function createVisionProvider({
           return {
             data: parsed,
             raw: answer,
-            model,
+            model: attemptModel,
             latencyMs: Date.now() - started,
             usage: usageOf(body?.usageMetadata),
           };
         } catch (error) {
+          if (error && typeof error === 'object' && !error.model) error.model = attemptModel;
           lastError = error;
           if (!error.retryable || attempt === maxAttempts) throw error;
           // A bare 429 is often a daily or spend limit. Three retries within a
