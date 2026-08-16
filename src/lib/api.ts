@@ -126,7 +126,7 @@ export interface RecipeDraft {
   notes?: string | null;
   sourceType?: 'url' | 'photo' | 'manual';
   sourceUrl?: string | null;
-  /** 'page' when the site published its own data and no model was needed. */
+  /** 'page' when AI was unavailable and the site's own recipe data was used. */
   readBy?: 'page' | 'model';
   total: { grams: number | null; calories: number | null };
   perServing: { grams: number | null; calories: number | null; protein: number | null; carbs: number | null; fat: number | null };
