@@ -399,14 +399,20 @@ TASKS.mealHolistic = {
  * database as they do everywhere else.
  */
 TASKS.recipe = {
-  version: '1',
+  version: '2',
   prompt: [
-    'You are reading a recipe, either from a photograph of a page or from the text of a web page.',
+    'You are producing the complete import payload for a recipe, from either a photographed page',
+    'or a URL and the content fetched from it.',
     '',
     'Return:',
     '  • name — what the recipe is called.',
     '  • ingredients — every ingredient line, exactly as written, in order. Keep the',
     '    quantities and units as printed: "1½ cups plain flour", not "flour".',
+    '  • ingredientMatchNames — one plain food-search name for each ingredient line, in the',
+    '    same order. Strip preparation, packaging and brands but keep the actual food:',
+    '    "2 x 400g tins chopped tomatoes" becomes "canned chopped tomatoes". Use an',
+    '    empty string when a line is not a food or you are unsure. Never use a nutrition',
+    '    value or invent an ingredient. These names will be matched against the local food database.',
     '  • instructions — the method, one step per line, or null if there is none.',
     '  • servings — how many portions it makes, if the recipe says so.',
     '  • servingsStated — true only if the recipe actually says. If it does not,',
@@ -415,7 +421,10 @@ TASKS.recipe = {
     '',
     'Do not give calories or any other nutrition figure. Those are looked up from the',
     'ingredients, not taken from you.',
-    'Ignore anything that is not the recipe: adverts, comments, the writer’s holiday.',
+    'Use both the published recipe data and the page text when present. They can disagree or be',
+    'incomplete: return the fullest coherent ingredient list, without duplicate lines or section',
+    'headings. Do not silently omit an ingredient because it looks optional. Ignore anything that',
+    'is not the recipe: adverts, comments, the writer’s holiday.',
   ].join('\n'),
   schema: {
     type: 'object',
@@ -426,12 +435,17 @@ TASKS.recipe = {
         description: 'Ingredient lines, as written',
         items: { type: 'string' },
       },
+      ingredientMatchNames: {
+        type: 'array',
+        description: 'Plain food-search name for each ingredient, in the same order',
+        items: { type: 'string' },
+      },
       instructions: { type: 'string', nullable: true },
       servings: { type: 'number', nullable: true, description: 'Portions the recipe makes' },
       servingsStated: { type: 'boolean', description: 'True only if the recipe says so itself' },
       servingsReasoning: { type: 'string', nullable: true },
     },
-    required: ['name', 'ingredients', 'servingsStated'],
+    required: ['name', 'ingredients', 'ingredientMatchNames', 'servingsStated'],
   },
 };
 

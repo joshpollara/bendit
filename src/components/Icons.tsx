@@ -161,6 +161,14 @@ export const ChipIcon = (p: IconProps) => (
   </Svg>
 );
 
+/** A small sparkle, used for AI-assisted actions. */
+export const SparkleIcon = (p: IconProps) => (
+  <Svg {...p}>
+    <path d="M12 3l1.35 5.65L19 10l-5.65 1.35L12 17l-1.35-5.65L5 10l5.65-1.35L12 3z" />
+    <path d="M19 16l.65 2.35L22 19l-2.35.65L19 22l-.65-2.35L16 19l2.35-.65L19 16z" />
+  </Svg>
+);
+
 export const CheckIcon = (p: IconProps) => (
   <Svg {...p}>
     <path d="M4 12.5l5 5L20 6.5" />

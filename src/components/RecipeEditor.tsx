@@ -1,6 +1,7 @@
 import { useEffect, useState } from 'react';
 import { api, type RecipeDraft } from '../lib/api';
 import { formatCalories } from '../lib/units';
+import { SparkleIcon } from './Icons';
 
 // Checking a recipe before it becomes a food.
 //
@@ -88,6 +89,16 @@ export default function RecipeEditor({
 
       <input className={field} placeholder="Recipe name" value={name} onChange={(e) => setName(e.target.value)} />
 
+      {initial.sourceType === 'url' && (
+        <div className="flex items-start gap-2 rounded-xl bg-surface px-3 py-2.5 text-xs text-ink-secondary">
+          <SparkleIcon className="mt-0.5 h-4 w-4 shrink-0 text-accent" />
+          <p>
+            {initial.readBy === 'model' ? 'AI extracted this from the page.' : 'Imported from the recipe page.'}{' '}
+            Check the details below before saving.
+          </p>
+        </div>
+      )}
+
       <label className="flex items-center gap-3 text-sm text-ink-secondary">
         Makes
         <input
@@ -162,6 +173,14 @@ export default function RecipeEditor({
           )}
         </div>
       </div>
+
+      {priced.unresolved.length > 0 && (
+        <p className="rounded-xl bg-warn-soft px-3 py-2 text-xs text-warn-deep">
+          {priced.unresolved.length === 1
+            ? 'One ingredient still needs a food match. Edit its wording above to make the estimate complete.'
+            : `${priced.unresolved.length} ingredients still need food matches. Edit their wording above to make the estimate complete.`}
+        </p>
+      )}
 
       <label className="flex flex-col gap-1 text-sm text-ink-secondary">
         Method

@@ -1,6 +1,6 @@
 import Database from 'better-sqlite3';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
-import { createRecipeFromUrlHandler } from './recipeRoute.mjs';
+import { createRecipeFromPhotoHandler, createRecipeFromUrlHandler } from './recipeRoute.mjs';
 import { createVisionExtractHandler } from './visionRoute.mjs';
 
 // The real vision route is wired up here rather than a stand-in for it: a page
@@ -13,6 +13,7 @@ import { createVisionExtractHandler } from './visionRoute.mjs';
 const READ = {
   name: 'Pancakes',
   ingredients: ['200 g plain flour', '2 eggs'],
+  ingredientMatchNames: ['plain flour', 'egg'],
   servings: 4,
   servingsStated: true,
 };
@@ -86,13 +87,25 @@ async function call(handler) {
   return res;
 }
 
+async function callPhoto(handler) {
+  const res = { statusCode: 200, body: null };
+  res.status = (code) => ((res.statusCode = code), res);
+  res.json = (payload) => ((res.body = payload), res);
+  await handler({ body: { image: 'a photo' }, userId: 'u1' }, res);
+  return res;
+}
+
 describe('POST /api/recipes/from-url', () => {
-  it('reads a page that publishes its own recipe without calling the model', async () => {
+  it('has AI check a page that publishes its own recipe', async () => {
     const res = await call(fromUrl(withJsonLd));
     expect(res.statusCode).toBe(200);
-    expect(res.body.name).toBe('Published pancakes');
-    expect(res.body.readBy).toBe('page');
-    expect(provider.extract).not.toHaveBeenCalled();
+    expect(res.body.name).toBe('Pancakes');
+    expect(res.body.readBy).toBe('model');
+    expect(provider.extract).toHaveBeenCalledOnce();
+    const sent = provider.extract.mock.calls[0][0];
+    expect(sent.text).toContain('Source URL: https://example.com/pancakes');
+    expect(sent.text).toContain('Published pancakes');
+    expect(sent.text).toContain('200 g plain flour');
   });
 
   it('hands the text of a page that publishes none to the model', async () => {
@@ -108,6 +121,19 @@ describe('POST /api/recipes/from-url', () => {
     const sent = provider.extract.mock.calls[0][0];
     expect(sent.text).toContain('200 g plain flour');
     expect(sent.imageBase64).toBeFalsy();
+  });
+
+  it('uses AI when a page publishes only a teaser recipe', async () => {
+    const teaser = `<script type="application/ld+json">${JSON.stringify({
+      '@type': 'Recipe',
+      name: 'Recipe',
+      recipeIngredient: ['See the full recipe below'],
+    })}</script>${withoutJsonLd}`;
+    const res = await call(fromUrl(teaser));
+
+    expect(res.statusCode).toBe(200);
+    expect(res.body.readBy).toBe('model');
+    expect(provider.extract).toHaveBeenCalledOnce();
   });
 
   it('logs the call, so a text read counts like any other', async () => {
@@ -136,5 +162,22 @@ describe('POST /api/recipes/from-url', () => {
     const res = await call(fromUrl(withoutJsonLd));
     expect(res.statusCode).toBe(422);
     expect(res.body.error.code).toBe('no_recipe_found');
+  });
+});
+
+describe('POST /api/recipes/from-photo', () => {
+  it('uses the same AI import payload and food matching as a URL', async () => {
+    const handler = createRecipeFromPhotoHandler({
+      db,
+      visionHandler: createVisionExtractHandler({ db, provider }),
+    });
+    const res = await callPhoto(handler);
+
+    expect(res.statusCode).toBe(200);
+    expect(res.body.readBy).toBe('model');
+    expect(res.body.ingredients[0].raw).toBe('200 g plain flour');
+    expect(res.body.ingredients[0].food?.id).toBe('usda-flour');
+    expect(provider.extract.mock.calls[0][0].imageBase64).toBe('a photo');
+    expect(provider.extract.mock.calls[0][0].prompt).toContain('complete import payload');
   });
 });

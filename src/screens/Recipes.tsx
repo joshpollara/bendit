@@ -3,7 +3,7 @@ import { api, type Recipe, type RecipeDraft } from '../lib/api';
 import { useData } from '../lib/useData';
 import { resizeForModel } from '../lib/vision';
 import { formatCalories } from '../lib/units';
-import { CameraIcon, TrashIcon } from '../components/Icons';
+import { CameraIcon, ChipIcon, SparkleIcon, TrashIcon } from '../components/Icons';
 import RecipeEditor from '../components/RecipeEditor';
 
 const CameraCapture = lazy(() => import('../components/CameraCapture'));
@@ -36,6 +36,15 @@ export default function Recipes() {
       setError(e instanceof Error ? e.message : "Couldn't read that page.");
     } finally {
       setBusy(null);
+    }
+  }
+
+  async function pasteUrl() {
+    try {
+      const pasted = await navigator.clipboard.readText();
+      if (pasted.trim()) setUrl(pasted.trim());
+    } catch {
+      // Clipboard access is optional; the input remains the reliable path.
     }
   }
 
@@ -118,27 +127,72 @@ export default function Recipes() {
     <div className="mx-auto flex w-full max-w-3xl flex-col gap-3 px-4 py-4">
       <h1 className="text-xl font-semibold">Recipes</h1>
 
-      <section className={card}>
-        <div className="flex gap-2">
-          <input
-            className="flex-1 rounded-xl border border-line bg-card px-3 py-2.5 text-sm"
-            placeholder="Paste a recipe link"
-            inputMode="url"
-            value={url}
-            onChange={(e) => setUrl(e.target.value)}
-            onKeyDown={(e) => e.key === 'Enter' && void fromUrl()}
-          />
-          <button
-            type="button"
-            disabled={!url.trim() || busy !== null}
-            onClick={() => void fromUrl()}
-            className="rounded-xl bg-accent px-4 py-2.5 text-sm font-semibold text-white disabled:opacity-40"
-          >
-            {busy === 'url' ? 'Reading…' : 'Read'}
-          </button>
+      <section className="overflow-hidden rounded-2xl border border-accent/30 bg-card shadow-sm">
+        <div className="flex items-start gap-3 border-b border-line bg-surface/60 px-4 py-4">
+          <span className="rounded-xl bg-accent p-2 text-white">
+            <SparkleIcon className="h-5 w-5" />
+          </span>
+          <div>
+            <h2 className="font-semibold">Import a recipe with AI</h2>
+            <p className="mt-0.5 text-sm text-ink-secondary">
+              Paste a link and we’ll pull out the ingredients, method, and servings for you to check.
+            </p>
+          </div>
         </div>
 
-        <div className="mt-2 flex gap-2">
+        <form
+          className="p-4"
+          onSubmit={(e) => {
+            e.preventDefault();
+            void fromUrl();
+          }}
+        >
+          <label className="text-xs font-medium text-ink-secondary" htmlFor="recipe-url">
+            Recipe link
+          </label>
+          <div className="mt-1.5 flex gap-2">
+            <input
+              id="recipe-url"
+              className="min-w-0 flex-1 rounded-xl border border-line bg-card px-3 py-2.5 text-sm"
+              placeholder="https://…"
+              inputMode="url"
+              autoComplete="url"
+              value={url}
+              onChange={(e) => setUrl(e.target.value)}
+            />
+            {!url && typeof navigator.clipboard?.readText === 'function' && (
+              <button
+                type="button"
+                onClick={() => void pasteUrl()}
+                className="rounded-xl border border-line px-3 text-sm font-semibold text-ink-secondary hover:bg-surface"
+              >
+                Paste
+              </button>
+            )}
+            <button
+              type="submit"
+              disabled={!url.trim() || busy !== null}
+              className="flex shrink-0 items-center gap-1.5 rounded-xl bg-accent px-4 py-2.5 text-sm font-semibold text-white disabled:opacity-40"
+            >
+              <SparkleIcon className="h-4 w-4" />
+              {busy === 'url' ? 'Importing…' : 'Import'}
+            </button>
+          </div>
+
+          {busy === 'url' ? (
+            <p className="mt-3 flex items-center gap-2 text-sm text-ink-secondary" role="status">
+              <span className="h-2 w-2 animate-pulse rounded-full bg-accent" />
+              Reading the page and organizing the recipe…
+            </p>
+          ) : (
+            <p className="mt-3 flex items-center gap-1.5 text-xs text-ink-muted">
+              <ChipIcon className="h-3.5 w-3.5" />
+              AI checks the page and maps each ingredient to the food database.
+            </p>
+          )}
+        </form>
+
+        <div className="flex gap-2 border-t border-line px-4 py-3">
           <button
             type="button"
             disabled={busy !== null}
@@ -169,9 +223,7 @@ export default function Recipes() {
           }}
         />
 
-        {error && (
-          <p className="mt-2 rounded-xl bg-over-soft px-3 py-2 text-xs text-over">{error}</p>
-        )}
+        {error && <p className="mx-4 mb-4 rounded-xl bg-over-soft px-3 py-2 text-xs text-over">{error}</p>}
       </section>
 
       {recipes?.length === 0 && (

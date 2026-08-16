@@ -10,20 +10,33 @@
 
 import { buildRecipe } from './recipe.mjs';
 import { fetchPage, pageText, recipeFromJsonLd } from './recipeImport.mjs';
+import { parseIngredients } from './recipeParse.mjs';
 import { deleteRecipe, listRecipes, readRecipe, saveRecipe } from './recipeStore.mjs';
 import { getTask } from './visionTasks.mjs';
 
 /** A read recipe, priced against the food database, ready to correct and save. */
-const asDraft = (db, read, ownerId) => ({
-  ...read,
-  ...buildRecipe(db, { ingredients: read.ingredients, servings: read.servings ?? 1, ownerId }),
-  // buildRecipe defaults an unknown yield to one serving; say which it was.
-  servingsStated: Boolean(read.servingsStated),
-});
+const asDraft = (db, read, ownerId) => {
+  const parsed = parseIngredients(read.ingredients);
+  // The model returns a food-search phrase for each line. The original line
+  // stays intact for the editor; only the lookup name is made less brittle
+  // ("a bunch of spring onions" → "spring onion", for example).
+  const matchNames = Array.isArray(read.ingredientMatchNames) ? read.ingredientMatchNames : [];
+  const ingredients = parsed.map((ingredient, index) => ({
+    ...ingredient,
+    name: String(matchNames[index] ?? '').trim() || ingredient.name,
+  }));
+  return {
+    ...read,
+    ...buildRecipe(db, { ingredients, servings: read.servings ?? 1, ownerId }),
+    // buildRecipe defaults an unknown yield to one serving; say which it was.
+    servingsStated: Boolean(read.servingsStated),
+  };
+};
 
 /**
- * POST /api/recipes/from-url — schema.org first, the model only for pages that
- * publish none.
+ * POST /api/recipes/from-url — give AI both the recipe data a page publishes
+ * and its readable text, so it can recover omitted ingredients and produce
+ * reliable food-search names. Published data remains a safe fallback.
  *
  * `fetch` is injectable so the fallback can be tested: reaching the model needs
  * a page that publishes no JSON-LD, and no such page can be fetched from a test
@@ -40,16 +53,23 @@ export function createRecipeFromUrlHandler({ db, visionHandler, fetch = fetchPag
     }
 
     const declared = recipeFromJsonLd(html);
-    if (declared) {
-      return res.json({
-        ...asDraft(db, declared, req.userId),
-        sourceType: 'url',
-        sourceUrl: url,
-        readBy: 'page', // no model was needed, and no call was made
-      });
-    }
-
-    // Nothing structured: hand the page's text to the model.
+    // Give the model the JSON-LD too. It is often more complete than visible
+    // page text, while the latter catches sites that hide recipe lines in bad
+    // or incomplete structured data.
+    const structuredText = [
+      `Source URL: ${url}`,
+      declared
+        ? [
+            'Recipe data published by the page:',
+            `Name: ${declared.name}`,
+            `Servings: ${declared.servings ?? 'not stated'}`,
+            'Ingredients:',
+            ...declared.ingredients,
+            declared.instructions ? `Method:\n${declared.instructions}` : '',
+          ].filter(Boolean).join('\n')
+        : '',
+      'Visible page text:',
+    ].filter(Boolean).join('\n\n');
     const captured = { statusCode: 200, body: null };
     const proxyRes = {
       status(code) {
@@ -61,9 +81,19 @@ export function createRecipeFromUrlHandler({ db, visionHandler, fetch = fetchPag
         return proxyRes;
       },
     };
-    await visionHandler({ ...req, body: { task: 'recipe', text: pageText(html) } }, proxyRes);
+    await visionHandler({ ...req, body: { task: 'recipe', text: `${structuredText}\n${pageText(html)}`.trim() } }, proxyRes);
 
     if (captured.statusCode !== 200 || !captured.body?.data) {
+      // A URL import should still work on a server without AI configured when
+      // the recipe author supplied complete data of their own.
+      if (declared) {
+        return res.json({
+          ...asDraft(db, declared, req.userId),
+          sourceType: 'url',
+          sourceUrl: url,
+          readBy: 'page',
+        });
+      }
       return res.status(captured.statusCode).json(captured.body ?? { error: { code: 'unknown' } });
     }
     const read = captured.body.data;
