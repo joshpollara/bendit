@@ -12,6 +12,16 @@ const FOODS = [
   ['usda-beef', 'Beef, ground, 85% lean meat, raw', 215, 18.6, 0, 15, []],
   ['usda-tomato', 'Tomatoes, red, ripe, canned', 32, 1.6, 7.3, 0.3, []],
   ['usda-flour', 'Wheat flour, white, all-purpose, enriched', 364, 10.3, 76.3, 1, [['1 cup (125g)', 125]]],
+  ['usda-macaroni', 'Macaroni, dry, enriched', 371, 13, 75, 1.5, []],
+  ['usda-butter', 'Butter, salted', 717, 0.9, 0.1, 81, [['1 tablespoon (14g)', 14]]],
+  ['usda-milk', 'Milk, nonfat, fluid', 34, 3.4, 5, 0.1, [['1 cup (245g)', 245]]],
+  ['usda-broth', 'Chicken broth', 10, 1.2, 0.4, 0.2, [['1 cup (244g)', 244]]],
+  ['usda-cheddar', 'Cheese, cheddar, reduced fat', 300, 24, 4, 18, [['1 oz (28g)', 28]]],
+  // The closest name has no useful cup portion; the next candidate does.
+  ['usda-baby-spinach', 'Spinach, baby', 20, 2.8, 3.5, 0.4, []],
+  ['usda-spinach', 'Spinach, raw', 23, 2.9, 3.6, 0.4, [['1 cup (30g)', 30]]],
+  ['usda-parmesan', 'Cheese, parmesan, grated', 431, 38, 4, 29, [['1 tablespoon (5g)', 5]]],
+  ['usda-breadcrumbs', 'Bread crumbs, whole wheat, seasoned', 395, 13, 72, 5, [['0.25 cup (27g)', 27]]],
 ];
 
 let db;
@@ -130,6 +140,62 @@ describe('buildRecipe', () => {
   it('takes already-parsed ingredients as readily as lines', () => {
     const parsed = BOLOGNESE.map((line) => parseIngredient(line));
     expect(buildRecipe(db, { ingredients: parsed, servings: 4 }).total.calories).toBe(1504);
+  });
+
+  it('keeps AI names and exact matches through repricing', () => {
+    const imported = [
+      ['12 ounces elbow macaroni (wheat, whole wheat, high protein or gluten-free)', 'dry macaroni'],
+      ['2 tablespoons butter', 'butter'],
+      ['1/4 cup flour (or gluten-free flour mix)', 'wheat flour'],
+      ['1/4 cup minced onion', 'onion'],
+      ['2 cups skim milk (use rice milk for dairy-free)', 'nonfat milk'],
+      ['1 cup chicken or vegetable broth', 'chicken broth'],
+      ['8 ounces reduced-fat cheddar (for best results shred yourself)', 'reduced fat cheddar'],
+      ['kosher salt (and black pepper, to taste)', 'kosher salt'],
+      ['4 cups baby spinach', 'baby spinach'],
+      ['2 tablespoons grated Parmesan', 'parmesan'],
+      ['1/4 cup seasoned whole wheat bread crumbs', 'whole wheat seasoned bread crumbs'],
+      ['olive oil spray', 'olive oil cooking spray'],
+    ].map(([raw, matchName]) => ({ raw, matchName }));
+
+    const first = buildRecipe(db, { ingredients: imported, servings: 8 });
+    expect(first.ingredients).toHaveLength(12);
+    expect(first.unmatched).toEqual([]);
+    expect(first.unweighable).toEqual([]);
+    expect(first.amountMissing).toEqual([
+      'kosher salt (and black pepper, to taste)',
+      'olive oil spray',
+    ]);
+    expect(first.complete).toBe(true);
+    expect(first.ingredients.find((i) => i.raw === '4 cups baby spinach')).toMatchObject({
+      grams: 120,
+      food: { id: 'usda-spinach' },
+    });
+    expect(first.ingredients.find((i) => i.raw.includes('broth'))?.food?.name).toBe('Chicken broth');
+
+    // This is the editor's mount-time price request and subsequent save shape:
+    // the server-selected food IDs must make the result stable rather than
+    // reparsing the long raw prose and losing seven foods.
+    const persisted = first.ingredients.map((item) => ({
+      raw: item.raw,
+      matchName: item.name,
+      foodId: item.food?.id ?? null,
+    }));
+    const repriced = buildRecipe(db, { ingredients: persisted, servings: 8 });
+    expect(repriced.ingredients.map((i) => i.food?.id ?? null)).toEqual(
+      first.ingredients.map((i) => i.food?.id ?? null),
+    );
+    expect(repriced.total.calories).toBe(first.total.calories);
+  });
+
+  it('marks a partial total when a measured ingredient is unresolved', () => {
+    const recipe = buildRecipe(db, {
+      ingredients: ['500 g beef mince', '2 tbsp gochujang', 'Salt to taste'],
+      servings: 2,
+    });
+    expect(recipe.complete).toBe(false);
+    expect(recipe.unmatched).toEqual(['2 tbsp gochujang']);
+    expect(recipe.amountMissing).toEqual(['Salt to taste']);
   });
 });
 

@@ -20,7 +20,10 @@ const asDraft = (db, read, ownerId) => {
   // The model returns a food-search phrase for each line. The original line
   // stays intact for the editor; only the lookup name is made less brittle
   // ("a bunch of spring onions" → "spring onion", for example).
-  const matchNames = Array.isArray(read.ingredientMatchNames) ? read.ingredientMatchNames : [];
+  const matchNames =
+    Array.isArray(read.ingredientMatchNames) && read.ingredientMatchNames.length === parsed.length
+      ? read.ingredientMatchNames
+      : [];
   const ingredients = parsed.map((ingredient, index) => ({
     ...ingredient,
     name: String(matchNames[index] ?? '').trim() || ingredient.name,
@@ -104,6 +107,7 @@ export function createRecipeFromUrlHandler({ db, visionHandler, fetch = fetchPag
     }
     return res.json({
       ...asDraft(db, read, req.userId),
+      sourceNutrition: declared?.sourceNutrition ?? null,
       sourceType: 'url',
       sourceUrl: url,
       readBy: 'model',

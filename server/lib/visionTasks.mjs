@@ -399,7 +399,7 @@ TASKS.mealHolistic = {
  * database as they do everywhere else.
  */
 TASKS.recipe = {
-  version: '2',
+  version: '3',
   prompt: [
     'You are producing the complete import payload for a recipe, from either a photographed page',
     'or a URL and the content fetched from it.',
@@ -409,7 +409,12 @@ TASKS.recipe = {
     '  • ingredients — every ingredient line, exactly as written, in order. Keep the',
     '    quantities and units as printed: "1½ cups plain flour", not "flour".',
     '  • ingredientMatchNames — one plain food-search name for each ingredient line, in the',
-    '    same order. Strip preparation, packaging and brands but keep the actual food:',
+    '    same order. Strip decorative preparation, packaging and brands but keep the actual food.',
+    '    Preserve nutritional state such as dry vs cooked, skim vs whole, and reduced-fat vs regular.',
+    '    Infer that state from the method when it is explicit (for example, pasta that the method says',
+    '    to cook should be named "dry pasta" for lookup). Prefer a broad database food concept over',
+    '    a decorative shape or variety: "elbow macaroni" becomes "dry pasta", "plain flour" becomes',
+    '    "all-purpose flour", and "whole wheat bread crumbs" becomes "breadcrumbs". Example:',
     '    "2 x 400g tins chopped tomatoes" becomes "canned chopped tomatoes". Use an',
     '    empty string when a line is not a food or you are unsure. Never use a nutrition',
     '    value or invent an ingredient. These names will be matched against the local food database.',

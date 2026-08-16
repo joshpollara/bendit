@@ -135,6 +135,7 @@ export function parseIngredient(line) {
   // A parenthesised weight is the precise version of the same amount:
   // "1 (400g) tin chopped tomatoes", "2 tablespoons (30 ml) olive oil".
   let parenthesised = null;
+  const parentheticalNotes = [];
   working = working.replace(/\(([^)]*)\)/g, (whole, inside) => {
     const measure = /^\s*(\d+(?:[.,]\d+)?)\s*(g|gr|gram|grams|kg|ml|l|oz|lb)\b/i.exec(inside);
     if (measure && !parenthesised) {
@@ -144,7 +145,11 @@ export function parseIngredient(line) {
       };
       return ' ';
     }
-    return ` ${inside} `; // keep other parentheticals as words
+    // Alternatives and serving instructions are useful to the cook but poison
+    // a food lookup: "flour (or gluten-free mix)" is still flour, and "skim
+    // milk (use rice milk for dairy-free)" must not become an eight-word food.
+    parentheticalNotes.push(inside.trim());
+    return ' ';
   });
 
   let { unit, rest } = readUnit(working.trim());
@@ -189,7 +194,7 @@ export function parseIngredient(line) {
     parenthesised ? parenthesised.unit : unit,
     size,
     rest,
-    notes.join(', ') || null,
+    [...parentheticalNotes, ...notes].filter(Boolean).join(', ') || null,
   );
 }
 

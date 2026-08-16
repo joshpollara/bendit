@@ -106,8 +106,15 @@ describe('parenthesised weights', () => {
     expect(parse('2 tablespoons (30 ml) olive oil')).toMatchObject({ quantity: 30, unit: 'ml' });
   });
 
-  it('leaves a parenthetical that is not a measure in the name', () => {
-    expect(parse('1 cup (packed) brown sugar').name).toMatch(/brown sugar/);
+  it('keeps non-measure parentheticals as notes, not food-search terms', () => {
+    expect(parse('1 cup (packed) brown sugar')).toMatchObject({
+      name: 'brown sugar',
+      note: 'packed',
+    });
+    expect(parse('2 cups skim milk (use rice milk for dairy-free)')).toMatchObject({
+      name: 'skim milk',
+      note: 'use rice milk for dairy-free',
+    });
   });
 });
 

@@ -104,11 +104,19 @@ export interface RecipeIngredient {
   nutrition?: { calories: number; protein: number | null; carbs: number | null; fat: number | null } | null;
 }
 
+export interface RecipeIngredientInput {
+  raw: string;
+  /** AI-normalized lookup name; kept only while this exact raw line is unchanged. */
+  matchName?: string | null;
+  /** A server-selected match that should survive repricing and saving. */
+  foodId?: string | null;
+}
+
 export interface RecipeInput {
   name: string;
   servings: number;
   servingsStated?: boolean;
-  ingredients: string[];
+  ingredients: RecipeIngredientInput[];
   instructions?: string | null;
   notes?: string | null;
   sourceType?: 'url' | 'photo' | 'manual';
@@ -126,11 +134,22 @@ export interface RecipeDraft {
   notes?: string | null;
   sourceType?: 'url' | 'photo' | 'manual';
   sourceUrl?: string | null;
+  /** Nutrition declared by the recipe publisher, used only as a sanity check. */
+  sourceNutrition?: {
+    calories: number | null;
+    protein: number | null;
+    carbs: number | null;
+    fat: number | null;
+  } | null;
   /** 'page' when AI was unavailable and the site's own recipe data was used. */
   readBy?: 'page' | 'model';
   total: { grams: number | null; calories: number | null };
   perServing: { grams: number | null; calories: number | null; protein: number | null; carbs: number | null; fat: number | null };
   unresolved: string[];
+  unmatched?: string[];
+  unweighable?: string[];
+  amountMissing?: string[];
+  complete?: boolean;
   approximate: string[];
 }
 
@@ -368,7 +387,7 @@ export const api = {
   recipeFromUrl: (url: string) => post('/api/recipes/from-url', { url }) as Promise<RecipeDraft>,
   recipeFromPhoto: (image: string) =>
     post('/api/recipes/from-photo', { image, mimeType: 'image/jpeg' }) as Promise<RecipeDraft>,
-  priceRecipe: (ingredients: string[], servings: number) =>
+  priceRecipe: (ingredients: RecipeIngredientInput[], servings: number) =>
     post('/api/recipes/price', { ingredients, servings }) as Promise<RecipeDraft>,
   saveRecipe: (recipe: RecipeInput, id?: string) =>
     (id ? post(`/api/recipes/${id}`, recipe, 'PUT') : post('/api/recipes', recipe)) as Promise<Recipe>,

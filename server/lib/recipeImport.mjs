@@ -157,12 +157,21 @@ export function recipeFromJsonLd(html) {
   if (ingredients.length === 0) return null;
 
   const servings = readYield(node.recipeYield);
+  const nutrition = node.nutrition && typeof node.nutrition === 'object'
+    ? {
+        calories: readYield(node.nutrition.calories),
+        protein: readYield(node.nutrition.proteinContent),
+        carbs: readYield(node.nutrition.carbohydrateContent),
+        fat: readYield(node.nutrition.fatContent),
+      }
+    : null;
   return {
     name: decodeEntities(node.name ?? '').trim() || 'Recipe',
     ingredients,
     instructions: asLines(node.recipeInstructions ?? []).join('\n') || null,
     servings,
     servingsStated: servings != null,
+    sourceNutrition: nutrition?.calories != null ? nutrition : null,
     source: 'json-ld',
   };
 }
