@@ -34,6 +34,30 @@ import {
 // serving. Two decimals is as much as anyone reads.
 const round2 = (n: number) => Math.round(n * 100) / 100;
 
+function entryMacroTotal(
+  entry: JoinedEntry,
+  macro: "protein" | "carbs" | "fat",
+) {
+  const cached = entry[`${macro}Cached`];
+  if (cached != null) return cached;
+  if (!entry.food) return 0;
+  return (entry.food[macro] ?? 0) * entry.servings;
+}
+
+function mealMacros(entries: JoinedEntry[]) {
+  return {
+    protein: Math.round(
+      entries.reduce((sum, entry) => sum + entryMacroTotal(entry, "protein"), 0),
+    ),
+    carbs: Math.round(
+      entries.reduce((sum, entry) => sum + entryMacroTotal(entry, "carbs"), 0),
+    ),
+    fat: Math.round(
+      entries.reduce((sum, entry) => sum + entryMacroTotal(entry, "fat"), 0),
+    ),
+  };
+}
+
 function DateNav() {
   const { date, setDate } = useUI();
   return (
@@ -219,18 +243,7 @@ function MacroRow({
   entries: JoinedEntry[];
   proteinTargetG?: number | null;
 }) {
-  const total = (
-    get: (f: NonNullable<JoinedEntry["food"]>) => number | undefined,
-    typed: (e: JoinedEntry) => number | null | undefined,
-  ) =>
-    entries.reduce((sum, e) => {
-      if (e.food) return sum + (get(e.food) ?? 0) * e.servings;
-      return sum + (typed(e) ?? 0);
-    }, 0);
-
-  const protein = Math.round(total((f) => f.protein, (e) => e.proteinCached));
-  const carbs = Math.round(total((f) => f.carbs, (e) => e.carbsCached));
-  const fat = Math.round(total((f) => f.fat, (e) => e.fatCached));
+  const { protein, carbs, fat } = mealMacros(entries);
   if (protein + carbs + fat === 0) return null;
 
   const target = proteinTargetG ?? 0;
@@ -282,6 +295,7 @@ function MealSection({
   const [editing, setEditing] = useState<JoinedEntry | null>(null);
   const bump = useUI((s) => s.bump);
   const subtotal = entries.reduce((sum, e) => sum + e.caloriesCached, 0);
+  const macros = mealMacros(entries);
 
   async function saveAsMeal() {
     const name = window.prompt("Save this meal as:", MEAL_LABELS[meal]);
@@ -304,6 +318,10 @@ function MealSection({
             servings: e.servings,
             caloriesCached: e.caloriesCached,
             label: e.label,
+            proteinCached: e.proteinCached,
+            carbsCached: e.carbsCached,
+            fatCached: e.fatCached,
+            estimated: e.estimated,
           }),
         ),
     );
@@ -352,6 +370,11 @@ function MealSection({
 
       {open && (
         <div className="border-t border-line">
+          {entries.length > 0 && (
+            <div className="border-b border-line px-4 py-2 text-xs text-ink-muted">
+              P {macros.protein} g · C {macros.carbs} g · F {macros.fat} g
+            </div>
+          )}
           {entries.length === 0 ? (
             <div className="flex items-center justify-between gap-2 px-4 py-3">
               <p className="text-sm text-ink-muted">{STRINGS.emptyMeal}</p>
@@ -399,6 +422,17 @@ function MealSection({
                           ? `${e.estimated ? "≈" : ""}${round2(e.servings)} × ${e.food.servingLabel}${e.food.brand ? ` · ${e.food.brand}` : ""}`
                           : "Calories only"}
                     </p>
+                    {(() => {
+                      const protein = Math.round(entryMacroTotal(e, "protein"));
+                      const carbs = Math.round(entryMacroTotal(e, "carbs"));
+                      const fat = Math.round(entryMacroTotal(e, "fat"));
+                      if (protein + carbs + fat === 0) return null;
+                      return (
+                        <p className="truncate text-xs text-ink-muted">
+                          P {protein} g · C {carbs} g · F {fat} g
+                        </p>
+                      );
+                    })()}
                   </button>
                   <span className="text-sm font-medium tabular-nums">
                     {formatCalories(e.caloriesCached)}
