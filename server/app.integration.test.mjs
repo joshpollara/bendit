@@ -62,6 +62,7 @@ let stub;
 let base;
 let dbPath;
 let modelCalls = 0;
+let mealEstimate;
 
 const freePort = () =>
   new Promise((resolve) => {
@@ -110,6 +111,21 @@ beforeAll(async () => {
   const seed = new Database(dbPath);
   createUsersTable(seed);
   createUser(seed, 'tester', 'test-password');
+  // Start with the pre-feedback request schema. Server startup must add
+  // ownership/run linkage without requiring an operator migration.
+  seed.exec(`CREATE TABLE vision_requests (
+    id TEXT PRIMARY KEY, createdAt TEXT NOT NULL, task TEXT NOT NULL,
+    promptVersion TEXT NOT NULL, model TEXT NOT NULL, imageHash TEXT NOT NULL,
+    imageBytes INTEGER NOT NULL, status TEXT NOT NULL, errorCode TEXT,
+    latencyMs INTEGER, inputTokens INTEGER, outputTokens INTEGER, totalTokens INTEGER,
+    responseJson TEXT
+  )`);
+  seed.prepare(`INSERT INTO vision_requests
+    (id, createdAt, task, promptVersion, model, imageHash, imageBytes, status, responseJson)
+    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`).run(
+    'legacy-request', '2020-01-01T00:00:00.000Z', 'meal', 'v1', 'old-model',
+    'legacy-private-hash', 123, 'ok', '{"meal":"legacy private output"}',
+  );
   seed.close();
 
   server = spawn('node', [path.join(here, 'index.mjs')], {
@@ -183,7 +199,26 @@ const patch = async (path, body) => {
   return { status: response.status, body: await response.json().catch(() => null) };
 };
 
+const put = async (path, body) => {
+  const response = await fetch(`${base}${path}`, {
+    method: 'PUT',
+    headers: {
+      'content-type': 'application/json',
+      authorization: 'Bearer tester:test-password',
+    },
+    body: JSON.stringify(body),
+  });
+  return { status: response.status, body: await response.json().catch(() => null) };
+};
+
 describe('the assembled server', () => {
+  it('scrubs private fields from legacy model rows that have no trustworthy owner', () => {
+    const inspect = new Database(dbPath, { readonly: true });
+    const legacy = inspect.prepare("SELECT * FROM vision_requests WHERE id = 'legacy-request'").get();
+    inspect.close();
+    expect(legacy).toMatchObject({ userId: null, imageHash: '', responseJson: null });
+  });
+
   it('reads a photographed label sent at the size a phone sends', async () => {
     const { status, body, text } = await post('/api/labels/extract', { image: A_REAL_PHOTO });
     expect(text.startsWith('<!DOCTYPE'), 'got an HTML error page, not JSON').toBe(false);
@@ -204,6 +239,59 @@ describe('the assembled server', () => {
     expect(body.total.low).toBeLessThan(body.total.calories);
     // Every item with a database match retains traceable per-100g nutrition.
     expect(body.items.every((i) => i.food === null || i.food.kcal100 > 0)).toBe(true);
+    expect(body.estimateId).toMatch(/^[0-9a-f-]{36}$/);
+    mealEstimate = body;
+  });
+
+  it('links logged corrections and explicit feedback without retaining the photo', async () => {
+    const first = mealEstimate.items.find((item) => item.nutrition);
+    const log = await post('/api/food-log', {
+      id: 'photo-log-entry',
+      date: '2026-08-16',
+      meal: 'dinner',
+      foodId: first.food?.id ?? null,
+      label: first.food ? null : first.name,
+      servings: first.food ? first.grams / (first.food.servingGrams ?? 100) : 1,
+      caloriesCached: first.nutrition.calories,
+      estimated: true,
+      mealPhotoRunId: mealEstimate.estimateId,
+      mealPhotoItemId: first.id,
+    });
+    expect(log.status).toBe(200);
+
+    const finalItems = mealEstimate.items.map((item) => ({
+      id: item.id,
+      kind: item.kind === 'adjustment' ? 'adjustment' : 'food',
+      foodId: item.food?.id ?? null,
+      name: item.food?.name ?? item.name,
+      grams: item.grams,
+      calories: item.nutrition?.calories ?? null,
+      protein: item.nutrition?.protein ?? null,
+      carbs: item.nutrition?.carbs ?? null,
+      fat: item.nutrition?.fat ?? null,
+      low: item.range?.low ?? null,
+      high: item.range?.high ?? null,
+    }));
+    const result = await put(`/api/meals/estimate/${mealEstimate.estimateId}/feedback`, {
+      outcome: 'logged',
+      rating: 'close',
+      issues: [],
+      note: null,
+      actions: [],
+      final: { meal: 'dinner', total: mealEstimate.total, items: finalItems },
+    });
+    expect(result.status).toBe(200);
+
+    const inspect = new Database(dbPath, { readonly: true });
+    const run = inspect.prepare('SELECT * FROM meal_photo_runs WHERE id = ?').get(mealEstimate.estimateId);
+    const entry = inspect.prepare("SELECT * FROM food_log WHERE id = 'photo-log-entry'").get();
+    inspect.close();
+    expect(run.status).toBe('logged');
+    expect(run.finalJson).not.toContain(A_REAL_PHOTO);
+    expect(entry).toMatchObject({
+      mealPhotoRunId: mealEstimate.estimateId,
+      mealPhotoItemId: first.id,
+    });
   });
 
   it('refuses an unauthenticated photo without calling the model', async () => {
@@ -233,7 +321,8 @@ describe('the assembled server', () => {
     expect(body.windows.all.inputTokens).toBe(4 * 1300);
     expect(body.windows.all.costUsd).toBeGreaterThan(0);
     expect(body.byTask.map((t) => t.task).sort()).toEqual(['label', 'meal', 'mealHolistic']);
-    expect(body.recent).toHaveLength(4);
+    // Recent is all-time, so it also includes the scrubbed legacy audit row.
+    expect(body.recent).toHaveLength(5);
     // The quota rejection never reached the model, so it was never logged.
     expect(body.byError).toEqual([]);
   });
@@ -245,7 +334,9 @@ describe('the assembled server', () => {
 
   it('recorded every call, with what it cost', async () => {
     const db = new Database(dbPath, { readonly: true });
-    const rows = db.prepare('SELECT task, status, model, totalTokens FROM vision_requests').all();
+    const rows = db
+      .prepare("SELECT task, status, model, totalTokens FROM vision_requests WHERE id != 'legacy-request'")
+      .all();
     db.close();
     expect(rows.length).toBeGreaterThanOrEqual(4);
     expect(rows.every((r) => r.totalTokens === 1480 || r.status === 'error')).toBe(true);

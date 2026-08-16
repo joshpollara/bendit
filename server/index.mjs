@@ -24,6 +24,12 @@ import {
 } from './lib/labelRoute.mjs';
 import { createMealEstimateHandler } from './lib/mealRoute.mjs';
 import {
+  createMealFeedbackHandler,
+  createMealPhotoTables,
+  scrubVisionRequestsForUser,
+  validateMealPhotoLogLink,
+} from './lib/mealFeedback.mjs';
+import {
   createRecipeFromPhotoHandler,
   createRecipeFromUrlHandler,
   createRecipePriceHandler,
@@ -63,7 +69,8 @@ CREATE INDEX IF NOT EXISTS idx_foods_barcode ON foods(barcode);
 -- label names those, and preserves the name of a food that is later deleted.
 CREATE TABLE IF NOT EXISTS food_log (
   id TEXT PRIMARY KEY, date TEXT NOT NULL, meal TEXT NOT NULL, foodId TEXT,
-  servings REAL NOT NULL, caloriesCached REAL NOT NULL, label TEXT
+  servings REAL NOT NULL, caloriesCached REAL NOT NULL, label TEXT,
+  mealPhotoRunId TEXT, mealPhotoItemId TEXT
 );
 CREATE INDEX IF NOT EXISTS idx_log_date ON food_log(date);
 CREATE TABLE IF NOT EXISTS exercise_log (
@@ -165,7 +172,7 @@ CREATE TABLE IF NOT EXISTS vision_requests (
   promptVersion TEXT NOT NULL, model TEXT NOT NULL, imageHash TEXT NOT NULL,
   imageBytes INTEGER NOT NULL, status TEXT NOT NULL, errorCode TEXT,
   latencyMs INTEGER, inputTokens INTEGER, outputTokens INTEGER, totalTokens INTEGER,
-  responseJson TEXT
+  responseJson TEXT, userId TEXT, mealPhotoRunId TEXT
 );
 CREATE INDEX IF NOT EXISTS idx_vision_created ON vision_requests(createdAt);
 
@@ -179,6 +186,15 @@ CREATE VIRTUAL TABLE IF NOT EXISTS foods_fts USING fts5(
   name, brand, content='foods', content_rowid='rowid', tokenize='porter unicode61'
 );
 `);
+
+createMealPhotoTables(db);
+ensureColumns('vision_requests', { userId: 'TEXT', mealPhotoRunId: 'TEXT' });
+// Rows created before request ownership existed cannot be assigned safely.
+// Retain their anonymous usage metadata, but discard hashes and model output.
+db.prepare(`UPDATE vision_requests SET imageHash = '', responseJson = NULL
+  WHERE userId IS NULL AND (imageHash != '' OR responseJson IS NOT NULL)`).run();
+db.exec('CREATE INDEX IF NOT EXISTS idx_vision_user ON vision_requests(userId)');
+db.exec('CREATE INDEX IF NOT EXISTS idx_vision_meal_run ON vision_requests(mealPhotoRunId)');
 
 // Whether the index has been populated can't be read from the index itself:
 // on an external-content table COUNT(*) counts the *content* table, so it
@@ -259,6 +275,8 @@ if (!logColumns.includes('label')) {
 // lookup. The day's list says which, because presenting them alike would give
 // a guess the authority of a measurement.
 ensureColumns('food_log', { estimated: 'INTEGER NOT NULL DEFAULT 0' });
+ensureColumns('food_log', { mealPhotoRunId: 'TEXT', mealPhotoItemId: 'TEXT' });
+db.exec('CREATE INDEX IF NOT EXISTS idx_food_log_meal_run ON food_log(mealPhotoRunId)');
 
 // Macros for entries with no food behind them: grams for the whole entry, not
 // per serving. Null means unknown, which is not the same as zero — a quick add
@@ -330,6 +348,9 @@ db.exec('CREATE INDEX IF NOT EXISTS idx_foods_owner ON foods(ownerId)');
 for (const table of USER_TABLES) {
   db.exec(`CREATE INDEX IF NOT EXISTS idx_${table}_user ON ${table}(userId)`);
 }
+db.exec(`CREATE UNIQUE INDEX IF NOT EXISTS idx_food_log_meal_item
+  ON food_log(userId, mealPhotoRunId, mealPhotoItemId)
+  WHERE mealPhotoRunId IS NOT NULL AND mealPhotoItemId IS NOT NULL`);
 
 ensureColumns('profile', {
   proteinTargetG: 'REAL',
@@ -1146,14 +1167,26 @@ app.post('/api/food-log', (req, res) => {
     e[macro] = e[macro] == null || !Number.isFinite(grams) ? null : grams;
   }
   e.userId = req.userId; // from the session, never from the body
+  try {
+    const link = validateMealPhotoLogLink(
+      db,
+      req.userId,
+      e.mealPhotoRunId ?? null,
+      e.mealPhotoItemId ?? null,
+    );
+    e.mealPhotoRunId = link.runId;
+    e.mealPhotoItemId = link.itemId;
+  } catch (error) {
+    return res.status(error?.status ?? 400).json({ error: error?.message ?? 'Invalid meal photo link.' });
+  }
   // INSERT OR IGNORE, not INSERT: an entry queued offline may be sent twice if
   // the reply is lost on a flaky connection. The client generates the id, so a
   // repeat is the same row and lands as a no-op rather than a duplicate meal.
   db.prepare(`INSERT OR IGNORE INTO food_log
       (id, date, meal, foodId, servings, caloriesCached, label, estimated,
-       proteinCached, carbsCached, fatCached, userId)
+       proteinCached, carbsCached, fatCached, mealPhotoRunId, mealPhotoItemId, userId)
     VALUES (@id, @date, @meal, @foodId, @servings, @caloriesCached, @label, @estimated,
-       @proteinCached, @carbsCached, @fatCached, @userId)`).run(e);
+       @proteinCached, @carbsCached, @fatCached, @mealPhotoRunId, @mealPhotoItemId, @userId)`).run(e);
   res.json(e);
 });
 
@@ -1634,6 +1667,7 @@ app.post('/api/labels/validate', express.json(), createLabelValidateHandler());
 // reconciliation rules live in the route below.
 
 app.post('/api/meals/estimate', bigJson, createMealEstimateHandler({ db, visionHandler }));
+app.put('/api/meals/estimate/:id/feedback', createMealFeedbackHandler({ db }));
 
 // ——— recipes ———
 //
@@ -2005,6 +2039,9 @@ app.delete('/api/all', (req, res) => {
   // with nothing pointing at them.
   const photos = db.prepare('SELECT id FROM photos WHERE userId = ?').all(req.userId);
   db.transaction(() => {
+    // Keep anonymous usage rows so deleting data cannot reset the model quota,
+    // but remove every field that can describe or link this person's meal.
+    scrubVisionRequestsForUser(db, req.userId);
     db.prepare(
       'DELETE FROM meal_template_items WHERE templateId IN (SELECT id FROM meal_templates WHERE userId = ?)',
     ).run(req.userId);

@@ -1,6 +1,7 @@
 // POST /api/meals/estimate - two independent model paths reconciled in code.
 
 import { estimateMeal, reconcileMealEstimates } from './mealEstimate.mjs';
+import { createMealPhotoRunStore } from './mealFeedback.mjs';
 
 function proxyResponse() {
   const captured = { statusCode: 200, body: null };
@@ -17,10 +18,21 @@ function proxyResponse() {
   return { captured, res };
 }
 
-async function runVisionTask(visionHandler, req, task) {
+async function runVisionTask(visionHandler, req, task, mealPhotoRunId) {
   const proxy = proxyResponse();
-  await visionHandler({ ...req, body: { ...req.body, task } }, proxy.res);
-  return proxy.captured;
+  let requestId = null;
+  await visionHandler(
+    {
+      ...req,
+      mealPhotoRunId,
+      captureVisionRequestId: (id) => {
+        requestId = id;
+      },
+      body: { ...req.body, task },
+    },
+    proxy.res,
+  );
+  return { ...proxy.captured, requestId };
 }
 
 const succeeded = (result) => result.statusCode === 200 && result.body?.data;
@@ -68,43 +80,65 @@ function aggregateMeta(parser, holistic) {
 }
 
 export function createMealEstimateHandler({ db, visionHandler }) {
+  const runs = createMealPhotoRunStore(db);
   return async function mealEstimateHandler(req, res) {
-    // The calls see the same image but no output from one another. The vision
-    // handler reserves quota before awaiting either provider, so this remains
-    // safe when the two requests start together.
-    const [parser, holistic] = await Promise.all([
-      runVisionTask(visionHandler, req, 'meal'),
-      runVisionTask(visionHandler, req, 'mealHolistic'),
-    ]);
+    const estimateId = runs.start(req.userId);
+    try {
+      // The calls see the same image but no output from one another. The vision
+      // handler reserves quota before awaiting either provider, so this remains
+      // safe when the two requests start together.
+      const [parser, holistic] = await Promise.all([
+        runVisionTask(visionHandler, req, 'meal', estimateId),
+        runVisionTask(visionHandler, req, 'mealHolistic', estimateId),
+      ]);
 
-    if (!succeeded(parser) && !succeeded(holistic)) {
-      const failure = parser.body?.error ? parser : holistic;
-      return res
-        .status(failure.statusCode)
-        .json(failure.body ?? { error: { code: 'unknown', message: 'The meal could not be read.' } });
+      if (!succeeded(parser) && !succeeded(holistic)) {
+        if (parser.requestId || holistic.requestId) {
+          runs.failed(estimateId, {
+            parserRequestId: parser.requestId,
+            holisticRequestId: holistic.requestId,
+          });
+        } else {
+          // A request rejected before either provider reservation (for example at
+          // the daily limit) must not let repeated retries fill the run table.
+          runs.discard(estimateId);
+        }
+        const failure = parser.body?.error ? parser : holistic;
+        return res
+          .status(failure.statusCode)
+          .json(failure.body ?? { error: { code: 'unknown', message: 'The meal could not be read.' } });
+      }
+
+      const holisticData = succeeded(holistic) ? holistic.body.data : null;
+      const evidence = succeeded(parser)
+        ? parser.body.data
+        : { items: [], mealType: holisticData?.mealType ?? 'other', uncertainties: [] };
+      const databaseEstimate = estimateMeal(db, evidence, {
+        ownerId: req.userId,
+      });
+      const estimate = reconcileMealEstimates(databaseEstimate, holisticData, { evidence });
+
+      if (!succeeded(parser)) {
+        estimate.uncertaintyReasons = [
+          'The item-by-item visual analysis was unavailable; this result uses the whole-meal fallback.',
+          ...(estimate.uncertaintyReasons ?? []),
+        ];
+      } else if (!succeeded(holistic)) {
+        estimate.uncertaintyReasons = [
+          ...(estimate.uncertaintyReasons ?? []),
+          'The independent whole-meal check was unavailable; the food-record estimate is shown.',
+        ];
+      }
+
+      runs.ready(estimateId, {
+        parserRequestId: parser.requestId,
+        holisticRequestId: holistic.requestId,
+        estimate,
+      });
+      return res.json({ ...estimate, estimateId, meta: aggregateMeta(parser, holistic) });
+    } catch (error) {
+      runs.failed(estimateId);
+      throw error;
     }
-
-    const holisticData = succeeded(holistic) ? holistic.body.data : null;
-    const evidence = succeeded(parser)
-      ? parser.body.data
-      : { items: [], mealType: holisticData?.mealType ?? 'other', uncertainties: [] };
-    const databaseEstimate = estimateMeal(db, evidence, {
-      ownerId: req.userId,
-    });
-    const estimate = reconcileMealEstimates(databaseEstimate, holisticData, { evidence });
-
-    if (!succeeded(parser)) {
-      estimate.uncertaintyReasons = [
-        'The item-by-item visual analysis was unavailable; this result uses the whole-meal fallback.',
-        ...(estimate.uncertaintyReasons ?? []),
-      ];
-    } else if (!succeeded(holistic)) {
-      estimate.uncertaintyReasons = [
-        ...(estimate.uncertaintyReasons ?? []),
-        'The independent whole-meal check was unavailable; the food-record estimate is shown.',
-      ];
-    }
-
-    return res.json({ ...estimate, meta: aggregateMeta(parser, holistic) });
   };
 }

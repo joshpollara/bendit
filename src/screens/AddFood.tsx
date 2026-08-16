@@ -11,6 +11,7 @@ import { MEALS, MEAL_LABELS, type Food, type Meal } from '../types';
 import {
   estimateMealFromPhoto,
   type MealEstimate,
+  type MealFeedback,
   type MealItem,
   type MealPhotoStage,
 } from '../lib/mealPhoto';
@@ -49,6 +50,11 @@ function defaultMeal(): Meal {
   if (h < 15) return 'lunch';
   if (h < 21) return 'dinner';
   return 'snacks';
+}
+
+/** Feedback must never hold up logging or replace a useful result with an error. */
+function putMealPhotoFeedback(estimateId: string, feedback: MealFeedback) {
+  void api.putMealEstimateFeedback(estimateId, feedback).catch(() => undefined);
 }
 
 function FoodRow({ food, onPick }: { food: Food; onPick: (f: Food) => void }) {
@@ -363,11 +369,10 @@ export default function AddFood() {
     setMealPhoto('preparing');
     setBanner(null);
     try {
-      setEstimate(
-        await estimateMealFromPhoto(file, {
-          onStage: (stage) => setMealPhoto(stage),
-        }),
-      );
+      const next = await estimateMealFromPhoto(file, {
+        onStage: (stage) => setMealPhoto(stage),
+      });
+      setEstimate(next);
     } catch (e) {
       setBanner(e instanceof Error ? e.message : "Couldn't read that photo.");
     } finally {
@@ -379,7 +384,7 @@ export default function AddFood() {
   /** Everything the photo found, logged in one go against the chosen meal. */
   async function logMealPhoto(items: MealItem[], chosenMeal: Meal) {
     for (const item of items) {
-      if (!item.nutrition) continue;
+      if (!item.nutrition || (item.kind !== 'adjustment' && !(item.grams > 0))) continue;
       await api.addLogEntry({
         date,
         meal: chosenMeal,
@@ -397,6 +402,8 @@ export default function AddFood() {
         // Only the portions still carrying an error band are estimates; one the
         // user typed or picked a unit for is as good as any other entry.
         estimated: (item.error ?? 0) > 0,
+        mealPhotoRunId: estimate?.estimateId ?? null,
+        mealPhotoItemId: item.id ?? null,
       });
     }
     setEstimate(null);
@@ -664,6 +671,7 @@ export default function AddFood() {
               setEstimate(null);
               setScanning(true);
             }}
+            onFeedback={(feedback) => putMealPhotoFeedback(estimate.estimateId, feedback)}
           />
         </Suspense>
       )}

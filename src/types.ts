@@ -92,6 +92,9 @@ export interface FoodLogEntry {
    * lookup is a guess wearing a lookup's authority.
    */
   estimated?: boolean | number;
+  /** The reviewed photo estimate and item that produced this entry. */
+  mealPhotoRunId?: string | null;
+  mealPhotoItemId?: string | null;
 }
 
 export interface ExerciseEntry {

@@ -1,12 +1,16 @@
 import { describe, expect, it } from 'vitest';
 import {
   applyMealQuestionChoice,
+  appendMealFeedbackAction,
   itemFromFood,
+  mealFeedbackFor,
+  positiveMealNumber,
   replaceItemFood,
   rescaleItem,
   setCalories,
   totalsFor,
   unitOptions,
+  type MealFeedbackAction,
   type MealItem,
 } from './mealPhoto';
 import type { Food } from '../types';
@@ -30,6 +34,7 @@ const rice: Food = {
 };
 
 const estimated = (over: Partial<MealItem> = {}): MealItem => ({
+  id: 'rice',
   name: 'white rice',
   seenAs: 'white rice',
   grams: 210,
@@ -241,5 +246,125 @@ describe('totalsFor', () => {
 
   it('is zero for an empty plate', () => {
     expect(totalsFor([]).calories).toBe(0);
+  });
+
+  it('does not count stale nutrition attached to a zero amount', () => {
+    expect(totalsFor([estimated({ grams: 0 })])).toEqual({
+      calories: 0,
+      protein: 0,
+      carbs: 0,
+      fat: 0,
+      low: 0,
+      high: 0,
+    });
+  });
+
+  it('uses known calories as both bounds when an item has no explicit range', () => {
+    expect(totalsFor([estimated({ range: null })])).toMatchObject({
+      calories: 273,
+      low: 273,
+      high: 273,
+    });
+  });
+});
+
+describe('positiveMealNumber', () => {
+  it.each(['', ' ', '0', '-1', 'not a number'])('rejects an invalid edit draft: %j', (value) => {
+    expect(positiveMealNumber(value)).toBeNull();
+  });
+
+  it('accepts a positive decimal', () => {
+    expect(positiveMealNumber(' 125.5 ')).toBe(125.5);
+  });
+});
+
+describe('meal photo feedback', () => {
+  it('deduplicates number-field interactions instead of recording keystrokes', () => {
+    const once = appendMealFeedbackAction([], { type: 'item_amount_changed', itemId: 'rice' });
+    const twice = appendMealFeedbackAction(once, { type: 'item_amount_changed', itemId: 'rice' });
+    const anotherItem = appendMealFeedbackAction(twice, {
+      type: 'item_amount_changed',
+      itemId: 'beans',
+    });
+
+    expect(twice).toBe(once);
+    expect(anotherItem).toHaveLength(2);
+  });
+
+  it('caps semantic actions because the final snapshot carries the actual values', () => {
+    let actions: MealFeedbackAction[] = [];
+    for (let index = 0; index < 60; index++) {
+      actions = appendMealFeedbackAction(actions, {
+        type: 'item_added',
+        itemId: `item-${index}`,
+      });
+    }
+    expect(actions).toHaveLength(50);
+  });
+
+  it('sends only the compact final item snapshot', () => {
+    const feedback = mealFeedbackFor({
+      outcome: 'logged',
+      rating: 'needed_edits',
+      issues: ['portion_off'],
+      note: '  Bowl was weighed  ',
+      actions: [{ type: 'item_amount_changed', itemId: 'rice' }],
+      meal: 'dinner',
+      items: [estimated({ id: 'rice' })],
+    });
+
+    expect(feedback.note).toBe('Bowl was weighed');
+    expect(feedback.final!.items).toEqual([
+      {
+        id: 'rice',
+        kind: 'food',
+        foodId: 'seed-087',
+        name: 'White rice, cooked',
+        grams: 210,
+        calories: 273,
+        protein: 5.7,
+        carbs: 59.2,
+        fat: 0.6,
+        low: 205,
+        high: 341,
+      },
+    ]);
+  });
+
+  it('cannot submit stale nutrition for a blank or zero portion', () => {
+    const feedback = mealFeedbackFor({
+      outcome: 'logged',
+      meal: 'dinner',
+      items: [estimated({ id: 'rice', grams: 0 }), estimated({ id: 'beans' })],
+    });
+
+    expect(feedback.final!.total.calories).toBe(273);
+    expect(feedback.final!.items[0]).toMatchObject({ grams: 0, calories: null, low: null, high: null });
+  });
+
+  it('does not retain a meal snapshot when the user leaves without logging it', () => {
+    const feedback = mealFeedbackFor({
+      outcome: 'retake',
+      rating: 'way_off',
+      issues: ['wrong_food'],
+      meal: 'dinner',
+      items: [estimated()],
+    });
+
+    expect(feedback.final).toBeNull();
+  });
+
+  it('drops hidden issue details when the rating is not negative', () => {
+    const feedback = mealFeedbackFor({
+      outcome: 'logged',
+      rating: 'close',
+      issues: ['wrong_food'],
+      note: 'should not be sent',
+      meal: 'lunch',
+      items: [estimated({ id: 'rice' })],
+    });
+
+    expect(feedback.issues).toEqual([]);
+    expect(feedback.note).toBeNull();
   });
 });

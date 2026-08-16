@@ -42,6 +42,27 @@ describe('the offline queue', () => {
     expect(useQueue.getState().queue).toEqual([]);
   });
 
+  it('replays an idempotent feedback update with its original method', async () => {
+    let method = '';
+    vi.stubGlobal(
+      'fetch',
+      vi.fn(async (_path: string, init: RequestInit) => {
+        method = init.method ?? '';
+        return { ok: true, status: 200 } as Response;
+      }),
+    );
+    useQueue.getState().enqueue({
+      id: 'meal-feedback:run-1',
+      path: '/api/meals/estimate/run-1/feedback',
+      method: 'PUT',
+      body: { outcome: 'dismissed' },
+      queuedAt: 1,
+    });
+
+    expect(await useQueue.getState().flush()).toBe(1);
+    expect(method).toBe('PUT');
+  });
+
   it('keeps everything queued while the network is still down', async () => {
     vi.stubGlobal('fetch', vi.fn(async () => { throw new Error('offline'); }));
     useQueue.getState().enqueue(write('a'));

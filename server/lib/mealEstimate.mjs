@@ -151,13 +151,27 @@ function normalizeHiddenRisks(risks) {
     .filter(Boolean);
 }
 
+function uniqueItemIds(items) {
+  const used = new Set();
+  return items.map((item, index) => {
+    const root = shortText(item?.id, 64) ?? `item_${index + 1}`;
+    let id = root;
+    for (let copy = 2; used.has(id); copy++) {
+      const suffix = `_${copy}`;
+      id = `${root.slice(0, 64 - suffix.length)}${suffix}`;
+    }
+    used.add(id);
+    return id === item.id ? item : { ...item, id };
+  });
+}
+
 /**
  * Semantic validation for model output. Structured JSON constrains its shape,
  * but it cannot guarantee finite, ordered, plausible values.
  */
 export function normalizeMealEvidence(evidenceOrItems = {}) {
   const raw = Array.isArray(evidenceOrItems) ? { items: evidenceOrItems } : evidenceOrItems ?? {};
-  const items = (Array.isArray(raw.items) ? raw.items : [])
+  const items = uniqueItemIds((Array.isArray(raw.items) ? raw.items : [])
     .slice(0, MAX_ITEMS)
     .map((item, index) => {
       const name = shortText(item?.name, 120);
@@ -205,7 +219,7 @@ export function normalizeMealEvidence(evidenceOrItems = {}) {
         uncertainties: uniqueStrings(item?.uncertainties, 5),
       };
     })
-    .filter(Boolean);
+    .filter(Boolean));
 
   const mealType = MEAL_TYPES.has(raw.mealType) ? raw.mealType : items.length ? 'other' : 'not_food';
   return {
@@ -656,7 +670,7 @@ export function reconcileMealEstimates(databaseResult, holisticValue, options = 
     };
   }
 
-  let items = database.items.map((item) => ({ ...item }));
+  let items = uniqueItemIds(database.items.map((item) => ({ ...item })));
   let selected = holistic ? 'hybrid' : 'database';
   const disagreement = holistic
     ? Math.abs(holistic.energyKcal.median - database.total.calories)
@@ -688,6 +702,9 @@ export function reconcileMealEstimates(databaseResult, holisticValue, options = 
   } else if (holistic && undercountRisk && materialDifference) {
     items = allocateResidual(items, holistic.energyKcal.median - database.total.calories, holistic);
   }
+  // The holistic residual uses a stable synthetic id. A parser-provided id may
+  // have the same text, so enforce the invariant again after the paths merge.
+  items = uniqueItemIds(items);
 
   let total = totalsFor(items);
   if (holistic) {
