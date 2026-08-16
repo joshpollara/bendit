@@ -9,7 +9,7 @@
 
 import { nutritionForGrams } from './foodSchema.mjs';
 import { matchCandidates } from './foodSearch.mjs';
-import { parseIngredients } from './recipeParse.mjs';
+import { parseIngredient, parseIngredients } from './recipeParse.mjs';
 import { SOURCES, weighIngredient } from './recipeMeasure.mjs';
 
 const round = (value, dp = 0) => {
@@ -48,10 +48,21 @@ export function resolveIngredient(db, parsed, { ownerId } = {}) {
   // onion" needs a food with a "1 large" portion; the highest-ranked row may
   // only know what 100 g of onion is, and then the line is lost for the sake of
   // a slightly better name match.
-  const candidates = parsed.name ? matchCandidates(db, parsed.name, { ownerId }) : [];
+  const selected = parsed.foodId
+    ? db.prepare(
+        `SELECT * FROM foods
+         WHERE id = ? AND (ownerId IS NULL OR ownerId = ?) AND kcal100 IS NOT NULL`,
+      ).get(parsed.foodId, ownerId)
+    : null;
+  const candidates = selected
+    ? [selected]
+    : parsed.name
+      ? matchCandidates(db, parsed.name, { ownerId })
+      : [];
   let food = null;
   let servings = [];
   let weight = { grams: null, source: SOURCES.unknown, reason: 'no matching food' };
+  let generic = null;
 
   for (const candidate of candidates) {
     const portions = portionsFor(candidate.id);
@@ -66,12 +77,21 @@ export function resolveIngredient(db, parsed, { ownerId } = {}) {
       servings = portions;
       weight = attempt;
     }
+    // A generic cup is only a fallback. Keep looking for a candidate whose own
+    // portions know that four cups of spinach are 120g, not 960g of water.
+    if (attempt.source === SOURCES.generic && attempt.grams != null) {
+      generic ??= { food: candidate, servings: portions, weight: attempt };
+      continue;
+    }
     if (attempt.grams != null) {
       food = candidate;
       servings = portions;
       weight = attempt;
       break;
     }
+  }
+  if (weight.grams == null && generic) {
+    ({ food, servings, weight } = generic);
   }
   const nutrition = food && weight.grams != null ? nutritionForGrams(food, weight.grams) : null;
 
@@ -111,10 +131,28 @@ export function resolveIngredient(db, parsed, { ownerId } = {}) {
 export function buildRecipe(db, { ingredients, servings = 1, ownerId } = {}) {
   const lines = Array.isArray(ingredients) && typeof ingredients[0] === 'object'
     ? ingredients
+        .map((input) => {
+          const parsed = parseIngredient(input?.raw);
+          if (!parsed) return null;
+          const matchName = String(input.matchName ?? input.name ?? '').trim();
+          return {
+            ...parsed,
+            ...(matchName ? { name: matchName } : {}),
+            foodId: input.foodId ?? input.food?.id ?? null,
+          };
+        })
+        .filter(Boolean)
     : parseIngredients(ingredients ?? []);
 
   const resolved = lines.map((line) => resolveIngredient(db, line, { ownerId }));
   const priced = resolved.filter((i) => i.nutrition);
+  const amountMissing = resolved.filter((i) => !(i.quantity > 0)).map((i) => i.raw);
+  const unmatched = resolved
+    .filter((i) => i.quantity > 0 && !i.food)
+    .map((i) => i.raw);
+  const unweighable = resolved
+    .filter((i) => i.quantity > 0 && i.food && !i.nutrition)
+    .map((i) => i.raw);
 
   const sum = (fn) => priced.reduce((total, item) => total + (fn(item) ?? 0), 0);
   const makes = servings > 0 ? servings : 1;
@@ -140,6 +178,10 @@ export function buildRecipe(db, { ingredients, servings = 1, ownerId } = {}) {
     },
     /** Lines contributing nothing, because the food or the amount is unknown. */
     unresolved: resolved.filter((i) => !i.nutrition).map((i) => i.raw),
+    unmatched,
+    unweighable,
+    amountMissing,
+    complete: unmatched.length === 0 && unweighable.length === 0,
     /** Lines weighed by a standard measure rather than the food's own. */
     approximate: resolved.filter((i) => i.weighedBy === SOURCES.generic).map((i) => i.raw),
   };

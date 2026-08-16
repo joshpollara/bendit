@@ -15,7 +15,7 @@
 
 /** Words that add nothing to a match and often prevent one. */
 const NOISE = new Set([
-  'a', 'an', 'and', 'the', 'of', 'with', 'without', 'some', 'my', 'fresh',
+  'a', 'an', 'and', 'or', 'the', 'of', 'with', 'without', 'some', 'my', 'fresh',
   'homemade', 'plain', 'regular', 'ordinary', 'serving', 'portion', 'piece',
   'pieces', 'slice', 'slices', 'medium', 'large', 'small',
 ]);
@@ -48,7 +48,7 @@ export const PREPARATION = new Set([
 // shape: "whole" (milk), "ground" (beef) and "minced" carry real nutrition.
 export const FORM = new Set([
   'soft', 'shredded', 'grated', 'sliced', 'chopped', 'diced',
-  'crumbled', 'flaked', 'flake', 'mashed', 'mini',
+  'crumbled', 'flaked', 'flake', 'mashed', 'mini', 'baby', 'seasoned', 'elbow',
 ]);
 
 /** Words a match may lack: how it was cooked, and what shape it is in. */
@@ -109,6 +109,7 @@ const SYNONYMS = {
   yoghurt: 'yogurt',
   maize: 'corn',
   tinned: 'canned',
+  breadcrumb: ['bread', 'crumb'],
 };
 
 /** Crude, deliberate: only the plural forms that actually show up in food names. */
@@ -131,7 +132,7 @@ export function tokenize(query) {
     .split(/\s+/)
     .filter(Boolean)
     .map(singular)
-    .map((word) => SYNONYMS[word] ?? word)
+    .flatMap((word) => SYNONYMS[word] ?? word)
     .filter((w) => !NOISE.has(w));
 }
 
@@ -172,6 +173,7 @@ const DERIVED_HEAD = new Set([
   'oil', 'juice', 'soup', 'sauce', 'syrup', 'powder', 'extract', 'flour',
   'drink', 'beverage', 'beverages', 'candy', 'candies', 'snack', 'snacks',
   'restaurant', 'fast', 'babyfood', 'infant', 'formula', 'formulated', 'gravy',
+  'spread',
   'butter', // "almonds" must not land on "Almond butter"; "peanut butter" still does
 ]);
 
@@ -222,6 +224,13 @@ export function rankRows(rows, query) {
       score -= Math.min(3, name.length / 40); // prefer the plainer name
       if (row.kcal100 == null) score -= 4; // useless for computing nutrition
 
+      // A required word used as an exclusion or accompaniment is not the
+      // identity of the row. "Chicken, canned, no broth" and "chicken with
+      // broth" are chicken products, not answers to a search for broth.
+      for (const token of tokens) {
+        if (new RegExp(`\\b(?:no|without|with)\\s+${token}\\b`).test(name)) score -= 10;
+      }
+
       // The leading segment of a USDA name says what kind of thing the row is.
       // If it announces a derived product the query never mentioned, it's the
       // wrong row however well the words line up.
@@ -235,7 +244,16 @@ export function rankRows(rows, query) {
       // the front.
       const head = tokenize(name.split(',')[0]);
       const leading = tokenize(name).slice(0, 2);
-      if (leading.some((word) => DERIVED_HEAD.has(word) && !tokens.includes(word))) score -= 7;
+      if (
+        leading.some(
+          (word) =>
+            DERIVED_HEAD.has(word) &&
+            !tokens.includes(word) &&
+            !(word === 'soup' && tokens.includes('broth')),
+        )
+      ) {
+        score -= 7;
+      }
 
       // A row for a part of the animal, when the query asked for the animal.
       if (

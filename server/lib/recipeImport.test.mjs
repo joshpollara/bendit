@@ -17,6 +17,12 @@ const BOLOGNESE = {
     { '@type': 'HowToStep', text: 'Fry the onion.' },
     { '@type': 'HowToStep', text: 'Add the mince.' },
   ],
+  nutrition: {
+    calories: '376 kcal',
+    proteinContent: '24 g',
+    carbohydrateContent: '42.5 g',
+    fatContent: '12 g',
+  },
 };
 
 describe('recipeFromJsonLd', () => {
@@ -27,6 +33,7 @@ describe('recipeFromJsonLd', () => {
     expect(recipe.servings).toBe(4);
     expect(recipe.servingsStated).toBe(true);
     expect(recipe.instructions).toBe('Fry the onion.\nAdd the mince.');
+    expect(recipe.sourceNutrition).toEqual({ calories: 376, protein: 24, carbs: 42.5, fat: 12 });
   });
 
   it('finds the recipe inside a @graph, where most sites put it', () => {

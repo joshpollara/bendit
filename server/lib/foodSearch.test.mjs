@@ -30,6 +30,12 @@ const FOODS = [
   ['usda-17', 'usda', 'Egg, whole, cooked, hard-boiled', null, 155],
   ['off-5', 'openfoodfacts', 'Texas Toast Garlic & Butter Flavored Croutons', null, 500],
   ['usda-18', 'usda', 'Butter, salted', null, 717],
+  ['usda-19', 'usda', 'Turnover, chicken- or turkey-, and vegetable-filled, reduced fat, frozen', null, 168],
+  ['usda-20', 'usda', 'Chicken, canned, no broth', null, 185],
+  ['usda-21', 'usda', 'Chicken, canned, meat only, with broth', null, 165],
+  ['usda-22', 'usda', 'Soup, chicken broth, ready-to-serve', null, 10],
+  ['usda-23', 'usda', 'Cheese spread, American or Cheddar cheese base, reduced fat', null, 176],
+  ['usda-24', 'usda', 'Cheese, cheddar, reduced fat', null, 309],
   ['nevo-1', 'nevo', 'Rice, white, cooked', null, 128],
   // A row with no nutrition: findable, but never the answer for an estimate.
   ['usda-11', 'usda', 'Chicken breast, unprepared', null, null],
@@ -60,6 +66,10 @@ describe('tokenize', () => {
   it('normalizes plurals and accents so spelling variants still match', () => {
     expect(tokenize('sautéed potatoes')).toEqual(['sauteed', 'potato']);
     expect(tokenize('Avocados')).toEqual(['avocado']);
+  });
+
+  it('expands a compound food word into the database spelling', () => {
+    expect(tokenize('breadcrumbs')).toEqual(['bread', 'crumb']);
   });
 
   it('strips punctuation that would otherwise be parsed as FTS syntax', () => {
@@ -156,6 +166,20 @@ describe('searchFoods — what a meal photo actually sends', () => {
 
   it('returns nothing rather than a bad guess for an unknown food', () => {
     expect(searchFoods(db, 'zzzzz nonexistent foodstuff')).toEqual([]);
+  });
+
+  it('does not treat the word "or" as evidence for a food match', () => {
+    // This exact recipe phrase previously matched a chicken-and-vegetable
+    // turnover because "or" counted as the third of four covered terms.
+    expect(matchFood(db, 'chicken or vegetable broth')).toBeNull();
+  });
+
+  it('matches broth itself, not chicken that contains or excludes broth', () => {
+    expect(matchFood(db, 'chicken broth')?.name).toBe('Soup, chicken broth, ready-to-serve');
+  });
+
+  it('matches reduced-fat cheddar as cheese, not cheese spread', () => {
+    expect(matchFood(db, 'reduced fat cheddar')?.name).toBe('Cheese, cheddar, reduced fat');
   });
 });
 
