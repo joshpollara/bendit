@@ -19,11 +19,20 @@ export default function EntrySheet({
 }) {
   const food = entry.food;
   const gramsPerServing = food?.servingGrams;
+  const effectiveMacros = food
+    ? {
+        proteinCached:
+          entry.proteinCached ?? ((food.protein ?? 0) * entry.servings || null),
+        carbsCached:
+          entry.carbsCached ?? ((food.carbs ?? 0) * entry.servings || null),
+        fatCached: entry.fatCached ?? ((food.fat ?? 0) * entry.servings || null),
+      }
+    : entry;
 
   const [servings, setServings] = useState(entry.servings);
   const [calories, setCalories] = useState(String(Math.round(entry.caloriesCached)));
   const [label, setLabel] = useState(entry.label ?? '');
-  const [macros, setMacros] = useState(macroFields(entry));
+  const [macros, setMacros] = useState(macroFields(effectiveMacros));
   const [meal, setMeal] = useState<Meal>(entry.meal);
   const [byWeight, setByWeight] = useState(false);
 
@@ -39,11 +48,9 @@ export default function EntrySheet({
       servings: food ? servings : 1,
       caloriesCached: nextCalories,
       label: food ? entry.label : label.trim() || 'Quick add',
-      // A food's macros scale with the servings above; only an entry standing on
-      // its own carries its own.
-      proteinCached: food ? entry.proteinCached : macroGrams(macros.protein),
-      carbsCached: food ? entry.carbsCached : macroGrams(macros.carbs),
-      fatCached: food ? entry.fatCached : macroGrams(macros.fat),
+      proteinCached: macroGrams(macros.protein),
+      carbsCached: macroGrams(macros.carbs),
+      fatCached: macroGrams(macros.fat),
     });
     onChanged();
   }
@@ -87,6 +94,10 @@ export default function EntrySheet({
               </button>
             </div>
           )}
+
+          <div className="mb-4">
+            <MacroInputs values={macros} onChange={setMacros} />
+          </div>
 
           {byWeight && gramsPerServing ? (
             <div className="my-4 flex flex-col items-center gap-1">
