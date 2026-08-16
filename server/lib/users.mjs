@@ -10,6 +10,7 @@
 // trying to log in, and a system that disagrees is only ever annoying.
 
 import crypto from 'node:crypto';
+import { scrubVisionRequestsForUser } from './mealFeedback.mjs';
 
 const SCRYPT_COST = 16_384; // ~50ms per hash; the point is that it isn't fast
 const KEY_LENGTH = 32;
@@ -106,6 +107,7 @@ export const USER_TABLES = [
   'day_done',
   'photos',
   'meal_templates',
+  'meal_photo_runs',
   'measurements',
   'push_subscriptions',
   'fasts',
@@ -118,6 +120,9 @@ export function deleteUser(db, username) {
 
   const removed = {};
   db.transaction(() => {
+    // Model-call rows also enforce the daily quota, so keep their anonymous
+    // usage figures while removing the user's hash, output and run linkage.
+    removed.vision_requests_scrubbed = scrubVisionRequestsForUser(db, user.id);
     // Template items hang off templates rather than off the user directly.
     removed.meal_template_items = db
       .prepare(

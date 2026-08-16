@@ -19,6 +19,7 @@ import path from 'node:path';
 import readline from 'node:readline';
 import { fileURLToPath } from 'node:url';
 import Database from 'better-sqlite3';
+import { createMealPhotoTables } from '../lib/mealFeedback.mjs';
 import {
   countUsers,
   createUser,
@@ -69,6 +70,8 @@ if (!fs.existsSync(dbPath) && command !== 'help') {
 const db = new Database(dbPath);
 db.pragma('journal_mode = WAL');
 createUsersTable(db);
+// The CLI can be run before the newly deployed server has performed migrations.
+createMealPhotoTables(db);
 
 const usage = `Usage:
   users.mjs add <username> [--password <password>]

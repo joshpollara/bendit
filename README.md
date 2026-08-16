@@ -38,6 +38,12 @@ BENDIT_PASSWORD=dev node server/tools/photocheck.mjs \
 The report includes calorie MAE, bias, P90 error, item recall, optional portion
 MAE, displayed-interval coverage, latency, and cost by model role.
 
+Each successful meal-photo analysis also creates a user-scoped row in
+`meal_photo_runs`. It links the original normalized estimate to optional review
+feedback and the final corrected food-log items. Photos, base64 data, and EXIF
+are not retained. These corrections are behavioral evaluation signals, not
+weighed ground truth and must not be used to calibrate intervals as if they were.
+
 ## Deploy
 
 Merging to `main` deploys automatically (GitHub Actions → Fly.io). The workflow

@@ -10,6 +10,7 @@ import type {
   WeightEntry,
 } from '../types';
 import type { DayTotals } from './report';
+import type { MealFeedback } from './mealPhoto';
 
 // Thin client for the server API. The server owns the SQLite database; the
 // browser holds no data.
@@ -218,19 +219,35 @@ export interface ProgressPhoto {
 export const UNAUTHORIZED_EVENT = 'bendit:unauthorized';
 
 /**
- * Appends that can be replayed safely: the client mints the id and the server
- * ignores a repeat, so a lost reply costs nothing.
+ * Writes that can be replayed safely: the client supplies an idempotency key
+ * and the server treats a repeat as the same operation, so a lost reply costs
+ * nothing.
  */
-async function queueableWrite(path: string, body: { id: string; date?: string }): Promise<unknown> {
+async function queueableWrite(
+  path: string,
+  body: unknown,
+  {
+    id,
+    date,
+    method = 'POST',
+  }: { id: string; date?: string; method?: 'POST' | 'PUT' },
+): Promise<unknown> {
   const park = async () => {
     const { useQueue } = await import('./offlineQueue');
-    useQueue.getState().enqueue({ id: body.id, path, body, date: body.date, queuedAt: Date.now() });
+    useQueue.getState().enqueue({
+      id,
+      path,
+      ...(method === 'POST' ? {} : { method }),
+      body,
+      date,
+      queuedAt: Date.now(),
+    });
   };
 
   let res: Response;
   try {
     res = await fetch(path, {
-      method: 'POST',
+      method,
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify(body),
     });
@@ -324,7 +341,10 @@ export const api = {
   deleteFood: (id: string) => j<unknown>(`/api/foods/${encodeURIComponent(id)}`, { method: 'DELETE' }),
 
   addLogEntry: (e: Omit<FoodLogEntry, 'id'> & { id?: string }) =>
-    queueableWrite('/api/food-log', { ...e, id: e.id ?? crypto.randomUUID() }),
+    (() => {
+      const body = { ...e, id: e.id ?? crypto.randomUUID() };
+      return queueableWrite('/api/food-log', body, { id: body.id, date: body.date });
+    })(),
   deleteLogEntry: (id: string) => j<unknown>(`/api/food-log/${id}`, { method: 'DELETE' }),
 
   updateLogEntry: (
@@ -374,7 +394,10 @@ export const api = {
     j<QuickAddSuggestion[]>('/api/recent-quick-adds'),
 
   addExercise: (e: Omit<ExerciseEntry, 'id'> & { id?: string }) =>
-    queueableWrite('/api/exercise', { ...e, id: e.id ?? crypto.randomUUID() }),
+    (() => {
+      const body = { ...e, id: e.id ?? crypto.randomUUID() };
+      return queueableWrite('/api/exercise', body, { id: body.id, date: body.date });
+    })(),
   updateExercise: (
     id: string,
     changes: Partial<Pick<ExerciseEntry, 'name' | 'minutes' | 'caloriesBurned'>>,
@@ -406,6 +429,12 @@ export const api = {
   pushTest: () => post('/api/push/test', {}),
 
   visionUsage: () => j<VisionUsage>('/api/vision/usage'),
+  putMealEstimateFeedback: (estimateId: string, feedback: MealFeedback) =>
+    queueableWrite(
+      `/api/meals/estimate/${encodeURIComponent(estimateId)}/feedback`,
+      feedback,
+      { id: `meal-feedback:${estimateId}`, method: 'PUT' },
+    ),
 
   listPhotos: () => j<ProgressPhoto[]>('/api/photos'),
   uploadPhoto: async (date: string, image: Blob) => {

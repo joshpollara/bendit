@@ -1,14 +1,23 @@
-import { useState } from 'react';
+import { useEffect, useState } from 'react';
 import { api } from '../lib/api';
 import {
   applyMealQuestionChoice,
+  appendMealFeedbackAction,
   itemFromFood,
+  mealFeedbackFor,
+  MAX_MEAL_FEEDBACK_ITEMS,
+  positiveMealNumber,
   replaceItemFood,
   rescaleItem,
   setCalories,
   totalsFor,
   unitOptions,
   type MealEstimate,
+  type MealFeedback,
+  type MealFeedbackAction,
+  type MealFeedbackIssue,
+  type MealFeedbackOutcome,
+  type MealFeedbackRating,
   type MealItem,
 } from '../lib/mealPhoto';
 import { formatCalories } from '../lib/units';
@@ -48,6 +57,65 @@ const CONFIDENCE_STYLE: Record<string, string> = {
   low: 'bg-over-soft text-over',
 };
 
+const FEEDBACK_RATINGS: { value: MealFeedbackRating; label: string }[] = [
+  { value: 'close', label: 'Close' },
+  { value: 'needed_edits', label: 'Needed edits' },
+  { value: 'way_off', label: 'Way off' },
+];
+
+const FEEDBACK_ISSUES: { value: MealFeedbackIssue; label: string }[] = [
+  { value: 'wrong_food', label: 'Wrong food' },
+  { value: 'portion_off', label: 'Portion was off' },
+  { value: 'food_missing', label: 'Food missing' },
+  { value: 'extra_food', label: 'Extra food' },
+  { value: 'sauce_preparation', label: 'Sauce / preparation' },
+  { value: 'calories_macros', label: 'Calories / macros' },
+];
+
+function PositiveNumberInput({
+  value,
+  label,
+  className,
+  onCommit,
+}: {
+  value: number | null;
+  label: string;
+  className: string;
+  onCommit: (value: number) => void;
+}) {
+  const displayed = value == null ? '' : String(value);
+  const [draft, setDraft] = useState(displayed);
+
+  useEffect(() => setDraft(displayed), [displayed]);
+
+  const commit = () => {
+    const next = positiveMealNumber(draft);
+    if (next == null) {
+      setDraft(displayed);
+      return;
+    }
+    setDraft(String(next));
+    if (next !== value) onCommit(next);
+  };
+
+  return (
+    <input
+      type="number"
+      inputMode="decimal"
+      min="0.1"
+      step="any"
+      aria-label={label}
+      className={className}
+      value={draft}
+      onChange={(event) => setDraft(event.target.value)}
+      onBlur={commit}
+      onKeyDown={(event) => {
+        if (event.key === 'Enter') event.currentTarget.blur();
+      }}
+    />
+  );
+}
+
 export default function MealPhotoSheet({
   estimate,
   meal,
@@ -55,6 +123,7 @@ export default function MealPhotoSheet({
   onClose,
   onRetake,
   onScanBarcode,
+  onFeedback,
 }: {
   estimate: MealEstimate;
   meal: Meal;
@@ -62,6 +131,7 @@ export default function MealPhotoSheet({
   onClose: () => void;
   onRetake: () => void;
   onScanBarcode: () => void;
+  onFeedback: (feedback: MealFeedback) => void;
 }) {
   const [items, setItems] = useState<MealItem[]>(estimate.items);
   const [question, setQuestion] = useState(estimate.question ?? null);
@@ -69,11 +139,18 @@ export default function MealPhotoSheet({
   const [picking, setPicking] = useState<number | 'new' | null>(null);
   const [saveAs, setSaveAs] = useState(false);
   const [saving, setSaving] = useState(false);
+  const [rating, setRating] = useState<MealFeedbackRating | null>(null);
+  const [issues, setIssues] = useState<MealFeedbackIssue[]>([]);
+  const [note, setNote] = useState('');
+  const [showNote, setShowNote] = useState(false);
+  const [actions, setActions] = useState<MealFeedbackAction[]>([]);
 
   const total = totalsFor(items);
   // An item with a calorie figure can be logged, whether that figure came from
   // a matched food or was typed in over the top of a name nothing matched.
-  const loggable = items.filter((item) => item.nutrition);
+  const loggable = items.filter(
+    (item) => item.nutrition && (item.kind === 'adjustment' || item.grams > 0),
+  );
   const anyEstimated = loggable.some((item) => (item.error ?? 0) > 0);
   const pathLabel =
     estimate.path?.selected === 'hybrid'
@@ -85,38 +162,77 @@ export default function MealPhotoSheet({
   const update = (index: number, next: MealItem) =>
     setItems((current) => current.map((item, i) => (i === index ? next : item)));
 
-  const setGrams = (index: number, grams: number) =>
-    update(index, rescaleItem(items[index], grams));
+  const record = (action: MealFeedbackAction) =>
+    setActions((current) => appendMealFeedbackAction(current, action));
 
-  const setCals = (index: number, calories: number) =>
+  const setGrams = (index: number, grams: number) => {
+    record({ type: 'item_amount_changed', itemId: items[index].id });
+    update(index, rescaleItem(items[index], grams));
+  };
+
+  const setCals = (index: number, calories: number) => {
+    record({ type: 'item_calories_changed', itemId: items[index].id });
     update(index, setCalories(items[index], calories));
+  };
 
   /** Swapping the food keeps the weight: the plate didn't change, the name did. */
   const swap = (index: number, food: Food) => {
+    record({ type: 'item_food_changed', itemId: items[index].id });
     update(index, replaceItemFood(items[index], food));
     setPicking(null);
   };
 
   const answerQuestion = (choiceId: string) => {
     if (!question) return;
+    record({ type: 'question_answered', itemId: question.targetItemId, choiceId });
     setItems((current) => applyMealQuestionChoice(current, question, choiceId));
     setQuestion(null);
   };
 
   const add = (food: Food) => {
+    if (items.length >= MAX_MEAL_FEEDBACK_ITEMS) return;
     // A food the photo missed starts at its own serving, which is the amount a
     // person is most likely to have had.
-    setItems((current) => [...current, itemFromFood(food, food.servingGrams || 100)]);
+    const item = itemFromFood(food, food.servingGrams || 100);
+    record({ type: 'item_added', itemId: item.id });
+    setItems((current) => [...current, item]);
     setPicking(null);
   };
 
-  const remove = (index: number) => setItems((current) => current.filter((_, i) => i !== index));
+  const remove = (index: number) => {
+    record({ type: 'item_removed', itemId: items[index].id });
+    setItems((current) => current.filter((_, i) => i !== index));
+  };
+
+  const feedback = (outcome: MealFeedbackOutcome) =>
+    mealFeedbackFor({ outcome, rating, issues, note, actions, meal: chosenMeal, items });
+
+  const finish = (outcome: Exclude<MealFeedbackOutcome, 'logged'>, next: () => void) => {
+    onFeedback(feedback(outcome));
+    next();
+  };
+
+  const chooseRating = (next: MealFeedbackRating) => {
+    const selected = rating === next ? null : next;
+    setRating(selected);
+    if (selected !== 'needed_edits' && selected !== 'way_off') {
+      setIssues([]);
+      setNote('');
+      setShowNote(false);
+    }
+  };
+
+  const toggleIssue = (issue: MealFeedbackIssue) =>
+    setIssues((current) =>
+      current.includes(issue) ? current.filter((candidate) => candidate !== issue) : [...current, issue],
+    );
 
   async function log() {
     setSaving(true);
     try {
       if (saveAs) await saveTemplate();
       await onLog(loggable, chosenMeal);
+      onFeedback(feedback('logged'));
     } finally {
       setSaving(false);
     }
@@ -143,7 +259,7 @@ export default function MealPhotoSheet({
   }
 
   return (
-    <Sheet onClose={onClose}>
+    <Sheet onClose={() => finish('dismissed', onClose)}>
       <h2 className="text-lg font-semibold">What&apos;s on the plate</h2>
       <p className="mt-1 text-xs text-ink-muted">
         {items.length > 0
@@ -161,7 +277,7 @@ export default function MealPhotoSheet({
             </p>
             <button
               type="button"
-              onClick={onRetake}
+              onClick={() => finish('retake', onRetake)}
               className="flex shrink-0 items-center gap-1 text-xs font-semibold"
             >
               <CameraIcon className="h-4 w-4" />
@@ -176,7 +292,7 @@ export default function MealPhotoSheet({
           <p className="text-sm text-ink-secondary">Use the package barcode for exact label values.</p>
           <button
             type="button"
-            onClick={onScanBarcode}
+            onClick={() => finish('barcode', onScanBarcode)}
             className="flex shrink-0 items-center gap-1.5 text-sm font-semibold text-accent"
           >
             <BarcodeIcon className="h-4 w-4" />
@@ -209,7 +325,7 @@ export default function MealPhotoSheet({
         {items.map((item, index) => {
           const units = unitOptions(item);
           return (
-            <li key={`${item.name}:${index}`} className="rounded-xl border border-line p-3">
+            <li key={item.id} className="rounded-xl border border-line p-3">
               <div className="flex items-start gap-2">
                 {item.kind === 'adjustment' ? (
                   <div className="min-w-0 flex-1">
@@ -264,13 +380,11 @@ export default function MealPhotoSheet({
               <div className="mt-2 flex flex-wrap items-center gap-2">
                 {item.kind !== 'adjustment' && (
                   <>
-                    <input
-                      type="number"
-                      inputMode="numeric"
-                      aria-label={`Grams of ${item.food?.name ?? item.name}`}
+                    <PositiveNumberInput
+                      label={`Grams of ${item.food?.name ?? item.name}`}
                       className="w-20 rounded-lg border border-line bg-card px-2 py-1.5 text-sm tabular-nums"
                       value={item.grams}
-                      onChange={(e) => setGrams(index, Number(e.target.value))}
+                      onCommit={(grams) => setGrams(index, grams)}
                     />
                     <span className="text-xs text-ink-secondary">g</span>
                   </>
@@ -298,14 +412,11 @@ export default function MealPhotoSheet({
                     isn't. For a matched food this sets the weight; for an
                     unmatched one it is the entry. */}
                 <span className="ml-auto flex items-center gap-1.5 text-sm tabular-nums">
-                  <input
-                    type="number"
-                    inputMode="numeric"
-                    aria-label={`Calories of ${item.food?.name ?? item.name}`}
+                  <PositiveNumberInput
+                    label={`Calories of ${item.food?.name ?? item.name}`}
                     className="w-20 rounded-lg border border-line bg-card px-2 py-1.5 text-right text-sm font-semibold tabular-nums"
-                    value={item.nutrition ? Math.round(item.nutrition.calories) : ''}
-                    placeholder="—"
-                    onChange={(e) => setCals(index, Number(e.target.value))}
+                    value={item.nutrition ? Math.round(item.nutrition.calories) : null}
+                    onCommit={(calories) => setCals(index, calories)}
                   />
                   <span className="text-xs text-ink-secondary">cal</span>
                   {item.range && item.range.low !== item.range.high && (
@@ -336,10 +447,15 @@ export default function MealPhotoSheet({
       ) : (
         <button
           type="button"
+          disabled={items.length >= MAX_MEAL_FEEDBACK_ITEMS}
           onClick={() => setPicking('new')}
-          className="mt-2 w-full rounded-xl border border-dashed border-line py-2.5 text-sm font-medium text-accent"
+          className="mt-2 w-full rounded-xl border border-dashed border-line py-2.5 text-sm font-medium text-accent disabled:text-ink-muted"
         >
-          {items.length > 0 ? '+ Add something the photo missed' : '+ Add a food'}
+          {items.length >= MAX_MEAL_FEEDBACK_ITEMS
+            ? '20 item limit reached'
+            : items.length > 0
+              ? '+ Add something the photo missed'
+              : '+ Add a food'}
         </button>
       )}
 
@@ -368,6 +484,80 @@ export default function MealPhotoSheet({
           ))}
         </div>
       )}
+
+      <section className="mt-3 border-y border-line py-3" aria-labelledby="meal-feedback-question">
+        <p id="meal-feedback-question" className="text-sm font-medium">
+          How close was the first estimate?
+        </p>
+        <div
+          className="mt-2 grid grid-cols-3 gap-1 rounded-lg bg-surface p-1"
+          role="group"
+          aria-labelledby="meal-feedback-question"
+        >
+          {FEEDBACK_RATINGS.map((option) => (
+            <button
+              key={option.value}
+              type="button"
+              aria-pressed={rating === option.value}
+              onClick={() => chooseRating(option.value)}
+              className={`min-h-10 rounded-md px-1 text-xs font-medium ${
+                rating === option.value
+                  ? 'bg-card text-accent-deep shadow-sm ring-1 ring-line'
+                  : 'text-ink-secondary hover:text-ink'
+              }`}
+            >
+              {option.label}
+            </button>
+          ))}
+        </div>
+
+        {(rating === 'needed_edits' || rating === 'way_off') && (
+          <div className="mt-3">
+            <p className="text-xs text-ink-muted">What needed work? Optional.</p>
+            <div className="mt-2 flex flex-wrap gap-1.5">
+              {FEEDBACK_ISSUES.map((issue) => (
+                <label
+                  key={issue.value}
+                  className={`flex items-center gap-1.5 rounded-lg border px-2.5 py-1.5 text-xs ${
+                    issues.includes(issue.value)
+                      ? 'border-accent bg-accent-soft text-accent-deep'
+                      : 'border-line text-ink-secondary hover:border-accent'
+                  }`}
+                >
+                  <input
+                    type="checkbox"
+                    checked={issues.includes(issue.value)}
+                    onChange={() => toggleIssue(issue.value)}
+                    className="h-3.5 w-3.5 accent-accent"
+                  />
+                  {issue.label}
+                </label>
+              ))}
+            </div>
+
+            {showNote ? (
+              <label className="mt-3 block text-xs text-ink-secondary">
+                Anything else? <span className="text-ink-muted">Optional</span>
+                <textarea
+                  value={note}
+                  maxLength={300}
+                  rows={2}
+                  onChange={(event) => setNote(event.target.value)}
+                  className="mt-1.5 block w-full resize-none rounded-lg border border-line bg-card px-3 py-2 text-sm text-ink outline-none focus:border-accent"
+                />
+              </label>
+            ) : (
+              <button
+                type="button"
+                onClick={() => setShowNote(true)}
+                className="mt-2 text-xs font-medium text-accent"
+              >
+                Add a note
+              </button>
+            )}
+          </div>
+        )}
+      </section>
 
       <div className="mt-3 grid grid-cols-4 gap-1 rounded-xl bg-surface p-1 text-center text-xs font-semibold">
         {(['breakfast', 'lunch', 'dinner', 'snacks'] as Meal[]).map((m) => (

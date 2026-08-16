@@ -43,17 +43,17 @@ export const HTTP_STATUS = {
 const INSERT = `
   INSERT INTO vision_requests
     (id, createdAt, task, promptVersion, model, imageHash, imageBytes, status, errorCode,
-     latencyMs, inputTokens, outputTokens, totalTokens, responseJson)
+     latencyMs, inputTokens, outputTokens, totalTokens, responseJson, userId, mealPhotoRunId)
   VALUES
     (@id, @createdAt, @task, @promptVersion, @model, @imageHash, @imageBytes, @status, @errorCode,
-     @latencyMs, @inputTokens, @outputTokens, @totalTokens, @responseJson)`;
+     @latencyMs, @inputTokens, @outputTokens, @totalTokens, @responseJson, @userId, @mealPhotoRunId)`;
 
 const UPDATE = `
   UPDATE vision_requests SET
     status = @status, errorCode = @errorCode, latencyMs = @latencyMs,
     inputTokens = @inputTokens, outputTokens = @outputTokens,
     totalTokens = @totalTokens, responseJson = @responseJson
-  WHERE id = @id`;
+  WHERE id = @id AND userId IS @userId`;
 
 /**
  * Builds the POST /api/vision/extract handler.
@@ -134,9 +134,14 @@ export function createVisionExtractHandler({ db, provider, providers = {}, daily
       outputTokens: null,
       totalTokens: null,
       responseJson: null,
+      // Ownership and run linkage come from authenticated/internal request
+      // context, never from the client body.
+      userId: req.userId ?? null,
+      mealPhotoRunId: req.mealPhotoRunId ?? null,
     };
 
     reserveRequest.run(record);
+    if (typeof req.captureVisionRequestId === 'function') req.captureVisionRequestId(record.id);
 
     try {
       const result = await taskProvider.extract({

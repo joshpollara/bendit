@@ -2,6 +2,7 @@ import Database from 'better-sqlite3';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 import { createVisionExtractHandler } from './visionRoute.mjs';
 import { VisionError } from './vision.mjs';
+import { scrubVisionRequestsForUser } from './mealFeedback.mjs';
 
 // The provider is a stub in every test here. Nothing reaches a model, and CI
 // never spends money to run the suite.
@@ -14,7 +15,7 @@ CREATE TABLE vision_requests (
   promptVersion TEXT NOT NULL, model TEXT NOT NULL, imageHash TEXT NOT NULL,
   imageBytes INTEGER NOT NULL, status TEXT NOT NULL, errorCode TEXT,
   latencyMs INTEGER, inputTokens INTEGER, outputTokens INTEGER, totalTokens INTEGER,
-  responseJson TEXT
+  responseJson TEXT, userId TEXT, mealPhotoRunId TEXT
 )`;
 
 beforeEach(() => {
@@ -56,9 +57,9 @@ function fakeRes() {
   return res;
 }
 
-const post = async (handler, body) => {
+const post = async (handler, body, context = {}) => {
   const res = fakeRes();
-  await handler({ body }, res);
+  await handler({ body, ...context }, res);
   return res;
 };
 
@@ -110,6 +111,22 @@ describe('POST /api/vision/extract', () => {
     const [row] = rows();
     expect(JSON.stringify(row)).not.toContain(image);
     expect(row.imageBytes).toBeGreaterThan(0);
+  });
+
+  it('links an owned meal call from server request context, never the client body', async () => {
+    let requestId = null;
+    await post(
+      createVisionExtractHandler({ db, provider: okProvider() }),
+      { task: 'meal', image, mealPhotoRunId: 'client-forgery', userId: 'mallory' },
+      {
+        userId: 'alice',
+        mealPhotoRunId: 'meal-run',
+        captureVisionRequestId: (id) => {
+          requestId = id;
+        },
+      },
+    );
+    expect(rows()[0]).toMatchObject({ id: requestId, userId: 'alice', mealPhotoRunId: 'meal-run' });
   });
 
   it('logs failures too — a call that failed still happened', async () => {
@@ -202,6 +219,38 @@ describe('POST /api/vision/extract', () => {
     finish();
     await first;
     expect(rows()[0].status).toBe('ok');
+  });
+
+  it('cannot restore private output after an in-flight request is scrubbed', async () => {
+    let finish;
+    const provider = {
+      ...okProvider(),
+      extract: vi.fn(
+        () =>
+          new Promise((resolve) => {
+            finish = () =>
+              resolve({
+                data: { basis: 'g', confidence: 'high' },
+                raw: '{"name":"private meal"}',
+                model: 'gemini-2.5-flash-lite',
+                latencyMs: 10,
+                usage: { inputTokens: 1, outputTokens: 1, totalTokens: 2 },
+              });
+          }),
+      ),
+    };
+    const pending = post(
+      createVisionExtractHandler({ db, provider }),
+      { task: 'label', image },
+      { userId: 'alice' },
+    );
+    expect(rows()[0].status).toBe('pending');
+
+    scrubVisionRequestsForUser(db, 'alice');
+    finish();
+    await pending;
+
+    expect(rows()[0]).toMatchObject({ userId: null, imageHash: '', responseJson: null });
   });
 
   it('can pin a stronger provider to one task without changing the others', async () => {

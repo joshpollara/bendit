@@ -49,7 +49,7 @@ beforeEach(() => {
       promptVersion TEXT NOT NULL, model TEXT NOT NULL, imageHash TEXT NOT NULL,
       imageBytes INTEGER NOT NULL, status TEXT NOT NULL, errorCode TEXT,
       latencyMs INTEGER, inputTokens INTEGER, outputTokens INTEGER, totalTokens INTEGER,
-      responseJson TEXT
+      responseJson TEXT, userId TEXT, mealPhotoRunId TEXT
     );
   `);
   db.exec(

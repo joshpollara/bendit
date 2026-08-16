@@ -59,6 +59,16 @@ beforeAll(() => {
 const item = (name, grams, confidence = 'high') => ({ name, grams, confidence });
 
 describe('estimateMeal', () => {
+  it('makes duplicate model item ids unique before they reach logging', () => {
+    const normalized = normalizeMealEvidence({
+      items: [
+        { id: 'same', name: 'white rice', grams: 100 },
+        { id: 'same', name: 'broccoli', grams: 100 },
+      ],
+    });
+    expect(normalized.items.map((entry) => entry.id)).toEqual(['same', 'same_2']);
+  });
+
   it('computes nutrition from the database, for the grams estimated', () => {
     const result = estimateMeal(db, [item('grilled chicken breast', 150)]);
     const [only] = result.items;
@@ -297,6 +307,16 @@ describe('hybrid reconciliation', () => {
     expect(rendang.range.high).toBeGreaterThanOrEqual(rendang.nutrition.calories);
   });
 
+  it('keeps a generated holistic row distinct from a parser item with the same id', () => {
+    const database = estimateMeal(db, {
+      mealType: 'mixed_dish',
+      items: [{ id: 'holistic_adjustment', name: 'white rice', grams: 100 }],
+    });
+    const result = reconcileMealEstimates(database, holistic({ low: 300, median: 500, high: 700 }));
+    expect(new Set(result.items.map((entry) => entry.id)).size).toBe(result.items.length);
+    expect(result.items.map((entry) => entry.id)).toContain('holistic_adjustment_2');
+  });
+
   it('does not raise a reliable simple plate merely because the holistic point is higher', () => {
     const database = estimateMeal(db, {
       mealType: 'simple_plate',
@@ -404,7 +424,7 @@ describe('POST /api/meals/estimate', () => {
       promptVersion TEXT NOT NULL, model TEXT NOT NULL, imageHash TEXT NOT NULL,
       imageBytes INTEGER NOT NULL, status TEXT NOT NULL, errorCode TEXT,
       latencyMs INTEGER, inputTokens INTEGER, outputTokens INTEGER, totalTokens INTEGER,
-      responseJson TEXT)`);
+      responseJson TEXT, userId TEXT, mealPhotoRunId TEXT)`);
   });
 
   const handlerReturning = (data, holisticData = {}) =>
@@ -443,11 +463,25 @@ describe('POST /api/meals/estimate', () => {
         return res;
       },
     };
-    await handler({ body }, res);
+    await handler({ body, userId: 'test-user' }, res);
     return res;
   };
 
   const image = Buffer.from('a plate of food').toString('base64');
+
+  it('marks a run failed when an internal analysis handler throws unexpectedly', async () => {
+    const handler = createMealEstimateHandler({
+      db,
+      visionHandler: async () => {
+        throw new Error('unexpected');
+      },
+    });
+
+    await expect(post(handler, { image })).rejects.toThrow('unexpected');
+    expect(
+      db.prepare("SELECT status FROM meal_photo_runs ORDER BY createdAt DESC LIMIT 1").get().status,
+    ).toBe('failed');
+  });
 
   it('returns priced items and a total', async () => {
     const handler = handlerReturning({
@@ -464,6 +498,7 @@ describe('POST /api/meals/estimate', () => {
     expect(res.body.total.high).toBeGreaterThan(res.body.total.calories);
     expect(res.body.meta.usage.totalTokens).toBe(920);
     expect(res.body.meta.models).toEqual({ parser: 'test-model', holistic: 'test-model' });
+    expect(res.body.estimateId).toMatch(/^[0-9a-f-]{36}$/);
   });
 
   it('ignores nutrition the model volunteers anyway', async () => {
@@ -570,12 +605,18 @@ describe('POST /api/meals/estimate', () => {
   });
 
   it('logs the call like any other', async () => {
-    await post(handlerReturning({ items: [{ name: 'white rice', grams: 100, confidence: 'high' }] }), {
-      image,
-    });
-    expect(visionDb.prepare('SELECT task FROM vision_requests ORDER BY task').all().map((row) => row.task)).toEqual([
-      'meal',
-      'mealHolistic',
-    ]);
+    const res = await post(
+      handlerReturning({ items: [{ name: 'white rice', grams: 100, confidence: 'high' }] }),
+      { image },
+    );
+    expect(
+      visionDb
+        .prepare('SELECT task FROM vision_requests WHERE mealPhotoRunId = ? ORDER BY task')
+        .all(res.body.estimateId)
+        .map((row) => row.task),
+    ).toEqual(['meal', 'mealHolistic']);
+    expect(db.prepare('SELECT status FROM meal_photo_runs WHERE id = ?').get(res.body.estimateId).status).toBe(
+      'reviewing',
+    );
   });
 });

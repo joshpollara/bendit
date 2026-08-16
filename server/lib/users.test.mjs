@@ -28,6 +28,10 @@ beforeEach(() => {
   db.exec(`
     CREATE TABLE meal_template_items (id TEXT PRIMARY KEY, templateId TEXT NOT NULL);
     CREATE TABLE foods (id TEXT PRIMARY KEY, ownerId TEXT);
+    CREATE TABLE vision_requests (
+      id TEXT PRIMARY KEY, userId TEXT, mealPhotoRunId TEXT, imageHash TEXT NOT NULL,
+      responseJson TEXT
+    );
   `);
 });
 
@@ -146,6 +150,12 @@ describe('deleteUser', () => {
     db.prepare('INSERT INTO meal_template_items (id, templateId) VALUES (?, ?)').run('item-j', 'tpl-j');
     db.prepare('INSERT INTO foods (id, ownerId) VALUES (?, ?)').run('own-j', josh.id);
     db.prepare('INSERT INTO foods (id, ownerId) VALUES (?, ?)').run('shared', null);
+    db.prepare('INSERT INTO vision_requests VALUES (?, ?, ?, ?, ?)').run(
+      'vision-j', josh.id, 'meal_photo_runs-j', 'private-hash', '{"meal":"rice"}',
+    );
+    db.prepare('INSERT INTO vision_requests VALUES (?, ?, ?, ?, ?)').run(
+      'vision-s', sam.id, 'meal_photo_runs-s', 'other-hash', '{"meal":"soup"}',
+    );
 
     const removed = deleteUser(db, 'josh');
 
@@ -157,6 +167,15 @@ describe('deleteUser', () => {
     }
     // Shared reference data survives; their own food doesn't.
     expect(db.prepare('SELECT id FROM foods').all().map((f) => f.id)).toEqual(['shared']);
+    expect(db.prepare("SELECT * FROM vision_requests WHERE id = 'vision-j'").get()).toMatchObject({
+      userId: null,
+      mealPhotoRunId: null,
+      imageHash: '',
+      responseJson: null,
+    });
+    expect(db.prepare("SELECT userId FROM vision_requests WHERE id = 'vision-s'").get().userId).toBe(
+      sam.id,
+    );
   });
 
   it('complains about a user who does not exist', () => {

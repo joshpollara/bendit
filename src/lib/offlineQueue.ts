@@ -19,6 +19,8 @@ export interface QueuedWrite {
   /** The entry's own id, so replaying can't duplicate it. */
   id: string;
   path: string;
+  /** Appends use POST; idempotent terminal updates such as feedback use PUT. */
+  method?: 'POST' | 'PUT';
   body: unknown;
   /** Which day this write belongs to, for showing pending items in context. */
   date?: string;
@@ -78,7 +80,7 @@ export const useQueue = create<QueueState>((set, get) => ({
     for (const write of queue) {
       try {
         const res = await fetch(write.path, {
-          method: 'POST',
+          method: write.method ?? 'POST',
           headers: { 'Content-Type': 'application/json' },
           body: JSON.stringify(write.body),
         });

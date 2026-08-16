@@ -5,7 +5,7 @@
 // path: reading printed digits is something the phone can do, but recognising
 // a plate of food is not.
 
-import type { Food } from '../types';
+import type { Food, Meal } from '../types';
 import { postToModel, resizeForModel, type VisionMeta } from './vision';
 
 export type ItemConfidence = 'high' | 'medium' | 'low';
@@ -14,7 +14,7 @@ export type MealPhotoStage = 'preparing' | 'analyzing';
 export type PortionRange = { low: number; median: number; high: number };
 
 export type MealItem = {
-  id?: string;
+  id: string;
   kind?: 'food' | 'adjustment';
   /** What the model called it — kept even when nothing matched. */
   name: string;
@@ -74,6 +74,8 @@ export type MealEstimatePath = {
 };
 
 export type MealEstimate = {
+  /** Opaque server id used to attach review feedback without retaining the photo. */
+  estimateId: string;
   items: MealItem[];
   total: {
     calories: number;
@@ -100,6 +102,61 @@ export type MealEstimate = {
   meta: VisionMeta;
 };
 
+export type MealFeedbackRating = 'close' | 'needed_edits' | 'way_off';
+
+export type MealFeedbackIssue =
+  | 'wrong_food'
+  | 'portion_off'
+  | 'food_missing'
+  | 'extra_food'
+  | 'sauce_preparation'
+  | 'calories_macros';
+
+export type MealFeedbackOutcome = 'logged' | 'dismissed' | 'retake' | 'barcode';
+
+export type MealFeedbackAction =
+  | { type: 'question_answered'; itemId: string; choiceId: string }
+  | {
+      type:
+        | 'item_food_changed'
+        | 'item_amount_changed'
+        | 'item_calories_changed'
+        | 'item_added'
+        | 'item_removed';
+      itemId: string;
+      choiceId?: never;
+    };
+
+export type MealFeedbackItem = {
+  id: string;
+  kind: 'food' | 'adjustment';
+  foodId: string | null;
+  name: string;
+  grams: number;
+  calories: number | null;
+  protein: number | null;
+  carbs: number | null;
+  fat: number | null;
+  low: number | null;
+  high: number | null;
+};
+
+export type MealFeedback = {
+  outcome: MealFeedbackOutcome;
+  rating: MealFeedbackRating | null;
+  issues: MealFeedbackIssue[];
+  note: string | null;
+  actions: MealFeedbackAction[];
+  final: {
+    meal: Meal;
+    total: MealEstimate['total'];
+    items: MealFeedbackItem[];
+  } | null;
+};
+
+export const MAX_MEAL_FEEDBACK_ITEMS = 20;
+export const MAX_MEAL_FEEDBACK_ACTIONS = 50;
+
 export async function estimateMealFromPhoto(
   photo: Blob,
   { onStage }: { onStage?: (stage: MealPhotoStage) => void } = {},
@@ -113,7 +170,16 @@ export async function estimateMealFromPhoto(
   });
   // Remember the model's own words before the matched food's name takes over on
   // screen, so a wrong match is visible as a wrong match.
-  return { ...estimate, items: estimate.items.map((item) => ({ ...item, seenAs: item.name })) };
+  return {
+    ...estimate,
+    items: estimate.items.map((item) => ({
+      ...item,
+      // Server parser items normally have ids. A fallback keeps corrections and
+      // resulting log entries linkable when one does not, without using the photo.
+      id: item.id ?? crypto.randomUUID(),
+      seenAs: item.name,
+    })),
+  };
 }
 
 /**
@@ -190,6 +256,7 @@ export function itemFromFood(food: Food, grams: number, seenAs?: string): MealIt
     food.kcal100 ?? (food.servingGrams ? (food.caloriesPerServing * 100) / food.servingGrams : null);
 
   return {
+    id: crypto.randomUUID(),
     name: food.name,
     kind: 'food',
     seenAs,
@@ -327,7 +394,9 @@ function perHundred(item: MealItem, key: 'protein' | 'carbs' | 'fat'): number | 
 
 /** The meal's totals, recomputed after edits. */
 export function totalsFor(items: MealItem[]): MealEstimate['total'] {
-  const priced = items.filter((i) => i.nutrition);
+  // A zero amount can exist briefly while a number field is being edited. It
+  // must not retain stale nutrition in either the displayed or saved total.
+  const priced = items.filter((i) => i.nutrition && (i.kind === 'adjustment' || i.grams > 0));
   const add = (fn: (i: MealItem) => number | null | undefined) =>
     priced.reduce((sum, item) => sum + (fn(item) ?? 0), 0);
   return {
@@ -335,7 +404,82 @@ export function totalsFor(items: MealItem[]): MealEstimate['total'] {
     protein: Math.round(add((i) => i.nutrition?.protein) * 10) / 10,
     carbs: Math.round(add((i) => i.nutrition?.carbs) * 10) / 10,
     fat: Math.round(add((i) => i.nutrition?.fat) * 10) / 10,
-    low: Math.round(add((i) => i.range?.low)),
-    high: Math.round(add((i) => i.range?.high)),
+    low: Math.round(add((i) => i.range?.low ?? i.nutrition?.calories)),
+    high: Math.round(add((i) => i.range?.high ?? i.nutrition?.calories)),
+  };
+}
+
+/** Blank, zero and malformed number drafts are not valid meal amounts. */
+export function positiveMealNumber(value: string): number | null {
+  const number = Number(value);
+  return value.trim() !== '' && Number.isFinite(number) && number > 0 ? number : null;
+}
+
+/** One action per kind and item is enough; the final snapshot carries the values. */
+export function appendMealFeedbackAction(
+  actions: MealFeedbackAction[],
+  action: MealFeedbackAction,
+): MealFeedbackAction[] {
+  const alreadyRecorded = actions.some(
+    (current) =>
+      current.type === action.type &&
+      current.itemId === action.itemId &&
+      current.choiceId === action.choiceId,
+  );
+  return alreadyRecorded || actions.length >= MAX_MEAL_FEEDBACK_ACTIONS
+    ? actions
+    : [...actions, action];
+}
+
+/** Build the bounded, photo-free snapshot sent when review reaches an outcome. */
+export function mealFeedbackFor({
+  outcome,
+  rating = null,
+  issues = [],
+  note = '',
+  actions = [],
+  meal,
+  items,
+}: {
+  outcome: MealFeedbackOutcome;
+  rating?: MealFeedbackRating | null;
+  issues?: MealFeedbackIssue[];
+  note?: string;
+  actions?: MealFeedbackAction[];
+  meal: Meal;
+  items: MealItem[];
+}): MealFeedback {
+  const negative = rating === 'needed_edits' || rating === 'way_off';
+  const trimmedNote = negative ? note.trim().slice(0, 300) : '';
+  const finalItems = items.slice(0, MAX_MEAL_FEEDBACK_ITEMS).map((item) => {
+    if (item.kind === 'adjustment' || item.grams > 0) return item;
+    return { ...item, nutrition: null, range: null, error: null, servings: undefined };
+  });
+  return {
+    outcome,
+    rating,
+    issues: negative ? [...issues] : [],
+    note: trimmedNote || null,
+    actions: actions.slice(0, MAX_MEAL_FEEDBACK_ACTIONS),
+    final:
+      outcome === 'logged'
+        ? {
+            meal,
+            total: totalsFor(finalItems),
+            items: finalItems.map((item) => ({
+              id: item.id,
+              kind: item.kind === 'adjustment' ? 'adjustment' : 'food',
+              foodId: item.food?.id ?? null,
+              name: (item.food?.name ?? item.name).trim().slice(0, 120),
+              grams: item.grams,
+              calories: item.nutrition?.calories ?? null,
+              protein: item.nutrition?.protein ?? null,
+              carbs: item.nutrition?.carbs ?? null,
+              fat: item.nutrition?.fat ?? null,
+              low: item.range?.low ?? null,
+              high: item.range?.high ?? null,
+            })),
+          }
+        : null,
   };
 }

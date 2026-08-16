@@ -20,6 +20,14 @@ vi.stubGlobal('localStorage', {
 vi.stubGlobal('window', { dispatchEvent: vi.fn() });
 
 const exercise = { date: '2026-08-13', name: 'Running', minutes: 30, caloriesBurned: 300 };
+const feedback = {
+  outcome: 'dismissed' as const,
+  rating: null,
+  issues: [],
+  note: null,
+  actions: [],
+  final: null,
+};
 
 const respond = (status: number, body: unknown = {}) =>
   vi.stubGlobal(
@@ -41,6 +49,19 @@ describe('a write that can be queued', () => {
     vi.stubGlobal('fetch', vi.fn(async () => Promise.reject(new TypeError('failed to fetch'))));
     await api.addExercise(exercise);
     expect(useQueue.getState().queue).toHaveLength(1);
+  });
+
+  it('parks meal feedback with PUT so a transient failure does not lose it', async () => {
+    vi.stubGlobal('fetch', vi.fn(async () => Promise.reject(new TypeError('failed to fetch'))));
+    await api.putMealEstimateFeedback('run-1', feedback);
+    expect(useQueue.getState().queue).toEqual([
+      expect.objectContaining({
+        id: 'meal-feedback:run-1',
+        path: '/api/meals/estimate/run-1/feedback',
+        method: 'PUT',
+        body: feedback,
+      }),
+    ]);
   });
 
   it('parks it when the server is broken, because that is worth retrying', async () => {
