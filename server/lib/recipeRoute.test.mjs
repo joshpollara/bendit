@@ -16,6 +16,8 @@ const READ = {
   ingredientMatchNames: ['plain flour', 'egg'],
   servings: 4,
   servingsStated: true,
+  sourceComplete: true,
+  sourceWarnings: [],
 };
 
 const withJsonLd = `<html><head><script type="application/ld+json">${JSON.stringify({
@@ -179,5 +181,82 @@ describe('POST /api/recipes/from-photo', () => {
     expect(res.body.ingredients[0].food?.id).toBe('usda-flour');
     expect(provider.extract.mock.calls[0][0].imageBase64).toBe('a photo');
     expect(provider.extract.mock.calls[0][0].prompt).toContain('complete import payload');
+    expect(provider.extract.mock.calls[0][0].schema.required).toEqual(
+      expect.arrayContaining(['sourceComplete', 'sourceWarnings']),
+    );
+    expect(db.prepare('SELECT task FROM vision_requests').get().task).toBe('recipePhoto');
+  });
+
+  it('keeps a readable fragment editable but marks it incomplete', async () => {
+    provider.extract = vi.fn(async () => ({
+      data: {
+        ...READ,
+        sourceComplete: false,
+        sourceWarnings: ['The instructions continue on the next page.'],
+      },
+      raw: '{}',
+      model: 'gemini-3.1-flash-lite',
+      latencyMs: 640,
+      usage: {},
+    }));
+    const handler = createRecipeFromPhotoHandler({
+      db,
+      visionHandler: createVisionExtractHandler({ db, provider }),
+    });
+    const res = await callPhoto(handler);
+
+    expect(res.statusCode).toBe(200);
+    expect(res.body).toMatchObject({
+      name: 'Pancakes',
+      sourceComplete: false,
+      sourceWarnings: ['The instructions continue on the next page.'],
+    });
+  });
+
+  it('does not treat a missing completeness verdict as complete', async () => {
+    provider.extract = vi.fn(async () => ({
+      data: {
+        ...READ,
+        sourceComplete: undefined,
+        sourceWarnings: undefined,
+      },
+      raw: '{}',
+      model: 'gemini-3.1-flash-lite',
+      latencyMs: 640,
+      usage: {},
+    }));
+    const handler = createRecipeFromPhotoHandler({
+      db,
+      visionHandler: createVisionExtractHandler({ db, provider }),
+    });
+    const res = await callPhoto(handler);
+
+    expect(res.statusCode).toBe(200);
+    expect(res.body.sourceComplete).toBe(false);
+    expect(res.body.sourceWarnings[0]).toMatch(/could not verify/i);
+  });
+
+  it('keeps the no-recipe response when no ingredients were readable', async () => {
+    provider.extract = vi.fn(async () => ({
+      data: {
+        ...READ,
+        ingredients: [],
+        ingredientMatchNames: [],
+        sourceComplete: false,
+        sourceWarnings: ['The page is unreadable.'],
+      },
+      raw: '{}',
+      model: 'gemini-3.1-flash-lite',
+      latencyMs: 640,
+      usage: {},
+    }));
+    const handler = createRecipeFromPhotoHandler({
+      db,
+      visionHandler: createVisionExtractHandler({ db, provider }),
+    });
+    const res = await callPhoto(handler);
+
+    expect(res.statusCode).toBe(422);
+    expect(res.body.error.code).toBe('no_recipe_found');
   });
 });

@@ -50,7 +50,7 @@ const INSERT = `
 
 const UPDATE = `
   UPDATE vision_requests SET
-    status = @status, errorCode = @errorCode, latencyMs = @latencyMs,
+    status = @status, errorCode = @errorCode, model = @model, latencyMs = @latencyMs,
     inputTokens = @inputTokens, outputTokens = @outputTokens,
     totalTokens = @totalTokens, responseJson = @responseJson
   WHERE id = @id AND userId IS @userId`;
@@ -153,6 +153,7 @@ export function createVisionExtractHandler({ db, provider, providers = {}, daily
       });
       Object.assign(record, {
         status: 'ok',
+        model: result.model ?? record.model,
         latencyMs: result.latencyMs,
         inputTokens: result.usage?.inputTokens ?? null,
         outputTokens: result.usage?.outputTokens ?? null,
@@ -171,6 +172,7 @@ export function createVisionExtractHandler({ db, provider, providers = {}, daily
         },
       });
     } catch (error) {
+      if (error?.model) record.model = error.model;
       record.errorCode = error?.code ?? 'unknown';
       record.status = 'error';
       // Failed provider responses contain the distinction we need in order to

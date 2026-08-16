@@ -11,6 +11,7 @@ const TASK_LABELS: Record<string, string> = {
   label: 'Nutrition labels',
   meal: 'Meal photos',
   recipe: 'Recipes',
+  recipePhoto: 'Recipe photos',
 };
 
 const ERROR_LABELS: Record<string, string> = {

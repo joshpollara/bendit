@@ -1,5 +1,5 @@
 import { lazy, Suspense, useRef, useState } from 'react';
-import { api, type Recipe, type RecipeDraft } from '../lib/api';
+import { ApiError, api, type Recipe, type RecipeDraft } from '../lib/api';
 import { useData } from '../lib/useData';
 import { resizeForModel } from '../lib/vision';
 import { formatCalories } from '../lib/units';
@@ -15,6 +15,31 @@ const CameraCapture = lazy(() => import('../components/CameraCapture'));
 
 const card = 'rounded-2xl border border-line bg-card p-4 shadow-sm';
 
+const retryablePhotoCodes = new Set(['timeout', 'network_error', 'provider_error']);
+
+export function canRetryRecipePhoto(error: unknown) {
+  return !(error instanceof ApiError) || retryablePhotoCodes.has(error.code ?? '');
+}
+
+export function recipePhotoErrorMessage(error: unknown) {
+  if (!(error instanceof ApiError)) return "AI couldn't finish reading that photo. Try again.";
+  switch (error.code) {
+    case 'timeout':
+      return 'AI took too long to read that photo. Try again — you won’t need to retake it.';
+    case 'network_error':
+    case 'provider_error':
+      return "AI couldn't finish reading that photo. Try again — you won’t need to retake it.";
+    case 'quota_exceeded':
+      return "That’s today’s limit on AI photo reads.";
+    case 'rate_limited':
+      return 'AI photo reading is busy right now. Try again later.';
+    case 'unconfigured':
+      return 'AI photo reading is not switched on for this server.';
+    default:
+      return error.message || "Couldn't read that photo.";
+  }
+}
+
 export default function Recipes() {
   const [reload, setReload] = useState(0);
   const recipes = useData(() => api.recipes(), [reload]);
@@ -22,13 +47,15 @@ export default function Recipes() {
   const [url, setUrl] = useState('');
   const [busy, setBusy] = useState<'url' | 'photo' | null>(null);
   const [error, setError] = useState<string | null>(null);
+  const [photoToRetry, setPhotoToRetry] = useState<string | null>(null);
   const [shooting, setShooting] = useState(false);
   const fileInput = useRef<HTMLInputElement>(null);
 
   async function fromUrl() {
-    if (!url.trim()) return;
+    if (!url.trim() || busy !== null) return;
     setBusy('url');
     setError(null);
+    setPhotoToRetry(null);
     try {
       setDraft({ draft: await api.recipeFromUrl(url.trim()) });
       setUrl('');
@@ -48,20 +75,34 @@ export default function Recipes() {
     }
   }
 
-  async function fromPhoto(photo: Blob) {
+  async function fromPhoto(photo: Blob | string) {
+    if (busy !== null) return;
     setShooting(false);
     setBusy('photo');
     setError(null);
+    setPhotoToRetry(null);
+    let image: string | null = typeof photo === 'string' ? photo : null;
+    if (!image) {
+      try {
+        image = await resizeForModel(photo as Blob);
+      } catch {
+        setError("That image couldn't be prepared. Choose another photo.");
+        setBusy(null);
+        return;
+      }
+    }
     try {
-      setDraft({ draft: await api.recipeFromPhoto(await resizeForModel(photo)) });
+      setDraft({ draft: await api.recipeFromPhoto(image) });
     } catch (e) {
-      setError(e instanceof Error ? e.message : "Couldn't read that photo.");
+      setError(recipePhotoErrorMessage(e));
+      if (image && canRetryRecipePhoto(e)) setPhotoToRetry(image);
     } finally {
       setBusy(null);
     }
   }
 
   function blank() {
+    if (busy !== null) return;
     setDraft({
       draft: {
         name: '',
@@ -78,6 +119,7 @@ export default function Recipes() {
   }
 
   async function edit(recipe: Recipe) {
+    if (busy !== null) return;
     setDraft({
       id: recipe.id,
       draft: {
@@ -135,7 +177,7 @@ export default function Recipes() {
           <div>
             <h2 className="font-semibold">Import a recipe with AI</h2>
             <p className="mt-0.5 text-sm text-ink-secondary">
-              Paste a link and we’ll pull out the ingredients, method, and servings for you to check.
+              Paste a link or photograph a cookbook page. AI will pull out the full recipe for you to check.
             </p>
           </div>
         </div>
@@ -196,16 +238,21 @@ export default function Recipes() {
           <button
             type="button"
             disabled={busy !== null}
-            onClick={() => setShooting(true)}
+            onClick={() => {
+              setError(null);
+              setPhotoToRetry(null);
+              setShooting(true);
+            }}
             className="flex flex-1 items-center justify-center gap-2 rounded-xl border border-accent py-2.5 text-sm font-semibold text-accent disabled:opacity-50"
           >
             <CameraIcon className="h-4 w-4" />
-            {busy === 'photo' ? 'Reading…' : 'Photograph a page'}
+            {busy === 'photo' ? 'AI is reading…' : 'Photograph a page'}
           </button>
           <button
             type="button"
+            disabled={busy !== null}
             onClick={blank}
-            className="rounded-xl border border-line px-4 py-2.5 text-sm font-semibold text-ink-secondary"
+            className="rounded-xl border border-line px-4 py-2.5 text-sm font-semibold text-ink-secondary disabled:opacity-50"
           >
             Type it in
           </button>
@@ -223,7 +270,24 @@ export default function Recipes() {
           }}
         />
 
-        {error && <p className="mx-4 mb-4 rounded-xl bg-over-soft px-3 py-2 text-xs text-over">{error}</p>}
+        {error && (
+          <div
+            className="mx-4 mb-4 flex items-center gap-3 rounded-xl bg-over-soft px-3 py-2 text-xs text-over"
+            role="alert"
+          >
+            <p className="min-w-0 flex-1">{error}</p>
+            {photoToRetry && (
+              <button
+                type="button"
+                disabled={busy !== null}
+                onClick={() => void fromPhoto(photoToRetry)}
+                className="shrink-0 rounded-lg border border-over/30 px-2.5 py-1.5 font-semibold disabled:opacity-50"
+              >
+                Try AI again
+              </button>
+            )}
+          </div>
+        )}
       </section>
 
       {recipes?.length === 0 && (
@@ -234,7 +298,12 @@ export default function Recipes() {
         {recipes?.map((recipe) => (
           <li key={recipe.id} className={card}>
             <div className="flex items-start gap-3">
-              <button type="button" onClick={() => void edit(recipe)} className="min-w-0 flex-1 text-left">
+              <button
+                type="button"
+                disabled={busy !== null}
+                onClick={() => void edit(recipe)}
+                className="min-w-0 flex-1 text-left disabled:opacity-50"
+              >
                 <p className="truncate font-medium">{recipe.name}</p>
                 <p className="truncate text-xs text-ink-muted">
                   {recipe.servings} servings · {recipe.ingredients.length} ingredients
@@ -267,7 +336,7 @@ export default function Recipes() {
           <CameraCapture
             facing="environment"
             title="Photograph the recipe"
-            hint="Get the ingredients list in frame."
+            hint="Keep the entire readable recipe page in frame, straight and close."
             onCapture={(photo) => void fromPhoto(photo)}
             onClose={() => setShooting(false)}
             onPickFile={() => {

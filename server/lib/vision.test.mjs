@@ -180,6 +180,45 @@ describe('vision provider', () => {
     expect(fetchImpl).toHaveBeenCalledTimes(3);
   });
 
+  it('can retry a deadline failure on a faster fallback model', async () => {
+    const fetchImpl = vi
+      .fn()
+      .mockResolvedValueOnce(
+        errorResponse(503, {
+          body: JSON.stringify({ error: { message: 'Deadline expired.' } }),
+        }),
+      )
+      .mockResolvedValueOnce(geminiResponse({ calories: 210 }));
+
+    const result = await provider(fetchImpl, {
+      model: 'gemini-strong',
+      fallbackModel: 'gemini-fast',
+      maxAttempts: 2,
+    }).extract(call);
+
+    expect(fetchImpl.mock.calls[0][0]).toContain('/gemini-strong:generateContent');
+    expect(fetchImpl.mock.calls[1][0]).toContain('/gemini-fast:generateContent');
+    expect(result.model).toBe('gemini-fast');
+  });
+
+  it('treats Gemini\'s own deadline 503 as a retryable timeout', async () => {
+    const fetchImpl = vi.fn(async () =>
+      errorResponse(503, {
+        body: JSON.stringify({
+          error: { message: 'Deadline expired before operation could complete.' },
+        }),
+      }),
+    );
+
+    await expect(provider(fetchImpl).extract(call)).rejects.toMatchObject({
+      code: 'timeout',
+      status: 503,
+      retryable: true,
+      message: expect.stringMatching(/Deadline expired/),
+    });
+    expect(fetchImpl).toHaveBeenCalledTimes(3);
+  });
+
   it('does not retry a request that was wrong to begin with', async () => {
     const fetchImpl = vi.fn(async () => errorResponse(400));
     await expect(provider(fetchImpl).extract(call)).rejects.toBeInstanceOf(VisionError);

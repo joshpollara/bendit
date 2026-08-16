@@ -130,7 +130,7 @@ export function createRecipeFromPhotoHandler({ db, visionHandler }) {
         return proxyRes;
       },
     };
-    await visionHandler({ ...req, body: { ...req.body, task: 'recipe' } }, proxyRes);
+    await visionHandler({ ...req, body: { ...req.body, task: 'recipePhoto' } }, proxyRes);
 
     if (captured.statusCode !== 200 || !captured.body?.data) {
       return res.status(captured.statusCode).json(captured.body ?? { error: { code: 'unknown' } });
@@ -141,8 +141,20 @@ export function createRecipeFromPhotoHandler({ db, visionHandler }) {
         error: { code: 'no_recipe_found', message: 'No recipe was readable in that photo.' },
       });
     }
+    const sourceWarnings = Array.isArray(read.sourceWarnings)
+      ? read.sourceWarnings.map((warning) => String(warning).trim()).filter(Boolean)
+      : [];
+    const sourceComplete = read.sourceComplete === true;
     return res.json({
       ...asDraft(db, read, req.userId),
+      // Keep a readable fragment editable, but never let it masquerade as a
+      // verified whole recipe. This is especially important for cookbook
+      // recipes that continue on a second page the one-photo UI cannot accept.
+      sourceComplete,
+      sourceWarnings:
+        sourceComplete || sourceWarnings.length
+          ? sourceWarnings
+          : ['AI could not verify that the entire recipe is visible.'],
       sourceType: 'photo',
       readBy: 'model',
       meta: captured.body.meta,

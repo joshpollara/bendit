@@ -106,6 +106,24 @@ describe('POST /api/vision/extract', () => {
     expect(row.imageHash).toHaveLength(32);
   });
 
+  it('records the model that actually answered after provider fallback', async () => {
+    const provider = {
+      ...okProvider(),
+      model: 'gemini-strong',
+      extract: vi.fn(async () => ({
+        data: { basis: 'g', confidence: 'high' },
+        raw: '{"basis":"g","confidence":"high"}',
+        model: 'gemini-fast',
+        latencyMs: 900,
+        usage: { inputTokens: 300, outputTokens: 40, totalTokens: 340 },
+      })),
+    };
+
+    await post(createVisionExtractHandler({ db, provider }), { task: 'label', image });
+
+    expect(rows()[0].model).toBe('gemini-fast');
+  });
+
   it('never stores the image itself, only its hash', async () => {
     await post(createVisionExtractHandler({ db, provider: okProvider() }), { task: 'label', image });
     const [row] = rows();

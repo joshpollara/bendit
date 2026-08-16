@@ -132,6 +132,32 @@ export default function RecipeEditor({
         </div>
       )}
 
+      {initial.sourceType === 'photo' && (
+        <div
+          className={`flex items-start gap-2 rounded-xl px-3 py-2.5 text-xs ${
+            initial.sourceComplete === false
+              ? 'bg-warn-soft text-warn-deep'
+              : 'bg-surface text-ink-secondary'
+          }`}
+        >
+          <SparkleIcon className="mt-0.5 h-4 w-4 shrink-0 text-accent" />
+          <div>
+            <p>
+              {initial.sourceComplete === false
+                ? 'AI could only verify part of this recipe. Add anything missing before saving.'
+                : 'AI extracted this from the photo. Check the details below before saving.'}
+            </p>
+            {initial.sourceComplete === false && (initial.sourceWarnings?.length ?? 0) > 0 && (
+              <ul className="mt-1 list-disc pl-4">
+                {initial.sourceWarnings!.map((warning, index) => (
+                  <li key={`${warning}:${index}`}>{warning}</li>
+                ))}
+              </ul>
+            )}
+          </div>
+        </div>
+      )}
+
       <label className="flex items-center gap-3 text-sm text-ink-secondary">
         Makes
         <input
