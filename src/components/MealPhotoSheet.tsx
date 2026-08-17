@@ -6,6 +6,8 @@ import {
   itemFromFood,
   mealFeedbackFor,
   MAX_MEAL_FEEDBACK_ITEMS,
+  MAX_MEAL_HINT_LENGTH,
+  normalizeMealHint,
   positiveMealNumber,
   replaceItemFood,
   rescaleItem,
@@ -122,6 +124,7 @@ export default function MealPhotoSheet({
   onLog,
   onClose,
   onRetake,
+  onReanalyze,
   onScanBarcode,
   onFeedback,
 }: {
@@ -130,6 +133,12 @@ export default function MealPhotoSheet({
   onLog: (items: MealItem[], meal: Meal) => Promise<void> | void;
   onClose: () => void;
   onRetake: () => void;
+  /**
+   * Reads the same photograph again with a description of what the food is.
+   * Rejects if the read fails, and the sheet stays exactly as it was — the
+   * result on screen is not thrown away for a request that never landed.
+   */
+  onReanalyze: (hint: string | null, feedback: MealFeedback) => Promise<void>;
   onScanBarcode: () => void;
   onFeedback: (feedback: MealFeedback) => void;
 }) {
@@ -144,6 +153,9 @@ export default function MealPhotoSheet({
   const [note, setNote] = useState('');
   const [showNote, setShowNote] = useState(false);
   const [actions, setActions] = useState<MealFeedbackAction[]>([]);
+  const [hintDraft, setHintDraft] = useState(estimate.hint ?? '');
+  const [rereading, setRereading] = useState(false);
+  const [rereadError, setRereadError] = useState<string | null>(null);
 
   const total = totalsFor(items);
   // An item with a calorie figure can be logged, whether that figure came from
@@ -227,6 +239,26 @@ export default function MealPhotoSheet({
       current.includes(issue) ? current.filter((candidate) => candidate !== issue) : [...current, issue],
     );
 
+  /**
+   * The wrong food named on a plate is not a portion someone can fix by
+   * dragging a number: every calorie under it came from the wrong record. So
+   * the description that would have helped before the shutter is offered again
+   * here, and the same photograph is read a second time knowing it. Whatever
+   * was edited on this screen goes with the run being replaced — that pairing
+   * of a wrong answer with the words that corrected it is the useful part.
+   */
+  async function reread() {
+    const hint = normalizeMealHint(hintDraft);
+    setRereading(true);
+    setRereadError(null);
+    try {
+      await onReanalyze(hint, feedback('reanalyzed'));
+    } catch (error) {
+      setRereadError(error instanceof Error ? error.message : "Couldn't read that photo again.");
+      setRereading(false);
+    }
+  }
+
   async function log() {
     setSaving(true);
     try {
@@ -266,6 +298,12 @@ export default function MealPhotoSheet({
           ? 'Check the weights before adding them.'
           : 'Nothing was recognised. Add what you ate.'}
       </p>
+      {/* What the model was told the meal was. Shown because a result read
+          against a description should be judged knowing the description — and
+          because a typo in it explains an otherwise baffling answer. */}
+      {estimate.hint && (
+        <p className="mt-1 text-xs text-ink-secondary">Read as “{estimate.hint}”.</p>
+      )}
 
       {estimate.status === 'retake' && (
         <div className="mt-3 border-y border-over/20 bg-over-soft px-1 py-3 text-over" role="alert">
@@ -459,6 +497,43 @@ export default function MealPhotoSheet({
         </button>
       )}
 
+      <section className="mt-3 border-y border-line py-3" aria-labelledby="meal-reread">
+        <p id="meal-reread" className="text-sm font-medium">
+          {estimate.hint ? 'Still not right?' : 'Not the right food?'}
+        </p>
+        <p className="mt-1 text-xs text-ink-muted">
+          Say what it is and the same photo is read again. The portion still comes from the photo.
+        </p>
+        <div className="mt-2 flex gap-2">
+          <input
+            type="text"
+            value={hintDraft}
+            maxLength={MAX_MEAL_HINT_LENGTH}
+            disabled={rereading}
+            placeholder="e.g. kalfsvlees, geen varkensvlees"
+            aria-label="What the meal actually is"
+            onChange={(event) => setHintDraft(event.target.value)}
+            onKeyDown={(event) => {
+              if (event.key === 'Enter' && normalizeMealHint(hintDraft)) void reread();
+            }}
+            className="min-w-0 flex-1 rounded-lg border border-line bg-card px-3 py-2 text-sm outline-none focus:border-accent"
+          />
+          <button
+            type="button"
+            disabled={rereading || !normalizeMealHint(hintDraft)}
+            onClick={() => void reread()}
+            className="shrink-0 rounded-lg border border-accent px-3 py-2 text-sm font-semibold text-accent disabled:border-line disabled:text-ink-muted"
+          >
+            {rereading ? 'Reading…' : 'Read again'}
+          </button>
+        </div>
+        {rereadError && (
+          <p className="mt-2 text-xs text-over" role="alert">
+            {rereadError}
+          </p>
+        )}
+      </section>
+
       <div className="mt-3 rounded-xl bg-surface p-3 text-center">
         <p className="text-2xl font-semibold tabular-nums">
           {formatCalories(total.calories)} <span className="text-base font-normal">cal</span>
@@ -586,7 +661,7 @@ export default function MealPhotoSheet({
 
       <button
         type="button"
-        disabled={loggable.length === 0 || saving}
+        disabled={loggable.length === 0 || saving || rereading}
         onClick={log}
         className="mt-3 w-full rounded-xl bg-accent py-3 font-semibold text-white disabled:opacity-40"
       >

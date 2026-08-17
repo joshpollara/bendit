@@ -7,7 +7,10 @@
 import crypto from 'node:crypto';
 
 const SCHEMA_VERSION = 1;
-const TERMINAL_OUTCOMES = new Set(['logged', 'dismissed', 'retake', 'barcode']);
+// 'reanalyzed' ends a run without ending the meal: the same photograph was read
+// again with a description of what it is. It is the sharpest signal in the
+// table — someone looked at the answer and said the food was wrong.
+const TERMINAL_OUTCOMES = new Set(['logged', 'dismissed', 'retake', 'barcode', 'reanalyzed']);
 const OUTCOMES = TERMINAL_OUTCOMES;
 const RATINGS = new Set(['close', 'needed_edits', 'way_off']);
 const ISSUES = new Set([
@@ -295,18 +298,27 @@ export function createMealPhotoTables(db) {
       issuesJson TEXT,
       note TEXT,
       actionsJson TEXT,
-      derivedJson TEXT
+      derivedJson TEXT,
+      hint TEXT,
+      previousRunId TEXT
     );
     CREATE INDEX IF NOT EXISTS idx_meal_photo_runs_user_created
       ON meal_photo_runs(userId, createdAt);
   `);
+  // Added after the first release; databases created before them need them.
+  const columns = new Set(db.prepare('PRAGMA table_info(meal_photo_runs)').all().map((c) => c.name));
+  if (!columns.has('hint')) db.exec('ALTER TABLE meal_photo_runs ADD COLUMN hint TEXT');
+  if (!columns.has('previousRunId')) {
+    db.exec('ALTER TABLE meal_photo_runs ADD COLUMN previousRunId TEXT');
+  }
 }
 
 export function createMealPhotoRunStore(db) {
   createMealPhotoTables(db);
   const insert = db.prepare(`INSERT INTO meal_photo_runs
-    (id, userId, createdAt, updatedAt, status, schemaVersion)
-    VALUES (@id, @userId, @createdAt, @createdAt, 'analyzing', @schemaVersion)`);
+    (id, userId, createdAt, updatedAt, status, schemaVersion, hint, previousRunId)
+    VALUES (@id, @userId, @createdAt, @createdAt, 'analyzing', @schemaVersion, @hint, @previousRunId)`);
+  const ownRun = db.prepare('SELECT id FROM meal_photo_runs WHERE id = ? AND userId = ?');
   const ready = db.prepare(`UPDATE meal_photo_runs SET
     updatedAt = @updatedAt, status = 'reviewing', parserRequestId = @parserRequestId,
     holisticRequestId = @holisticRequestId, initialJson = @initialJson
@@ -318,15 +330,29 @@ export function createMealPhotoRunStore(db) {
   const discard = db.prepare("DELETE FROM meal_photo_runs WHERE id = ? AND status = 'analyzing'");
 
   return {
-    start(userId) {
+    // The description someone typed before the shutter is kept with the run: a
+    // hinted estimate and an unhinted one are not the same measurement, and
+    // nothing downstream can tell them apart afterwards without it.
+    start(userId, { hint = null, previousRunId = null } = {}) {
       const run = {
         id: crypto.randomUUID(),
         userId,
         createdAt: new Date().toISOString(),
         schemaVersion: SCHEMA_VERSION,
+        hint,
+        previousRunId,
       };
       insert.run(run);
       return run.id;
+    },
+    /**
+     * The run a re-read replaces, if the client named one it actually owns. A
+     * chain of runs over one photograph is what shows whether the description
+     * helped; an id from someone else's account would only corrupt it.
+     */
+    priorRun(userId, id) {
+      if (typeof id !== 'string' || !id) return null;
+      return ownRun.get(id, userId)?.id ?? null;
     },
     ready(id, { parserRequestId = null, holisticRequestId = null, estimate }) {
       ready.run({

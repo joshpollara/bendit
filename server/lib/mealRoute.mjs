@@ -2,6 +2,7 @@
 
 import { estimateMeal, reconcileMealEstimates } from './mealEstimate.mjs';
 import { createMealPhotoRunStore } from './mealFeedback.mjs';
+import { normalizeHint } from './visionTasks.mjs';
 
 function proxyResponse() {
   const captured = { statusCode: 200, body: null };
@@ -82,7 +83,16 @@ function aggregateMeta(parser, holistic) {
 export function createMealEstimateHandler({ db, visionHandler }) {
   const runs = createMealPhotoRunStore(db);
   return async function mealEstimateHandler(req, res) {
-    const estimateId = runs.start(req.userId);
+    // Both calls get the same optional description, for the same reason they get
+    // the same photograph: they are two readings of one meal.
+    const hint = normalizeHint(req.body?.hint);
+    const estimateId = runs.start(req.userId, {
+      hint,
+      // A second reading of the same photograph is a new run that knows which
+      // one it followed. Nothing of the photo is reused here — the client still
+      // sends the image, because the server never kept it.
+      previousRunId: runs.priorRun(req.userId, req.body?.previousEstimateId),
+    });
     try {
       // The calls see the same image but no output from one another. The vision
       // handler reserves quota before awaiting either provider, so this remains
@@ -135,7 +145,15 @@ export function createMealEstimateHandler({ db, visionHandler }) {
         holisticRequestId: holistic.requestId,
         estimate,
       });
-      return res.json({ ...estimate, estimateId, meta: aggregateMeta(parser, holistic) });
+      return res.json({
+        ...estimate,
+        estimateId,
+        // Echoed so the review screen can show what the estimate was told, and
+        // so a client that sent a description too long or unusable can see what
+        // actually reached the model.
+        hint,
+        meta: aggregateMeta(parser, holistic),
+      });
     } catch (error) {
       runs.failed(estimateId);
       throw error;

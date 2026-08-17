@@ -173,6 +173,33 @@ describe('meal photo runs', () => {
   it('rejects a final meal snapshot for a non-logged outcome', () => {
     expect(put({ ...feedback, outcome: 'dismissed' }).statusCode).toBe(400);
   });
+
+  it('closes a run that was read again with a description', () => {
+    const reread = { ...feedback, outcome: 'reanalyzed', final: null };
+    expect(put(reread).statusCode).toBe(200);
+    expect(db.prepare('SELECT status FROM meal_photo_runs WHERE id = ?').get(estimateId).status).toBe(
+      'reanalyzed',
+    );
+    // Still terminal: whatever happens on the second reading belongs to the
+    // second run, not to this one.
+    expect(put(feedback).statusCode).toBe(409);
+  });
+});
+
+describe('a second reading of the same photograph', () => {
+  it('links to the run it replaces, and only when that run is the caller’s', () => {
+    const runs = createMealPhotoRunStore(db);
+    expect(runs.priorRun('alice', estimateId)).toBe(estimateId);
+    expect(runs.priorRun('mallory', estimateId)).toBeNull();
+    expect(runs.priorRun('alice', 'no-such-run')).toBeNull();
+    expect(runs.priorRun('alice', undefined)).toBeNull();
+
+    const second = runs.start('alice', { hint: 'kalfsvlees', previousRunId: estimateId });
+    expect(db.prepare('SELECT hint, previousRunId FROM meal_photo_runs WHERE id = ?').get(second)).toEqual({
+      hint: 'kalfsvlees',
+      previousRunId: estimateId,
+    });
+  });
 });
 
 describe('meal photo links', () => {
