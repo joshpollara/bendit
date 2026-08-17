@@ -9,7 +9,8 @@ import { STRINGS } from '../lib/strings';
 import { useUI } from '../store/ui';
 import { MEALS, MEAL_LABELS, type Food, type Meal } from '../types';
 import {
-  estimateMealFromPhoto,
+  prepareMealPhoto,
+  requestMealEstimate,
   type MealEstimate,
   type MealFeedback,
   type MealItem,
@@ -31,6 +32,7 @@ const BarcodeScanner = lazy(() => import('../components/BarcodeScanner'));
 const MealPhotoSheet = lazy(() => import('../components/MealPhotoSheet'));
 // The camera is only opened deliberately, so it loads then too.
 const CameraCapture = lazy(() => import('../components/CameraCapture'));
+const MealHintSheet = lazy(() => import('../components/MealHintSheet'));
 
 type Tab = 'quick' | 'search' | 'recent' | 'meals' | 'mine' | 'create';
 
@@ -285,10 +287,18 @@ export default function AddFood() {
   const [selected, setSelected] = useState<Food | null>(null);
   const [scanning, setScanning] = useState(false);
   const [mealPhoto, setMealPhoto] = useState<'idle' | MealPhotoStage>('idle');
+  const [describingMeal, setDescribingMeal] = useState(false);
   const [shootingMeal, setShootingMeal] = useState(false);
+  // What the meal was said to be, kept between the description and the photo,
+  // and again through a retake so it needn't be typed twice.
+  const [mealHint, setMealHint] = useState<string | null>(null);
   const [estimate, setEstimate] = useState<MealEstimate | null>(null);
   const mealPhotoInput = useRef<HTMLInputElement>(null);
   const mealReadInFlight = useRef(false);
+  // The resized photo, kept only while its result is on screen, so a wrong
+  // identification can be answered with a description and read again without
+  // asking for the plate back. It is dropped with the result.
+  const mealImage = useRef<string | null>(null);
   const [banner, setBanner] = useState<string | null>(null);
   const [pendingBarcode, setPendingBarcode] = useState<string | undefined>();
   const [offResults, setOffResults] = useState<Food[]>([]);
@@ -369,16 +379,39 @@ export default function AddFood() {
     setMealPhoto('preparing');
     setBanner(null);
     try {
-      const next = await estimateMealFromPhoto(file, {
-        onStage: (stage) => setMealPhoto(stage),
-      });
-      setEstimate(next);
+      const image = await prepareMealPhoto(file);
+      mealImage.current = image;
+      setMealPhoto('analyzing');
+      setEstimate(await requestMealEstimate(image, { hint: mealHint }));
     } catch (e) {
       setBanner(e instanceof Error ? e.message : "Couldn't read that photo.");
     } finally {
       mealReadInFlight.current = false;
       setMealPhoto('idle');
     }
+  }
+
+  /** The same photograph, read again now that it has been told what it is. */
+  async function reanalyzeMealPhoto(hint: string | null, feedback: MealFeedback) {
+    const image = mealImage.current;
+    const previous = estimate;
+    if (!image || !previous) throw new Error('That photo is no longer available. Take another.');
+
+    const next = await requestMealEstimate(image, { hint, previousEstimateId: previous.estimateId });
+    // Closed while it was reading: the answer arrives to an empty screen and
+    // must not put the sheet back up over whatever is there now.
+    if (mealImage.current !== image) return;
+    // Only once the second reading is in hand: a failed re-read leaves the first
+    // result on screen, still loggable and still open for its own feedback.
+    putMealPhotoFeedback(previous.estimateId, feedback);
+    setMealHint(hint);
+    setEstimate(next);
+  }
+
+  function closeEstimate() {
+    setEstimate(null);
+    setMealHint(null);
+    mealImage.current = null;
   }
 
   /** Everything the photo found, logged in one go against the chosen meal. */
@@ -406,7 +439,10 @@ export default function AddFood() {
         mealPhotoItemId: item.id ?? null,
       });
     }
-    setEstimate(null);
+    // The description and the photo belonged to that plate. The next one gets a
+    // clean box rather than the last meal's name sitting there ready to be
+    // accepted.
+    closeEstimate();
     bump();
     setDate(date);
     navigate('/');
@@ -509,7 +545,7 @@ export default function AddFood() {
           type="button"
           aria-label="Photograph a meal"
           disabled={mealPhoto !== 'idle'}
-          onClick={() => setShootingMeal(true)}
+          onClick={() => setDescribingMeal(true)}
           className="flex h-10 w-10 items-center justify-center rounded-xl border border-line bg-card text-accent disabled:opacity-50"
         >
           <CameraIcon className="h-5 w-5" />
@@ -640,12 +676,30 @@ export default function AddFood() {
         </Suspense>
       )}
 
+      {describingMeal && (
+        <Suspense fallback={null}>
+          <MealHintSheet
+            initial={mealHint ?? ''}
+            onStart={(hint) => {
+              setMealHint(hint);
+              setDescribingMeal(false);
+              setShootingMeal(true);
+            }}
+            onClose={() => setDescribingMeal(false)}
+          />
+        </Suspense>
+      )}
+
       {shootingMeal && (
         <Suspense fallback={null}>
           <CameraCapture
             facing="environment"
             title="Photograph your meal"
-            hint="Get the whole plate in frame, from above if you can."
+            hint={
+              mealHint
+                ? `Get the whole plate in frame. Reading it as “${mealHint}”.`
+                : 'Get the whole plate in frame, from above if you can.'
+            }
             onCapture={(photo) => void readMealPhoto(photo)}
             onClose={() => setShootingMeal(false)}
             onPickFile={() => {
@@ -659,16 +713,23 @@ export default function AddFood() {
       {estimate && (
         <Suspense fallback={null}>
           <MealPhotoSheet
+            // A re-read is a different estimate of the same plate; the sheet
+            // starts over on it rather than keeping the first one's edits.
+            key={estimate.estimateId}
             estimate={estimate}
             meal={meal}
             onLog={logMealPhoto}
-            onClose={() => setEstimate(null)}
+            onClose={closeEstimate}
+            onReanalyze={reanalyzeMealPhoto}
             onRetake={() => {
               setEstimate(null);
-              setShootingMeal(true);
+              mealImage.current = null; // a retake replaces the photograph
+              // A retake is the moment someone most wants to say what the food
+              // was, so the description comes back up with what they had.
+              setDescribingMeal(true);
             }}
             onScanBarcode={() => {
-              setEstimate(null);
+              closeEstimate();
               setScanning(true);
             }}
             onFeedback={(feedback) => putMealPhotoFeedback(estimate.estimateId, feedback)}

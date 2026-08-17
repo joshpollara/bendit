@@ -9,7 +9,7 @@
 // the suite is allowed to make a paid call.
 
 import crypto from 'node:crypto';
-import { getTask } from './visionTasks.mjs';
+import { getTask, normalizeHint, promptFor, promptVersionFor } from './visionTasks.mjs';
 
 /** Images arrive already resized on-device; this fits a detailed 1536px JPEG. */
 export const MAX_IMAGE_BYTES = Math.floor(2.75 * 1024 * 1024);
@@ -73,10 +73,17 @@ export function createVisionExtractHandler({ db, provider, providers = {}, daily
     const fail = (code, message, extra = {}) =>
       res.status(HTTP_STATUS[code] ?? 500).json({ error: { code, message, ...extra } });
 
-    const { task: taskName, image, text, mimeType = 'image/jpeg' } = req.body ?? {};
+    const { task: taskName, image, text, hint, mimeType = 'image/jpeg' } = req.body ?? {};
     const task = getTask(taskName);
     if (!task) return fail('unknown_task', `There is no vision task called "${taskName}".`);
     const taskProvider = providers[taskName] ?? provider;
+
+    // Still not a prompt from the client: a task that accepts a description gets
+    // it as delimited data inside its own prompt, and a task that doesn't
+    // ignores it entirely.
+    const userHint = task.acceptsHint ? normalizeHint(hint) : null;
+    const prompt = promptFor(task, userHint);
+    const promptVersion = promptVersionFor(task, userHint);
 
     // Either a bare base64 string or a data: URL — both are one line of client
     // code away from each other.
@@ -115,7 +122,7 @@ export function createVisionExtractHandler({ db, provider, providers = {}, daily
       id: crypto.randomUUID(),
       createdAt: new Date().toISOString(),
       task: taskName,
-      promptVersion: task.version,
+      promptVersion,
       model: taskProvider.model,
       imageHash: crypto
         .createHash('sha256')
@@ -148,7 +155,7 @@ export function createVisionExtractHandler({ db, provider, providers = {}, daily
         imageBase64: base64,
         text: pageText,
         mimeType,
-        prompt: task.prompt,
+        prompt,
         schema: task.schema,
       });
       Object.assign(record, {
@@ -165,7 +172,7 @@ export function createVisionExtractHandler({ db, provider, providers = {}, daily
         data: result.data,
         meta: {
           model: result.model,
-          promptVersion: task.version,
+          promptVersion,
           latencyMs: result.latencyMs,
           usage: result.usage,
           callsRemainingToday: Math.max(0, dailyLimit - used - 1),

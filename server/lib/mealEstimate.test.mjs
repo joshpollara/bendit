@@ -501,6 +501,93 @@ describe('POST /api/meals/estimate', () => {
     expect(res.body.estimateId).toMatch(/^[0-9a-f-]{36}$/);
   });
 
+  it('gives both readings the same description and keeps it with the run', async () => {
+    const visionHandler = vi.fn(async (req, res) =>
+      res.json({
+        data:
+          req.body.task === 'meal'
+            ? { items: [{ name: 'white rice', grams: 200, confidence: 'high' }] }
+            : {
+                mealType: 'mixed_dish',
+                energyKcal: { low: 200, median: 260, high: 320 },
+                macrosG: {
+                  protein: { low: 4, median: 5, high: 6 },
+                  carbs: { low: 50, median: 56, high: 60 },
+                  fat: { low: 0, median: 1, high: 2 },
+                  fiber: { low: 0, median: 1, high: 2 },
+                },
+                hiddenIngredientRisks: [],
+                uncertaintyReasons: [],
+              },
+        meta: {
+          model: 'test-model',
+          promptVersion: '3+hint',
+          latencyMs: 10,
+          usage: { inputTokens: 1, outputTokens: 1, totalTokens: 2 },
+          callsRemainingToday: 8,
+        },
+      }),
+    );
+    const res = await post(createMealEstimateHandler({ db, visionHandler }), {
+      image,
+      hint: '  witte  rijst  ',
+    });
+
+    expect(visionHandler.mock.calls.map((call) => [call[0].body.task, call[0].body.hint])).toEqual([
+      ['meal', '  witte  rijst  '],
+      ['mealHolistic', '  witte  rijst  '],
+    ]);
+    // Normalized once for the record, so a hinted run can be told from an
+    // unhinted one long after the photo is gone.
+    expect(res.body.hint).toBe('witte rijst');
+    expect(db.prepare('SELECT hint FROM meal_photo_runs WHERE id = ?').get(res.body.estimateId).hint).toBe(
+      'witte rijst',
+    );
+  });
+
+  it('chains a second reading of the same photograph to the first', async () => {
+    const handler = handlerReturning({
+      items: [{ name: 'white rice', grams: 100, confidence: 'high' }],
+    });
+    const first = await post(handler, { image });
+    const second = await post(handler, {
+      image,
+      hint: 'witte rijst',
+      previousEstimateId: first.body.estimateId,
+    });
+
+    expect(second.body.estimateId).not.toBe(first.body.estimateId);
+    expect(
+      db.prepare('SELECT previousRunId FROM meal_photo_runs WHERE id = ?').get(second.body.estimateId)
+        .previousRunId,
+    ).toBe(first.body.estimateId);
+  });
+
+  it('ignores a previous estimate that is not the caller’s', async () => {
+    const handler = handlerReturning({
+      items: [{ name: 'white rice', grams: 100, confidence: 'high' }],
+    });
+    const mine = await post(handler, { image });
+    const res = { statusCode: 200, body: null };
+    res.status = (code) => ((res.statusCode = code), res);
+    res.json = (payload) => ((res.body = payload), res);
+    await handler({ body: { image, previousEstimateId: mine.body.estimateId }, userId: 'mallory' }, res);
+
+    expect(
+      db.prepare('SELECT previousRunId FROM meal_photo_runs WHERE id = ?').get(res.body.estimateId)
+        .previousRunId,
+    ).toBeNull();
+  });
+
+  it('records no description when none was typed', async () => {
+    const res = await post(
+      handlerReturning({ items: [{ name: 'white rice', grams: 100, confidence: 'high' }] }),
+      { image, hint: '   ' },
+    );
+    expect(res.body.hint).toBeNull();
+    expect(db.prepare('SELECT hint FROM meal_photo_runs WHERE id = ?').get(res.body.estimateId).hint).toBeNull();
+  });
+
   it('ignores nutrition the model volunteers anyway', async () => {
     // Structured output should prevent this, but a number that arrives is
     // still not allowed anywhere near the total.

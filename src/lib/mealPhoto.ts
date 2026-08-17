@@ -96,6 +96,8 @@ export type MealEstimate = {
     | 'other'
     | 'not_food';
   captureQuality?: MealCaptureQuality | null;
+  /** What the person typed the meal was, as the server actually used it. */
+  hint?: string | null;
   question?: MealQuestion | null;
   uncertaintyReasons?: string[];
   path?: MealEstimatePath;
@@ -112,7 +114,7 @@ export type MealFeedbackIssue =
   | 'sauce_preparation'
   | 'calories_macros';
 
-export type MealFeedbackOutcome = 'logged' | 'dismissed' | 'retake' | 'barcode';
+export type MealFeedbackOutcome = 'logged' | 'dismissed' | 'retake' | 'barcode' | 'reanalyzed';
 
 export type MealFeedbackAction =
   | { type: 'question_answered'; itemId: string; choiceId: string }
@@ -157,16 +159,41 @@ export type MealFeedback = {
 export const MAX_MEAL_FEEDBACK_ITEMS = 20;
 export const MAX_MEAL_FEEDBACK_ACTIONS = 50;
 
-export async function estimateMealFromPhoto(
-  photo: Blob,
-  { onStage }: { onStage?: (stage: MealPhotoStage) => void } = {},
+/**
+ * A photograph identifies food badly and measures it well; a person typing
+ * "kip shoarma" identifies it perfectly and measures nothing. So the optional
+ * description is sent alongside the image, and the server hands it to the model
+ * as evidence about what the food is — never about how much of it there is.
+ *
+ * The server trims and flattens it too. This limit is here so the box on screen
+ * stops where the request does.
+ */
+export const MAX_MEAL_HINT_LENGTH = 120;
+
+export const normalizeMealHint = (value: string | null | undefined): string | null => {
+  const text = (value ?? '').replace(/\s+/g, ' ').trim().slice(0, MAX_MEAL_HINT_LENGTH);
+  return text || null;
+};
+
+/**
+ * Resizing is separate from reading because one photograph can be read twice.
+ * When the first answer names the wrong food, the fix is a description and
+ * another read of the same image — not another trip to the camera. The prepared
+ * image is held by the screen for as long as its result is on screen, and only
+ * there: the server keeps a hash of it and nothing more.
+ */
+export const prepareMealPhoto = (photo: Blob): Promise<string> => resizeForModel(photo);
+
+export async function requestMealEstimate(
+  image: string,
+  { hint, previousEstimateId }: { hint?: string | null; previousEstimateId?: string | null } = {},
 ): Promise<MealEstimate> {
-  onStage?.('preparing');
-  const image = await resizeForModel(photo);
-  onStage?.('analyzing');
+  const description = normalizeMealHint(hint);
   const estimate = await postToModel<MealEstimate>('/api/meals/estimate', {
     image,
     mimeType: 'image/jpeg',
+    ...(description ? { hint: description } : {}),
+    ...(previousEstimateId ? { previousEstimateId } : {}),
   });
   // Remember the model's own words before the matched food's name takes over on
   // screen, so a wrong match is visible as a wrong match.

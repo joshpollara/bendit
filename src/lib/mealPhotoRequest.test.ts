@@ -7,9 +7,10 @@ const vision = vi.hoisted(() => ({
 
 vi.mock('./vision', () => vision);
 
-import { estimateMealFromPhoto, type MealPhotoStage } from './mealPhoto';
+import { prepareMealPhoto, requestMealEstimate } from './mealPhoto';
 
 const response = {
+  estimateId: 'run-1',
   items: [
     {
       name: 'white rice',
@@ -37,32 +38,38 @@ beforeEach(() => {
   vision.postToModel.mockReset().mockResolvedValue(response);
 });
 
-describe('estimateMealFromPhoto progress', () => {
-  it('reports the real client-side milestones in order', async () => {
-    const stages: MealPhotoStage[] = [];
-    const result = await estimateMealFromPhoto(new Blob(['photo']), {
-      onStage: (stage) => stages.push(stage),
-    });
+describe('reading a meal photo', () => {
+  it('prepares the photo once, for however many reads it takes', async () => {
+    const image = await prepareMealPhoto(new Blob(['photo']));
+    await requestMealEstimate(image);
+    const result = await requestMealEstimate(image, { hint: 'witte rijst' });
 
-    expect(stages).toEqual(['preparing', 'analyzing']);
     expect(vision.resizeForModel).toHaveBeenCalledOnce();
-    expect(vision.postToModel).toHaveBeenCalledWith('/api/meals/estimate', {
+    expect(vision.postToModel).toHaveBeenNthCalledWith(1, '/api/meals/estimate', {
       image: 'encoded-photo',
       mimeType: 'image/jpeg',
     });
     expect(result.items[0].seenAs).toBe('white rice');
   });
 
-  it('does not claim analysis when image preparation fails', async () => {
-    vision.resizeForModel.mockRejectedValueOnce(new Error('image preparation failed'));
-    const stages: MealPhotoStage[] = [];
+  it('sends what the person said the meal was, flattened to one short line', async () => {
+    await requestMealEstimate('encoded-photo', { hint: `  kip\n shoarma  ${'x'.repeat(200)}` });
 
-    await expect(
-      estimateMealFromPhoto(new Blob(['photo']), {
-        onStage: (stage) => stages.push(stage),
-      }),
-    ).rejects.toThrow('image preparation failed');
-    expect(stages).toEqual(['preparing']);
-    expect(vision.postToModel).not.toHaveBeenCalled();
+    const { hint } = vision.postToModel.mock.calls[0][1];
+    expect(hint.startsWith('kip shoarma x')).toBe(true);
+    expect(hint).toHaveLength(120);
+  });
+
+  it('sends no description when the box was left empty', async () => {
+    await requestMealEstimate('encoded-photo', { hint: '   ' });
+    expect(vision.postToModel.mock.calls[0][1]).not.toHaveProperty('hint');
+  });
+
+  it('names the estimate a second reading replaces', async () => {
+    await requestMealEstimate('encoded-photo', { hint: 'kalfsvlees', previousEstimateId: 'run-1' });
+    expect(vision.postToModel.mock.calls[0][1]).toMatchObject({
+      hint: 'kalfsvlees',
+      previousEstimateId: 'run-1',
+    });
   });
 });
