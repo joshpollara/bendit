@@ -194,9 +194,9 @@ describe('a second reading of the same photograph', () => {
     expect(runs.priorRun('alice', 'no-such-run')).toBeNull();
     expect(runs.priorRun('alice', undefined)).toBeNull();
 
-    const second = runs.start('alice', { hint: 'kalfsvlees', previousRunId: estimateId });
+    const second = runs.start('alice', { hint: 'veal', previousRunId: estimateId });
     expect(db.prepare('SELECT hint, previousRunId FROM meal_photo_runs WHERE id = ?').get(second)).toEqual({
-      hint: 'kalfsvlees',
+      hint: 'veal',
       previousRunId: estimateId,
     });
   });

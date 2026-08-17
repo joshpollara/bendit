@@ -13,7 +13,7 @@
 // A misread that happens to look like a number would otherwise miss in every
 // database and push the user into typing a label out by hand.
 
-import { expandUpcE, isValidBarcode, normalizeBarcode } from './barcode';
+import { expandUpcE, gtinFromGs1, isValidBarcode, normalizeBarcode } from './barcode';
 
 /** The 1D formats found on food packaging. QR and friends aren't products. */
 const FORMATS = ['ean_13', 'ean_8', 'upc_a', 'upc_e', 'code_128'] as const;
@@ -43,7 +43,10 @@ export const hasNativeDetector = () => typeof window !== 'undefined' && 'Barcode
 export function canonicalize(raw: string, format?: string): string | null {
   const digits = normalizeBarcode(raw);
   const code = format === 'upc_e' ? expandUpcE(digits) : digits;
-  return isValidBarcode(code) ? code : null;
+  if (isValidBarcode(code)) return code;
+  // Not a product number as it stands: it may still carry one, as a Code 128
+  // element string does.
+  return gtinFromGs1(digits);
 }
 
 /**
@@ -70,13 +73,29 @@ async function nativeDetector(): Promise<BarcodeDetectorLike | null> {
 export type Scanner = { stop: () => void };
 
 /**
+ * A frame the platform decoder refuses to look at at all resolves empty; it
+ * does not throw. A throw means the decoder itself is unavailable — on Android
+ * the detection service is a Play Services module that may not be installed,
+ * and the constructor and format list both succeed before it is ever needed.
+ * Swallowing that leaves a live preview decoding nothing, for as long as
+ * someone is willing to hold a packet up to it. A few in a row is not a bad
+ * frame; it is a decoder that is not going to work, so hand over to ZXing.
+ */
+const NATIVE_FAILURES_ALLOWED = 5;
+
+/**
  * Starts decoding from `video`, calling `onDetect` once with the first code
  * that checks out. The caller owns the camera stream and the element; this only
  * reads frames.
+ *
+ * `onReject` fires when a code was read and then thrown away for failing its
+ * check digit. It is the difference between "point it at the packet" and "that
+ * packet is not going to scan", and without it both look identical: nothing.
  */
 export async function startScanning(
   video: HTMLVideoElement,
   onDetect: (code: string) => void,
+  { onReject }: { onReject?: () => void } = {},
 ): Promise<Scanner> {
   let stopped = false;
   let fired = false;
@@ -84,49 +103,73 @@ export async function startScanning(
   const report = (raw: string, format?: string) => {
     if (fired || stopped) return;
     const code = canonicalize(raw, format);
-    if (!code) return; // a misread: keep looking rather than guess
+    if (!code) {
+      onReject?.(); // a misread: keep looking rather than guess
+      return;
+    }
     fired = true;
     onDetect(code);
   };
 
+  const zxing = async (): Promise<Scanner> => {
+    const [{ BrowserMultiFormatReader }, { BarcodeFormat }] = await Promise.all([
+      import('@zxing/browser'),
+      import('@zxing/library'),
+    ]);
+    const reader = new BrowserMultiFormatReader();
+    const controls = await reader.decodeFromVideoElement(video, (result) => {
+      if (!result) return;
+      // Only UPC-E changes what happens next, and its enum value is read from
+      // the library rather than written down here.
+      const format = result.getBarcodeFormat() === BarcodeFormat.UPC_E ? 'upc_e' : undefined;
+      report(result.getText(), format);
+    });
+    if (stopped) controls.stop();
+    return { stop: () => controls.stop() };
+  };
+
   const detector = await nativeDetector();
-  if (detector) {
-    // Roughly five frames a second: fast enough to feel instant, slow enough
-    // to leave the phone's CPU alone.
-    const timer = setInterval(async () => {
-      if (stopped || fired || video.readyState < 2) return;
-      try {
-        const [hit] = await detector.detect(video);
-        if (hit) report(hit.rawValue, hit.format);
-      } catch {
-        // A frame that can't be decoded is the normal case, not an error.
-      }
-    }, 200);
+  if (!detector) {
+    const engine = await zxing();
     return {
       stop: () => {
         stopped = true;
-        clearInterval(timer);
+        engine.stop();
       },
     };
   }
 
-  const [{ BrowserMultiFormatReader }, { BarcodeFormat }] = await Promise.all([
-    import('@zxing/browser'),
-    import('@zxing/library'),
-  ]);
-  const reader = new BrowserMultiFormatReader();
-  const controls = await reader.decodeFromVideoElement(video, (result) => {
-    if (!result) return;
-    // Only UPC-E changes what happens next, and its enum value is read from
-    // the library rather than written down here.
-    const format = result.getBarcodeFormat() === BarcodeFormat.UPC_E ? 'upc_e' : undefined;
-    report(result.getText(), format);
-  });
-  if (stopped) controls.stop();
+  let failures = 0;
+  let handedOver = false;
+  // Whatever is currently reading frames: the platform decoder, or ZXing after
+  // it has given up. Stopping the scanner stops whichever it is now.
+  let engine: Scanner = { stop: () => {} };
+
+  // Roughly five frames a second: fast enough to feel instant, slow enough
+  // to leave the phone's CPU alone.
+  const timer = setInterval(async () => {
+    if (stopped || fired || handedOver || video.readyState < 2) return;
+    try {
+      const [hit] = await detector.detect(video);
+      failures = 0;
+      if (hit) report(hit.rawValue, hit.format);
+    } catch {
+      if (++failures < NATIVE_FAILURES_ALLOWED) return;
+      handedOver = true;
+      clearInterval(timer);
+      // If ZXing cannot start either there is nothing left to try. The preview
+      // stays up and the number can still be typed, which is what the screen
+      // offers anyway.
+      engine = await zxing().catch(() => ({ stop: () => {} }));
+      if (stopped) engine.stop();
+    }
+  }, 200);
+
+  engine = { stop: () => clearInterval(timer) };
   return {
     stop: () => {
       stopped = true;
-      controls.stop();
+      engine.stop();
     },
   };
 }

@@ -36,6 +36,29 @@ export function isValidBarcode(raw: string): boolean {
 }
 
 /**
+ * The GTIN inside a GS1-128 element string.
+ *
+ * Packaged-in-store goods, wholesale packs and anything weighed at the counter
+ * often carry Code 128 rather than a plain EAN, and what the decoder hands back
+ * is not a product number but a string of application identifiers: "01" then
+ * the fourteen-digit GTIN, then whatever else the packer encoded — batch, weight,
+ * a date. Read as a whole it is not a GTIN and never matches anything, so the
+ * scanner used to look straight at such a label and do nothing at all.
+ *
+ * Only the leading (01) is taken. It is a fixed-length element, so it can be cut
+ * off the front without parsing the rest, and the check digit still decides
+ * whether the read is believed.
+ */
+export function gtinFromGs1(raw: string): string | null {
+  const digits = normalizeBarcode(raw);
+  // A bare GTIN-14 can itself begin "01", so length is what tells them apart:
+  // an element string carries the AI and the fourteen digits, and then some.
+  if (digits.length <= 16 || !digits.startsWith('01')) return null;
+  const gtin = digits.slice(2, 16);
+  return isValidBarcode(gtin) ? gtin : null;
+}
+
+/**
  * UPC-E is a UPC-A with runs of zeros squeezed out, and scanners hand back the
  * squeezed form. No database stores it that way, so it has to be expanded or
  * the lookup misses every time. The last digit of the six-digit body says how

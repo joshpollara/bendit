@@ -18,7 +18,7 @@ import Sheet from './Sheet';
 // times when nobody wants to type, so Skip is a first-class button and an empty
 // box behaves exactly as this feature never existed.
 
-const EXAMPLES = ['Kip shoarma met rijst', 'Havermout met melk', 'Boterham met kaas'];
+const EXAMPLES = ['Chicken shawarma with rice', 'Porridge with milk', 'Cheese sandwich'];
 
 export default function MealHintSheet({
   initial = '',

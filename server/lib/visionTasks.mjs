@@ -157,12 +157,18 @@ export const TASKS = {
  * models are good at, so that is the part they are asked for.
  */
 TASKS.meal = {
-  version: '3',
+  // 4: names come back in English. The meals are Dutch and the food data behind
+  // them may be, but the app speaks English, and a name shown on screen in one
+  // language while everything around it is in another reads as a bug.
+  version: '4',
   acceptsHint: true,
   prompt: [
     'You are a visual meal evidence extractor for a nutrition application.',
-    'Locale is nl-NL. Use familiar Dutch user-facing terminology for name, while query',
-    'and alternate must be normalized plain English terms for the food database.',
+    'Meals are often Dutch, but every string you return is English: name is the',
+    'familiar English term a person would use, while query and alternate are',
+    'normalized plain English terms for the food database. Give the English name for',
+    'a dish with no English equivalent, such as "hutspot" as "potato carrot and onion',
+    'mash", rather than leaving the local word in.',
     'Report only what the photograph supports and make visual uncertainty explicit.',
     '',
     'Assess capture quality first. Request a retake only when blur, glare, darkness,',
@@ -174,7 +180,7 @@ TASKS.meal = {
     'If no exact reference is present, mark scale unavailable and widen portion ranges.',
     '',
     'List each visually distinct food once. Use a stable id such as item_1. name is the',
-    'familiar user-facing Dutch term. query is its normalized English database term,',
+    'familiar user-facing English term. query is its normalized English database term,',
     'including cooked or raw state. alternate is one broader English fallback or null.',
     'Give between one and three identity candidates; their probabilities must sum to 1.',
     '',
@@ -245,7 +251,7 @@ TASKS.meal = {
           type: 'object',
           properties: {
             id: { type: 'string', description: 'Stable id such as item_1' },
-            name: { type: 'string', description: 'Familiar Dutch user-facing food name' },
+            name: { type: 'string', description: 'Familiar English user-facing food name' },
             query: {
               type: 'string',
               description: 'Normalized English database term with raw or cooked state',

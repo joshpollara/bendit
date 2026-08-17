@@ -161,7 +161,7 @@ export const MAX_MEAL_FEEDBACK_ACTIONS = 50;
 
 /**
  * A photograph identifies food badly and measures it well; a person typing
- * "kip shoarma" identifies it perfectly and measures nothing. So the optional
+ * "chicken shawarma" identifies it perfectly and measures nothing. So the optional
  * description is sent alongside the image, and the server hands it to the model
  * as evidence about what the food is — never about how much of it there is.
  *

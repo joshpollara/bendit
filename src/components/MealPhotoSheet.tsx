@@ -510,7 +510,7 @@ export default function MealPhotoSheet({
             value={hintDraft}
             maxLength={MAX_MEAL_HINT_LENGTH}
             disabled={rereading}
-            placeholder="e.g. kalfsvlees, geen varkensvlees"
+            placeholder="e.g. veal, not pork"
             aria-label="What the meal actually is"
             onChange={(event) => setHintDraft(event.target.value)}
             onKeyDown={(event) => {
