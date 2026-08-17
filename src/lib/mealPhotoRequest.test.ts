@@ -42,7 +42,7 @@ describe('reading a meal photo', () => {
   it('prepares the photo once, for however many reads it takes', async () => {
     const image = await prepareMealPhoto(new Blob(['photo']));
     await requestMealEstimate(image);
-    const result = await requestMealEstimate(image, { hint: 'witte rijst' });
+    const result = await requestMealEstimate(image, { hint: 'white rice' });
 
     expect(vision.resizeForModel).toHaveBeenCalledOnce();
     expect(vision.postToModel).toHaveBeenNthCalledWith(1, '/api/meals/estimate', {
@@ -53,10 +53,10 @@ describe('reading a meal photo', () => {
   });
 
   it('sends what the person said the meal was, flattened to one short line', async () => {
-    await requestMealEstimate('encoded-photo', { hint: `  kip\n shoarma  ${'x'.repeat(200)}` });
+    await requestMealEstimate('encoded-photo', { hint: `  chicken\n shawarma  ${'x'.repeat(200)}` });
 
     const { hint } = vision.postToModel.mock.calls[0][1];
-    expect(hint.startsWith('kip shoarma x')).toBe(true);
+    expect(hint.startsWith('chicken shawarma x')).toBe(true);
     expect(hint).toHaveLength(120);
   });
 
@@ -66,9 +66,9 @@ describe('reading a meal photo', () => {
   });
 
   it('names the estimate a second reading replaces', async () => {
-    await requestMealEstimate('encoded-photo', { hint: 'kalfsvlees', previousEstimateId: 'run-1' });
+    await requestMealEstimate('encoded-photo', { hint: 'veal', previousEstimateId: 'run-1' });
     expect(vision.postToModel.mock.calls[0][1]).toMatchObject({
-      hint: 'kalfsvlees',
+      hint: 'veal',
       previousEstimateId: 'run-1',
     });
   });

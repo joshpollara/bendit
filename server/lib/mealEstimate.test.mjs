@@ -530,18 +530,18 @@ describe('POST /api/meals/estimate', () => {
     );
     const res = await post(createMealEstimateHandler({ db, visionHandler }), {
       image,
-      hint: '  witte  rijst  ',
+      hint: '  white  rice  ',
     });
 
     expect(visionHandler.mock.calls.map((call) => [call[0].body.task, call[0].body.hint])).toEqual([
-      ['meal', '  witte  rijst  '],
-      ['mealHolistic', '  witte  rijst  '],
+      ['meal', '  white  rice  '],
+      ['mealHolistic', '  white  rice  '],
     ]);
     // Normalized once for the record, so a hinted run can be told from an
     // unhinted one long after the photo is gone.
-    expect(res.body.hint).toBe('witte rijst');
+    expect(res.body.hint).toBe('white rice');
     expect(db.prepare('SELECT hint FROM meal_photo_runs WHERE id = ?').get(res.body.estimateId).hint).toBe(
-      'witte rijst',
+      'white rice',
     );
   });
 
@@ -552,7 +552,7 @@ describe('POST /api/meals/estimate', () => {
     const first = await post(handler, { image });
     const second = await post(handler, {
       image,
-      hint: 'witte rijst',
+      hint: 'white rice',
       previousEstimateId: first.body.estimateId,
     });
 

@@ -15,12 +15,26 @@ export default function BarcodeScanner({
 }) {
   const videoRef = useRef<HTMLVideoElement>(null);
   const [error, setError] = useState<string | null>(null);
+  const [struggling, setStruggling] = useState<'slow' | 'rejected' | null>(null);
   const [manual, setManual] = useState('');
+
+  // The callback is read through a ref rather than depended on. A parent that
+  // declares it inline hands over a new function on every one of its renders,
+  // and this effect opens a camera: as a dependency it tore the stream down and
+  // opened another one mid-scan, for no change anybody asked for.
+  const detected = useRef(onDetected);
+  detected.current = onDetected;
 
   useEffect(() => {
     let stream: MediaStream | null = null;
     let scanner: Scanner | null = null;
     let unmounted = false;
+
+    // Nothing has been read yet. Said out loud after a while, because a preview
+    // that decodes nothing looks exactly like a preview that is about to.
+    const slow = setTimeout(() => {
+      if (!unmounted) setStruggling((current) => current ?? 'slow');
+    }, 12_000);
 
     // The camera is opened here rather than by the decoder, so both engines get
     // the same stream and the back camera is asked for explicitly — a phone
@@ -29,11 +43,21 @@ export default function BarcodeScanner({
       .getUserMedia({ video: { facingMode: { ideal: 'environment' } } })
       .then(async (opened) => {
         stream = opened;
-        if (unmounted || !videoRef.current) return;
+        // Closed while the permission prompt was up. The stream still has to be
+        // handed back: a track left running holds the camera against the next
+        // attempt, and the indicator light stays on to say so.
+        if (unmounted || !videoRef.current) {
+          opened.getTracks().forEach((track) => track.stop());
+          return;
+        }
         videoRef.current.srcObject = opened;
         await videoRef.current.play().catch(() => {});
         try {
-          scanner = await startScanning(videoRef.current, onDetected);
+          scanner = await startScanning(videoRef.current, (code) => detected.current(code), {
+            onReject: () => {
+              if (!unmounted) setStruggling('rejected');
+            },
+          });
           if (unmounted) scanner.stop();
         } catch {
           // The camera is fine; the decoder isn't. Saying "check permissions"
@@ -49,10 +73,11 @@ export default function BarcodeScanner({
 
     return () => {
       unmounted = true;
+      clearTimeout(slow);
       scanner?.stop();
       stream?.getTracks().forEach((track) => track.stop());
     };
-  }, [onDetected]);
+  }, []);
 
   const typed = normalizeBarcode(manual);
   const typedLooksWrong = typed.length >= 8 && !isValidBarcode(typed);
@@ -72,9 +97,12 @@ export default function BarcodeScanner({
         <div className="pointer-events-none absolute inset-0 flex items-center justify-center">
           <div className="h-40 w-72 rounded-xl border-2 border-white/80" />
         </div>
-        {error && (
+        {(error || struggling) && (
           <p className="absolute inset-x-4 top-4 rounded-xl bg-black/70 p-3 text-center text-sm text-white">
-            {error}
+            {error ??
+              (struggling === 'rejected'
+                ? "That code didn't come through cleanly. Hold steady, or type the number below."
+                : 'Still looking. Fill the box with the barcode — or type the number below.')}
           </p>
         )}
       </div>

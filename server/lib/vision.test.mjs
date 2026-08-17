@@ -362,7 +362,7 @@ describe('tasks', () => {
     const meal = TASKS.meal;
     const item = meal.schema.properties.items.items;
 
-    expect(meal.version).toBe('3');
+    expect(meal.version).toBe('4');
     expect(meal.schema.required).toEqual([
       'captureQuality',
       'mealType',
