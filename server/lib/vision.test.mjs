@@ -358,11 +358,11 @@ describe('tasks', () => {
     expect(translated.properties.per100.properties.calories.nullable).toBe(true);
   });
 
-  it('uses structured visual evidence for meal parsing without nutrition fields', () => {
+  it('asks the meal model for its own nutrition, and for a range around it', () => {
     const meal = TASKS.meal;
     const item = meal.schema.properties.items.items;
 
-    expect(meal.version).toBe('4');
+    expect(meal.version).toBe('5');
     expect(meal.schema.required).toEqual([
       'captureQuality',
       'mealType',
@@ -375,36 +375,36 @@ describe('tasks', () => {
     expect(meal.schema.properties.mealType.enum).toEqual(
       expect.arrayContaining(['simple_plate', 'mixed_dish', 'packaged']),
     );
-    expect(item.properties.identityCandidates.maxItems).toBe(3);
-    expect(item.properties.identityCandidates.minItems).toBe(1);
     expect(item.properties.portionG.required).toEqual(['low', 'median', 'high']);
-    expect(item.properties.confidence.required).toEqual([
-      'identity',
-      'portion',
-      'preparation',
-    ]);
+    expect(item.properties.energyKcal.required).toEqual(['low', 'median', 'high']);
+    expect(item.properties.macrosG.required).toEqual(['protein', 'carbs', 'fat']);
+    expect(item.properties.confidence.required).toEqual(['identity', 'portion']);
     expect(
       item.properties.hiddenIngredientRisks.items.properties.quantityG.required,
     ).toEqual(['low', 'high']);
-    expect(JSON.stringify(meal.schema)).not.toMatch(/calorie|protein|carb|fat|kcal/i);
     expect(meal.prompt).toMatch(/Never assume a standard plate/i);
-    expect(meal.prompt).toMatch(/do not silently/i);
   });
 
-  it('defines a separate independent whole-meal estimate', () => {
-    const holistic = TASKS.mealHolistic;
-
-    expect(holistic.version).toBe('1');
-    expect(holistic.schema.properties.energyKcal.required).toEqual(['low', 'median', 'high']);
-    for (const macro of ['protein', 'carbs', 'fat', 'fiber']) {
-      expect(holistic.schema.properties.macrosG.properties[macro].required).toEqual([
-        'low',
-        'median',
-        'high',
-      ]);
+  it('asks the meal model for no database lookup terms, because there is no lookup', () => {
+    // Naming the food twice — once for a person, once as a catalogue term — only
+    // existed to drive a name search. What that search returned was a packet
+    // that shared a word with the plate, priced to the calorie.
+    const item = TASKS.meal.schema.properties.items.items;
+    for (const field of ['query', 'alternate', 'identityCandidates']) {
+      expect(item.properties, field).not.toHaveProperty(field);
+      expect(TASKS.meal.schema.required).not.toContain(field);
     }
-    expect(holistic.schema.properties).toHaveProperty('uncertaintyReasons');
-    expect(holistic.prompt).toMatch(/never see the application database result/i);
-    expect(holistic.prompt).toMatch(/hidden possibilities/i);
+    expect(TASKS.meal.prompt).not.toMatch(/database/i);
+  });
+
+  it('tells the meal model not to answer a plate with a packet', () => {
+    expect(TASKS.meal.prompt).toMatch(/not.*(brand|retail product)/i);
+    expect(TASKS.meal.prompt).toMatch(/unless its packaging or menu is legible/i);
+  });
+
+  it('has no separate whole-meal task to reconcile against', () => {
+    // One call, one answer. The second call existed to check the database
+    // lookup, and it was throttled or timed out on most of its attempts.
+    expect(TASKS.mealHolistic).toBeUndefined();
   });
 });

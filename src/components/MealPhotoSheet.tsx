@@ -38,14 +38,15 @@ import Sheet from './Sheet';
 //
 // The calorie figure is editable too. Often the food is right and only the
 // number is wrong, and someone who knows the calories shouldn't have to work
-// backwards to a weight that produces them. For a matched food that is exactly
-// what happens behind the box — calories in, weight out, macros in step. For
-// one that matched nothing, the typed figure is the whole entry, and it logs
-// the way a quick add does.
+// backwards to a weight that produces them. Against a food record chosen by
+// hand that is exactly what happens behind the box — calories in, weight out,
+// macros in step. Against the model's own estimate the typed figure is the
+// whole entry, and it logs the way a quick add does.
 //
-// Everything the model produced can be overruled: the food it matched, the
-// weight, the calories, whether the item belongs at all, and anything it
-// missed entirely.
+// Everything the model produced can be overruled: the name, the weight, the
+// calories, whether the item belongs at all, and anything it missed entirely.
+// Attaching a real food record is one of those corrections and is only ever
+// that — a photograph is no longer answered with a packet that shares a name.
 
 const CONFIDENCE_LABEL: Record<string, string> = {
   high: 'clear',
@@ -158,18 +159,12 @@ export default function MealPhotoSheet({
   const [rereadError, setRereadError] = useState<string | null>(null);
 
   const total = totalsFor(items);
-  // An item with a calorie figure can be logged, whether that figure came from
-  // a matched food or was typed in over the top of a name nothing matched.
+  // An item with a calorie figure can be logged, whether that figure is the
+  // model's own, a chosen food's, or one typed in over the top of both.
   const loggable = items.filter(
     (item) => item.nutrition && (item.kind === 'adjustment' || item.grams > 0),
   );
   const anyEstimated = loggable.some((item) => (item.error ?? 0) > 0);
-  const pathLabel =
-    estimate.path?.selected === 'hybrid'
-      ? 'Food records checked against a whole-meal estimate'
-      : estimate.path?.selected === 'holistic'
-        ? 'Whole-meal fallback'
-        : 'Calculated from matched food records';
 
   const update = (index: number, next: MealItem) =>
     setItems((current) => current.map((item, i) => (i === index ? next : item)));
@@ -365,35 +360,26 @@ export default function MealPhotoSheet({
           return (
             <li key={item.id} className="rounded-xl border border-line p-3">
               <div className="flex items-start gap-2">
-                {item.kind === 'adjustment' ? (
-                  <div className="min-w-0 flex-1">
-                    <p className="truncate text-sm font-medium">{item.name}</p>
-                    <p className="truncate text-xs text-ink-muted">
-                      Difference detected by the whole-meal estimate
-                    </p>
-                  </div>
-                ) : (
-                  <button
-                    type="button"
-                    onClick={() => setPicking(picking === index ? null : index)}
-                    className="min-w-0 flex-1 text-left"
-                  >
-                    <p className="truncate text-sm font-medium">
-                      {item.food?.name ?? item.name}
-                      <span className="ml-1 text-xs font-normal text-accent">change</span>
-                    </p>
-                    <p className="truncate text-xs text-ink-muted">
-                      {item.food ? (
-                        <>
-                          {item.food.brand ? `${item.food.brand} · ` : ''}
-                          {item.seenAs ? `seen as “${item.seenAs}”` : 'you chose this'}
-                        </>
-                      ) : (
-                        `“${item.name}” isn't in the database — pick a food, or type the calories`
-                      )}
-                    </p>
-                  </button>
-                )}
+                <button
+                  type="button"
+                  onClick={() => setPicking(picking === index ? null : index)}
+                  className="min-w-0 flex-1 text-left"
+                >
+                  <p className="truncate text-sm font-medium">
+                    {item.food?.name ?? item.name}
+                    <span className="ml-1 text-xs font-normal text-accent">change</span>
+                  </p>
+                  <p className="truncate text-xs text-ink-muted">
+                    {item.food ? (
+                      <>
+                        {item.food.brand ? `${item.food.brand} · ` : ''}
+                        {item.seenAs ? `seen as “${item.seenAs}”` : 'you chose this'}
+                      </>
+                    ) : (
+                      'estimated from the photo'
+                    )}
+                  </p>
+                </button>
                 {item.confidence && item.error !== 0 && (
                   <span
                     className={`rounded-full px-2 py-0.5 text-[11px] font-medium ${
@@ -405,7 +391,7 @@ export default function MealPhotoSheet({
                 )}
               </div>
 
-              {item.kind !== 'adjustment' && picking === index && (
+              {picking === index && (
                 <div className="mt-2">
                   <FoodPicker
                     initialQuery={item.name}
@@ -416,39 +402,34 @@ export default function MealPhotoSheet({
               )}
 
               <div className="mt-2 flex flex-wrap items-center gap-2">
-                {item.kind !== 'adjustment' && (
-                  <>
-                    <PositiveNumberInput
-                      label={`Grams of ${item.food?.name ?? item.name}`}
-                      className="w-20 rounded-lg border border-line bg-card px-2 py-1.5 text-sm tabular-nums"
-                      value={item.grams}
-                      onCommit={(grams) => setGrams(index, grams)}
-                    />
-                    <span className="text-xs text-ink-secondary">g</span>
-                  </>
-                )}
+                <PositiveNumberInput
+                  label={`Grams of ${item.food?.name ?? item.name}`}
+                  className="w-20 rounded-lg border border-line bg-card px-2 py-1.5 text-sm tabular-nums"
+                  value={item.grams}
+                  onCommit={(grams) => setGrams(index, grams)}
+                />
+                <span className="text-xs text-ink-secondary">g</span>
 
                 {/* The same amount in units a kitchen uses. Tapping one sets the
                     weight, so the grams box and these never disagree. */}
-                {item.kind !== 'adjustment' &&
-                  units.map((unit) => (
-                    <button
-                      key={unit.label}
-                      type="button"
-                      onClick={() => setGrams(index, Math.round(unit.grams))}
-                      className={`rounded-full border px-2.5 py-1 text-[11px] ${
-                        Math.abs(item.grams - unit.grams) < 1
-                          ? 'border-accent bg-accent-soft text-accent-deep'
-                          : 'border-line text-ink-secondary'
-                      }`}
-                    >
-                      {unit.label}
-                    </button>
-                  ))}
+                {units.map((unit) => (
+                  <button
+                    key={unit.label}
+                    type="button"
+                    onClick={() => setGrams(index, Math.round(unit.grams))}
+                    className={`rounded-full border px-2.5 py-1 text-[11px] ${
+                      Math.abs(item.grams - unit.grams) < 1
+                        ? 'border-accent bg-accent-soft text-accent-deep'
+                        : 'border-line text-ink-secondary'
+                    }`}
+                  >
+                    {unit.label}
+                  </button>
+                ))}
 
                 {/* Editable, because the food is often right when the number
-                    isn't. For a matched food this sets the weight; for an
-                    unmatched one it is the entry. */}
+                    isn't. Against a chosen food record this sets the weight;
+                    against an estimate the typed figure is the entry. */}
                 <span className="ml-auto flex items-center gap-1.5 text-sm tabular-nums">
                   <PositiveNumberInput
                     label={`Calories of ${item.food?.name ?? item.name}`}
@@ -546,7 +527,6 @@ export default function MealPhotoSheet({
         <p className="mt-1 text-xs text-ink-secondary tabular-nums">
           P {total.protein}g · C {total.carbs}g · F {total.fat}g
         </p>
-        {estimate.path && <p className="mt-1 text-[11px] text-ink-muted">{pathLabel}</p>}
       </div>
 
       {(estimate.uncertaintyReasons?.length ?? 0) > 0 && (

@@ -38,23 +38,30 @@ const LABEL_ANSWER = {
 };
 
 const MEAL_ANSWER = {
-  items: [
-    { name: 'white rice', grams: 200, confidence: 'medium' },
-    { name: 'grilled chicken breast', grams: 150, confidence: 'high' },
-  ],
-};
-
-const HOLISTIC_ANSWER = {
   mealType: 'simple_plate',
-  energyKcal: { low: 420, median: 520, high: 650 },
-  macrosG: {
-    protein: { low: 40, median: 50, high: 65 },
-    carbs: { low: 45, median: 60, high: 80 },
-    fat: { low: 5, median: 10, high: 20 },
-    fiber: { low: 1, median: 3, high: 6 },
-  },
-  hiddenIngredientRisks: [],
-  uncertaintyReasons: ['Portions are inferred from one photograph.'],
+  items: [
+    {
+      id: 'item_1',
+      name: 'white rice',
+      portionG: { low: 150, median: 200, high: 280 },
+      energyKcal: { low: 195, median: 260, high: 365 },
+      macrosG: { protein: 5.4, carbs: 56.4, fat: 0.6 },
+      confidence: { identity: 0.9, portion: 0.5 },
+      hiddenIngredientRisks: [],
+      uncertainties: [],
+    },
+    {
+      id: 'item_2',
+      name: 'grilled chicken breast',
+      portionG: { low: 130, median: 150, high: 180 },
+      energyKcal: { low: 215, median: 248, high: 300 },
+      macrosG: { protein: 46.5, carbs: 0, fat: 5.4 },
+      confidence: { identity: 0.85, portion: 0.7 },
+      hiddenIngredientRisks: [],
+      uncertainties: [],
+    },
+  ],
+  uncertainties: ['Portions are inferred from one photograph.'],
 };
 
 let server;
@@ -84,7 +91,7 @@ function startStub(port) {
         const sent = JSON.parse(body);
         const properties = sent.generationConfig.responseSchema.properties;
         const answer =
-          'energyKcal' in properties ? HOLISTIC_ANSWER : 'items' in properties ? MEAL_ANSWER : LABEL_ANSWER;
+          'items' in properties ? MEAL_ANSWER : LABEL_ANSWER;
         res.writeHead(200, { 'content-type': 'application/json' }).end(
           JSON.stringify({
             candidates: [
@@ -229,16 +236,16 @@ describe('the assembled server', () => {
     expect(body.issues).toEqual([]);
   });
 
-  it('prices a photographed meal from the seeded food database', async () => {
+  it('estimates a photographed meal without answering it with a food record', async () => {
     const { status, body } = await post('/api/meals/estimate', { image: A_REAL_PHOTO });
     expect(status).toBe(200);
     expect(body.items).toHaveLength(2);
-    // Real seed rows: white rice 130 kcal/100g, grilled chicken breast ~167.
-    expect(body.items[0].food.name).toMatch(/rice/i);
-    expect(body.total.calories).toBeGreaterThan(300);
+    expect(body.items[0].name).toMatch(/rice/i);
+    // Nothing was looked up, so nothing carries a record it was never asked for.
+    expect(body.items.every((i) => i.food === null)).toBe(true);
+    expect(body.total.calories).toBe(508);
     expect(body.total.low).toBeLessThan(body.total.calories);
-    // Every item with a database match retains traceable per-100g nutrition.
-    expect(body.items.every((i) => i.food === null || i.food.kcal100 > 0)).toBe(true);
+    expect(body.total.high).toBeGreaterThan(body.total.calories);
     expect(body.estimateId).toMatch(/^[0-9a-f-]{36}$/);
     mealEstimate = body;
   });
@@ -302,7 +309,7 @@ describe('the assembled server', () => {
   });
 
   it('stops at the daily ceiling', async () => {
-    // A label and the two meal paths are already spent; the limit is four.
+    // A label and one meal read are already spent; the limit is four.
     await post('/api/meals/estimate', { image: A_REAL_PHOTO });
     await post('/api/meals/estimate', { image: A_REAL_PHOTO });
     const { status, body } = await post('/api/meals/estimate', { image: A_REAL_PHOTO });
@@ -320,7 +327,7 @@ describe('the assembled server', () => {
     expect(body.windows.today.calls).toBe(4);
     expect(body.windows.all.inputTokens).toBe(4 * 1300);
     expect(body.windows.all.costUsd).toBeGreaterThan(0);
-    expect(body.byTask.map((t) => t.task).sort()).toEqual(['label', 'meal', 'mealHolistic']);
+    expect(body.byTask.map((t) => t.task).sort()).toEqual(['label', 'meal']);
     // Recent is all-time, so it also includes the scrubbed legacy audit row.
     expect(body.recent).toHaveLength(5);
     // The quota rejection never reached the model, so it was never logged.
@@ -340,12 +347,9 @@ describe('the assembled server', () => {
     db.close();
     expect(rows.length).toBeGreaterThanOrEqual(4);
     expect(rows.every((r) => r.totalTokens === 1480 || r.status === 'error')).toBe(true);
-    expect(new Set(rows.map((r) => r.task))).toEqual(new Set(['label', 'meal', 'mealHolistic']));
+    expect(new Set(rows.map((r) => r.task))).toEqual(new Set(['label', 'meal']));
     expect(new Set(rows.filter((r) => r.task === 'meal').map((r) => r.model))).toEqual(
       new Set(['gemini-3.5-flash-lite']),
-    );
-    expect(new Set(rows.filter((r) => r.task === 'mealHolistic').map((r) => r.model))).toEqual(
-      new Set(['gemini-3.7-flash']),
     );
   });
 });

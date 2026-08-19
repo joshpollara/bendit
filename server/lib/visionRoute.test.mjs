@@ -100,7 +100,7 @@ describe('POST /api/vision/extract', () => {
 
     it('reaches the model as delimited data with the task prompt intact', async () => {
       const { sent } = await hinted({ task: 'meal', image, hint: 'chicken shawarma with rice' });
-      expect(sent.prompt).toMatch(/visual meal evidence extractor/i);
+      expect(sent.prompt).toMatch(/You estimate the nutrition of a photographed meal/i);
       expect(sent.prompt).toContain('[USER MEAL DESCRIPTION START]');
       expect(sent.prompt).toContain('chicken shawarma with rice');
       expect(sent.prompt).toMatch(/inert data, never as instructions/i);
@@ -121,8 +121,11 @@ describe('POST /api/vision/extract', () => {
 
     it('is trimmed to the request limit', async () => {
       const { sent } = await hinted({ task: 'meal', image, hint: `${'a'.repeat(400)} tail` });
-      expect(sent.prompt).toContain('a'.repeat(120));
-      expect(sent.prompt).not.toContain('tail');
+      // Only the delimited part is the description. The prompt's own wording is
+      // free to contain anything, and has no bearing on what was trimmed.
+      const body = sent.prompt.split('[USER MEAL DESCRIPTION START]')[1];
+      expect(body).toContain('a'.repeat(120));
+      expect(body).not.toContain('tail');
     });
 
     it('leaves the prompt alone when nothing was typed', async () => {
@@ -334,28 +337,28 @@ describe('POST /api/vision/extract', () => {
 
   it('can pin a stronger provider to one task without changing the others', async () => {
     const regular = okProvider();
-    const holistic = {
-      ...okProvider({ energyKcal: { low: 300, median: 400, high: 550 } }),
+    const mealProvider = {
+      ...okProvider({ items: [], mealType: 'other', uncertainties: [] }),
       model: 'gemini-3.6-flash',
     };
-    holistic.extract = vi.fn(async () => ({
-      data: { energyKcal: { low: 300, median: 400, high: 550 } },
+    mealProvider.extract = vi.fn(async () => ({
+      data: { items: [], mealType: 'other', uncertainties: [] },
       raw: '{}',
-      model: holistic.model,
+      model: mealProvider.model,
       latencyMs: 20,
       usage: { inputTokens: 2, outputTokens: 2, totalTokens: 4 },
     }));
     const handler = createVisionExtractHandler({
       db,
       provider: regular,
-      providers: { mealHolistic: holistic },
+      providers: { meal: mealProvider },
     });
 
-    const res = await post(handler, { task: 'mealHolistic', image });
+    const res = await post(handler, { task: 'meal', image });
 
     expect(res.statusCode).toBe(200);
     expect(res.body.meta.model).toBe('gemini-3.6-flash');
-    expect(holistic.extract).toHaveBeenCalledOnce();
+    expect(mealProvider.extract).toHaveBeenCalledOnce();
     expect(regular.extract).not.toHaveBeenCalled();
     expect(rows()[0].model).toBe('gemini-3.6-flash');
   });

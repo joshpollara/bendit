@@ -1626,20 +1626,15 @@ const recipeVision = createVisionProvider({
   deadlineMs: Number(process.env.RECIPE_VISION_DEADLINE_MS ?? 65_000),
   maxAttempts: Number(process.env.RECIPE_VISION_MAX_ATTEMPTS ?? 2),
 });
-// Meal analysis uses two deliberately separate roles. Exact model ids are
-// pinned so a provider alias cannot silently change accuracy between releases;
-// both remain overridable for paired local bakeoffs.
-const mealParserVision = createVisionProvider({
+// The meal model id is pinned so a provider alias cannot silently change
+// accuracy between releases, and stays overridable for paired local bakeoffs.
+const mealVision = createVisionProvider({
   // VISION_MODEL belongs to the general label/recipe provider. Letting that
-  // legacy setting leak into this role can put both meal calls on the same
-  // model and exhaust one model's quota with a single burst.
-  model: process.env.MEAL_PARSER_MODEL ?? 'gemini-3.5-flash-lite',
+  // legacy setting leak into this role couples meal accuracy to a change made
+  // for labels.
+  model: process.env.MEAL_MODEL ?? process.env.MEAL_PARSER_MODEL ?? 'gemini-3.5-flash-lite',
   thinkingLevel:
-    process.env.MEAL_PARSER_THINKING_LEVEL ?? process.env.VISION_THINKING_LEVEL ?? 'MINIMAL',
-});
-const mealHolisticVision = createVisionProvider({
-  model: process.env.MEAL_HOLISTIC_MODEL ?? 'gemini-3.7-flash',
-  thinkingLevel: process.env.MEAL_HOLISTIC_THINKING_LEVEL ?? 'LOW',
+    process.env.MEAL_THINKING_LEVEL ?? process.env.MEAL_PARSER_THINKING_LEVEL ?? 'MINIMAL',
 });
 const bigJson = express.json({ limit: '4mb' });
 const visionDailyLimit = Number(process.env.VISION_DAILY_LIMIT ?? 100);
@@ -1649,8 +1644,7 @@ const visionHandler = createVisionExtractHandler({
   provider: vision,
   providers: {
     recipePhoto: recipeVision,
-    meal: mealParserVision,
-    mealHolistic: mealHolisticVision,
+    meal: mealVision,
   },
   dailyLimit: visionDailyLimit,
 });

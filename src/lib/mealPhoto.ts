@@ -16,14 +16,15 @@ export type PortionRange = { low: number; median: number; high: number };
 export type MealItem = {
   id: string;
   kind?: 'food' | 'adjustment';
-  /** What the model called it — kept even when nothing matched. */
+  /** What the model called it. */
   name: string;
-  /** The model's words, once the matched food has its own name on screen. */
+  /** The model's words, once a food chosen by hand has its own name on screen. */
   seenAs?: string;
   grams: number;
   /** Visual portion evidence. The median is used for arithmetic; the bounds stay editable. */
   portionG?: PortionRange;
   confidence: ItemConfidence;
+  /** A food record, set only when someone attaches one on the review screen. */
   food: {
     id: string;
     name: string;
@@ -60,19 +61,6 @@ export type MealCaptureQuality = {
   underexposureProbability?: number;
 };
 
-export type MealEstimatePath = {
-  selected: 'database' | 'hybrid' | 'holistic';
-  database: {
-    calories: number;
-    low: number;
-    high: number;
-    matchedItems: number;
-    totalItems: number;
-  };
-  holistic: { calories: number; low: number; high: number } | null;
-  disagreementKcal: number | null;
-};
-
 export type MealEstimate = {
   /** Opaque server id used to attach review feedback without retaining the photo. */
   estimateId: string;
@@ -85,7 +73,8 @@ export type MealEstimate = {
     low: number;
     high: number;
   };
-  unmatched: number;
+  /** Rows the model named but could not put a number on. */
+  unpriced: number;
   status?: 'ready' | 'retake' | 'needs_question';
   mealType?:
     | 'simple_plate'
@@ -100,7 +89,6 @@ export type MealEstimate = {
   hint?: string | null;
   question?: MealQuestion | null;
   uncertaintyReasons?: string[];
-  path?: MealEstimatePath;
   meta: VisionMeta;
 };
 
@@ -210,20 +198,28 @@ export async function requestMealEstimate(
 }
 
 /**
- * Recomputes an item after its grams are changed by hand. Scaling the numbers
- * already returned avoids a round trip, and the arithmetic is the same one the
- * server did — per-100g times weight.
+ * Recomputes an item after its grams are changed by hand.
+ *
+ * A food attached by hand carries a known energy density. An estimated item has
+ * no food behind it, but the model's own figure for the weight it guessed is a
+ * density just the same, and scaling by it is what keeps the calories moving
+ * when the weight is corrected.
+ *
+ * What the two cases do not share is what a typed weight settles. Against a
+ * real food record it settles the calories, so the band closes. Against an
+ * estimate it settles only the amount — the energy density is still the model's
+ * guess — so the band narrows in proportion and does not disappear.
  */
 export function rescaleItem(item: MealItem, grams: number): MealItem {
-  if (!item.food || item.food.kcal100 == null || !(grams > 0)) return { ...item, grams };
+  const kcal100 = item.food?.kcal100 ?? perHundred(item, 'calories');
+  if (kcal100 == null || !(grams > 0)) return { ...item, grams };
   const factor = grams / 100;
   const scale = (per100: number | null | undefined, dp = 1) =>
     per100 == null ? null : Math.round(per100 * factor * 10 ** dp) / 10 ** dp;
 
-  const calories = Math.round(item.food.kcal100 * factor);
-  // A weight the user typed is a weight they know; the model's error band no
-  // longer applies to it.
-  const error = 0;
+  const calories = Math.round(kcal100 * factor);
+  const known = item.food != null;
+  const error = known ? 0 : (item.error ?? 0);
   return {
     ...item,
     grams,
@@ -235,8 +231,11 @@ export function rescaleItem(item: MealItem, grams: number): MealItem {
       carbs: item.nutrition?.carbs == null ? null : scale(perHundred(item, 'carbs')),
       fat: item.nutrition?.fat == null ? null : scale(perHundred(item, 'fat')),
     },
-    range: { low: calories, high: calories },
-    servings: item.food.servingGrams ? grams / item.food.servingGrams : grams / 100,
+    range: {
+      low: Math.round(calories * (1 - error)),
+      high: Math.round(calories * (1 + error)),
+    },
+    servings: item.food?.servingGrams ? grams / item.food.servingGrams : grams / 100,
   };
 }
 
@@ -413,7 +412,10 @@ export function unitOptions(item: MealItem): { label: string; grams: number }[] 
 }
 
 /** Recovers a per-100g figure from what the server sent for the original grams. */
-function perHundred(item: MealItem, key: 'protein' | 'carbs' | 'fat'): number | null {
+function perHundred(
+  item: MealItem,
+  key: 'calories' | 'protein' | 'carbs' | 'fat',
+): number | null {
   const value = item.nutrition?.[key];
   if (value == null || !item.grams) return null;
   return (value * 100) / item.grams;

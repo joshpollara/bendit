@@ -1,258 +1,167 @@
 import Database from 'better-sqlite3';
-import { beforeAll, beforeEach, describe, expect, it, vi } from 'vitest';
+import { beforeEach, describe, expect, it, vi } from 'vitest';
 import {
   estimateMeal,
-  normalizeHolisticEstimate,
   normalizeMealEvidence,
   PORTION_ERROR,
-  reconcileMealEstimates,
   selectPortionQuestion,
 } from './mealEstimate.mjs';
 import { createMealEstimateHandler } from './mealRoute.mjs';
 import { createVisionExtractHandler } from './visionRoute.mjs';
 import { TASKS } from './visionTasks.mjs';
 
-// Real foods with their published per-100g figures, so the arithmetic can be
-// checked by hand.
-const FOODS = [
-  ['usda-1', 'usda', 'Chicken, broilers or fryers, breast, meat only, cooked, roasted', 165, 31, 0, 3.6],
-  ['usda-2', 'usda', 'Rice, white, long-grain, regular, enriched, cooked', 130, 2.7, 28.2, 0.3],
-  ['usda-3', 'usda', 'Broccoli, cooked, boiled, drained, without salt', 35, 2.4, 7.2, 0.4],
-  ['usda-4', 'usda', 'Oil, olive, salad or cooking', 884, 0, 0, 100],
-];
+// Nothing here seeds a foods table, because nothing here looks one up. The
+// numbers come from the model, and what is tested is whether they survive the
+// trip intact and are refused when they are not usable.
 
-let db;
-
-beforeAll(() => {
-  db = new Database(':memory:');
-  db.exec(`
-    CREATE TABLE foods (
-      id TEXT PRIMARY KEY, name TEXT NOT NULL, brand TEXT, source TEXT NOT NULL,
-      servingLabel TEXT, servingGrams REAL,
-      kcal100 REAL, protein100 REAL, carbs100 REAL, fat100 REAL, ownerId TEXT
-    );
-    CREATE TABLE food_servings (
-      id TEXT PRIMARY KEY, foodId TEXT NOT NULL, label TEXT NOT NULL,
-      grams REAL NOT NULL, isDefault INTEGER NOT NULL DEFAULT 0
-    );
-    CREATE VIRTUAL TABLE foods_fts USING fts5(
-      name, brand, content='foods', content_rowid='rowid', tokenize='porter unicode61'
-    );
-  `);
-  // A household portion for the rice, so the unit picker has something to offer.
-  db.prepare('INSERT INTO food_servings VALUES (?, ?, ?, ?, ?)').run(
-    'usda-2:0', 'usda-2', '1 cup (158g)', 158, 1,
-  );
-  const insert = db.prepare(
-    `INSERT INTO foods (id, source, name, servingLabel, servingGrams, kcal100, protein100, carbs100, fat100)
-     VALUES (?, ?, ?, '100 g', 100, ?, ?, ?, ?)`,
-  );
-  for (const row of FOODS) insert.run(row[0], row[1], row[2], row[3], row[4], row[5], row[6]);
-  db.prepare(
-    `INSERT INTO foods
-      (id, source, name, servingLabel, servingGrams, kcal100, protein100, carbs100, fat100, ownerId)
-     VALUES ('private-1', 'custom', 'Private stew', '100 g', 100, 900, 10, 10, 80, 'other-user')`,
-  ).run();
-  db.exec("INSERT INTO foods_fts(foods_fts) VALUES('rebuild')");
+/** A model item in the shape the meal task now returns. */
+const item = (name, overrides = {}) => ({
+  id: name.replace(/\s+/g, '_'),
+  name,
+  portionG: { low: 80, median: 100, high: 130 },
+  energyKcal: { low: 120, median: 160, high: 220 },
+  macrosG: { protein: 6, carbs: 20, fat: 4 },
+  confidence: { identity: 0.8, portion: 0.6 },
+  hiddenIngredientRisks: [],
+  uncertainties: [],
+  ...overrides,
 });
 
-const item = (name, grams, confidence = 'high') => ({ name, grams, confidence });
-
 describe('estimateMeal', () => {
-  it('makes duplicate model item ids unique before they reach logging', () => {
-    const normalized = normalizeMealEvidence({
+  it('takes the calories and macros the model gave, for the portion it saw', () => {
+    const { items } = estimateMeal({ items: [item('white rice')] });
+    expect(items[0]).toMatchObject({
+      name: 'white rice',
+      grams: 100,
+      nutrition: { calories: 160, protein: 6, carbs: 20, fat: 4 },
+      range: { low: 120, high: 220 },
+    });
+  });
+
+  it('attaches no food record to anything', () => {
+    // The whole point: a plate photographed in a restaurant used to come back
+    // as whichever packet shared a word with it, priced to the calorie off that
+    // packet's label. A food record now only ever arrives by someone choosing it.
+    const { items } = estimateMeal({
+      items: [item('smoked salmon salad'), item('chicken')],
+    });
+    expect(items.map((entry) => entry.food)).toEqual([null, null]);
+    for (const entry of items) expect(entry).not.toHaveProperty('match');
+  });
+
+  it('adds a plate up, bands and all', () => {
+    const { total } = estimateMeal({
       items: [
-        { id: 'same', name: 'white rice', grams: 100 },
-        { id: 'same', name: 'broccoli', grams: 100 },
+        item('rice', { energyKcal: { low: 200, median: 250, high: 320 }, macrosG: { protein: 5, carbs: 55, fat: 1 } }),
+        item('chicken', { energyKcal: { low: 180, median: 210, high: 260 }, macrosG: { protein: 40, carbs: 0, fat: 5 } }),
       ],
     });
-    expect(normalized.items.map((entry) => entry.id)).toEqual(['same', 'same_2']);
+    expect(total).toMatchObject({
+      calories: 460,
+      protein: 45,
+      carbs: 55,
+      fat: 6,
+      low: 380,
+      high: 580,
+    });
   });
 
-  it('computes nutrition from the database, for the grams estimated', () => {
-    const result = estimateMeal(db, [item('grilled chicken breast', 150)]);
-    const [only] = result.items;
-    expect(only.food.id).toBe('usda-1');
-    expect(only.nutrition.calories).toBe(248); // 165 × 1.5
-    expect(only.nutrition.protein).toBe(46.5);
+  it('states a range, because the meal was looked at and not weighed', () => {
+    const { items } = estimateMeal({ items: [item('stew')] });
+    expect(items[0].range.low).toBeLessThan(items[0].nutrition.calories);
+    expect(items[0].range.high).toBeGreaterThan(items[0].nutrition.calories);
+    // Half the interval, over the estimate: (220 - 120) / (2 × 160).
+    expect(items[0].error).toBeCloseTo(0.313, 3);
   });
 
-  it('adds a plate up', () => {
-    const result = estimateMeal(db, [
-      item('grilled chicken breast', 150),
-      item('white rice', 200),
-      item('broccoli', 100),
-    ]);
-    expect(result.total.calories).toBe(248 + 260 + 35);
-    expect(result.total.protein).toBe(46.5 + 5.4 + 2.4);
-    expect(result.unmatched).toBe(0);
+  it('refuses a range so tight it claims the meal was weighed', () => {
+    // A single repeated number is not certainty, it is a model declining to
+    // answer the question. The stated portion confidence sets the band instead.
+    const { items } = estimateMeal({
+      items: [item('rice', { energyKcal: { low: 200, median: 200, high: 200 }, confidence: 'high' })],
+    });
+    expect(items[0].nutrition.calories).toBe(200);
+    expect(items[0].range).toEqual({ low: 170, high: 230 }); // ±15%, the high-confidence band
   });
 
-  it('states a range, because the portion is the guess', () => {
-    // 15% either side of 248 kcal at high confidence.
-    const [only] = estimateMeal(db, [item('grilled chicken breast', 150, 'high')]).items;
-    expect(only.range.low).toBe(211);
-    expect(only.range.high).toBe(285);
+  it('keeps an item it could not price, rather than quietly shrinking the meal', () => {
+    const { items, total, unpriced } = estimateMeal({
+      items: [item('rice'), item('mystery sauce', { energyKcal: { low: 0, median: 0, high: 0 } })],
+    });
+    expect(items).toHaveLength(2);
+    expect(items[1]).toMatchObject({ name: 'mystery sauce', nutrition: null, range: null });
+    expect(total.calories).toBe(160);
+    expect(unpriced).toBe(1);
   });
 
-  it('widens the range when the model was less sure', () => {
-    const high = estimateMeal(db, [item('white rice', 200, 'high')]).items[0];
-    const low = estimateMeal(db, [item('white rice', 200, 'low')]).items[0];
-    expect(low.range.high - low.range.low).toBeGreaterThan(high.range.high - high.range.low);
-    expect(low.error).toBe(PORTION_ERROR.low);
+  it('says so when something on the plate has no number on it', () => {
+    const { uncertaintyReasons } = estimateMeal({
+      items: [item('rice'), item('sauce', { energyKcal: null })],
+    });
+    expect(uncertaintyReasons.join(' ')).toMatch(/1 visible item has no estimate/i);
   });
 
-  it('keeps an item it could not match, rather than quietly shrinking the meal', () => {
-    const result = estimateMeal(db, [item('grilled chicken breast', 150), item('rendang', 200)]);
-    expect(result.items).toHaveLength(2);
-    expect(result.items[1].food).toBeNull();
-    expect(result.items[1].nutrition).toBeNull();
-    expect(result.unmatched).toBe(1);
-    // The total counts only what is actually known.
-    expect(result.total.calories).toBe(248);
-  });
-
-  it('looks the food up by how it is catalogued, not by how it is said', () => {
-    // The spoken name finds nothing here; the catalogue form is the whole
-    // point of asking for both.
-    const [only] = estimateMeal(db, [
-      { name: 'a bit of chicken', query: 'chicken breast, roasted', grams: 150, confidence: 'high' },
-    ]).items;
-    expect(only.food.id).toBe('usda-1');
-    expect(only.name).toBe('a bit of chicken'); // what the person sees is still their words
-  });
-
-  it('falls back to the broader term for a food it could only half place', () => {
-    const [only] = estimateMeal(db, [
-      { name: 'jasmine rice', query: 'jasmine rice, steamed', alternate: 'white rice', grams: 100, confidence: 'medium' },
-    ]).items;
-    expect(only.food.id).toBe('usda-2');
-  });
-
-  it('still works when the model gives only a name', () => {
-    // Nothing forces version 2 of the prompt to be the one that answered.
-    const [only] = estimateMeal(db, [item('grilled chicken breast', 150)]).items;
-    expect(only.food.id).toBe('usda-1');
+  it('makes duplicate model item ids unique before they reach logging', () => {
+    const { items } = estimateMeal({
+      items: [item('rice', { id: 'x' }), item('beans', { id: 'x' })],
+    });
+    expect(items.map((entry) => entry.id)).toEqual(['x', 'x_2']);
   });
 
   it('drops an item with no usable weight', () => {
-    const result = estimateMeal(db, [item('white rice', 0), item('white rice', null), { name: '' }]);
-    expect(result.items).toEqual([]);
-  });
-
-  it('treats an unknown confidence as the middle band rather than trusting it', () => {
-    const [only] = estimateMeal(db, [item('white rice', 200, 'certain')]).items;
-    expect(only.confidence).toBe('medium');
+    expect(estimateMeal({ items: [item('rice', { portionG: null, grams: 0 })] }).items).toEqual([]);
   });
 
   it('handles a photo with nothing in it', () => {
-    expect(estimateMeal(db, []).total.calories).toBe(0);
-    expect(estimateMeal(db).items).toEqual([]);
+    const result = estimateMeal({ items: [] });
+    expect(result.items).toEqual([]);
+    expect(result.total.calories).toBe(0);
+    expect(result.mealType).toBe('not_food');
+    expect(result.status).toBe('ready');
   });
 
-  it('brings the household portions along, for correcting in cups not grams', () => {
-    const [rice] = estimateMeal(db, [item('white rice', 200)]).items;
-    expect(rice.food.servings).toEqual([{ label: '1 cup (158g)', grams: 158 }]);
-  });
-
-  it('expresses the estimate in servings, which is what the log counts', () => {
-    // 150 g of a food whose serving is 100 g is one and a half servings.
-    const [only] = estimateMeal(db, [item('grilled chicken breast', 150)]).items;
-    expect(only.servings).toBe(1.5);
-    expect(only.food.servingLabel).toBe('100 g');
-  });
-
-  it('gets oil right, which is where a wrong match hurts most', () => {
-    // A tablespoon of oil is more calories than the broccoli it dresses.
-    const [only] = estimateMeal(db, [item('olive oil', 14)]).items;
-    expect(only.nutrition.calories).toBe(124);
-  });
-
-  it('uses explicit portion bounds instead of deriving a band from one gram guess', () => {
-    const [rice] = estimateMeal(db, {
+  it('asks for a retake when the photograph cannot answer the question', () => {
+    const result = estimateMeal({
       mealType: 'simple_plate',
-      items: [
-        {
-          id: 'rice',
-          name: 'white rice',
-          query: 'white rice cooked',
-          portionG: { low: 100, median: 200, high: 300 },
-          confidence: { identity: 0.9, portion: 0.5, preparation: 0.8 },
-        },
-      ],
-    }).items;
-    expect(rice.grams).toBe(200);
-    expect(rice.range).toEqual({ low: 130, high: 390 });
+      captureQuality: { needsRetake: true, retakeReason: 'too dark' },
+      items: [item('rice')],
+    });
+    expect(result.status).toBe('retake');
+    expect(result.captureQuality.retakeReason).toBe('too dark');
   });
 
-  it('prices hidden oil only into the high scenario, never silently into the point estimate', () => {
-    const [broccoli] = estimateMeal(db, {
+  it('carries hidden-ingredient risk through as a reason, not as a number', () => {
+    // Pricing invisible oil used to mean looking oil up and adding it. What is
+    // hidden belongs in the model's own range and in what the screen says.
+    const result = estimateMeal({
       items: [
-        {
-          name: 'broccoli',
-          query: 'broccoli cooked',
-          portionG: { low: 100, median: 100, high: 100 },
+        item('salad', {
           hiddenIngredientRisks: [
-            {
-              ingredient: 'olive oil',
-              likelihood: 0.6,
-              quantityG: { low: 0, high: 14 },
-              evidence: 'May have been dressed',
-            },
+            { ingredient: 'olive oil', likelihood: 0.6, quantityG: { low: 0, high: 20 }, evidence: 'glossy leaves' },
           ],
-        },
-      ],
-    }).items;
-    expect(broccoli.nutrition.calories).toBe(35);
-    expect(broccoli.range.low).toBe(35);
-    expect(broccoli.range.high).toBe(159);
-  });
-
-  it('refuses an explicit raw-versus-cooked contradiction', () => {
-    const result = estimateMeal(db, {
-      items: [
-        {
-          name: 'white rice',
-          query: 'white rice raw',
-          preparation: 'raw',
-          portionG: { low: 100, median: 100, high: 100 },
-        },
+        }),
       ],
     });
-    expect(result.items[0].food).toBeNull();
+    expect(result.items[0].hiddenIngredientRisks[0].ingredient).toBe('olive oil');
+    expect(result.total.calories).toBe(160);
+    expect(result.uncertaintyReasons.join(' ')).toMatch(/hidden ingredients/i);
   });
 
-  it('never searches another user’s private custom foods', () => {
-    expect(estimateMeal(db, [item('private stew', 100)]).items[0].food?.id).toBe('private-1');
-    expect(estimateMeal(db, [item('private stew', 100)], { ownerId: 'this-user' }).items[0].food).toBeNull();
+  it('still works when the model gives only a name and a weight', () => {
+    // The older shape, kept working so a prompt rollback is not a data outage.
+    const { items } = estimateMeal([{ name: 'rice', grams: 200, confidence: 'medium' }]);
+    expect(items[0]).toMatchObject({ name: 'rice', grams: 200, nutrition: null });
+    expect(items[0].error).toBe(PORTION_ERROR.medium);
   });
 });
 
 describe('meal evidence normalization', () => {
-  it('orders and caps unsafe model values and normalizes candidate probabilities', () => {
+  it('orders and caps unsafe model values', () => {
     const normalized = normalizeMealEvidence({
-      scaleEvidence: {
-        available: true,
-        source: 'printed ruler',
-        knownDimensionMm: -40,
-        confidence: 8,
-      },
-      items: [
-        {
-          name: 'rice',
-          portionG: { low: 9000, median: -20, high: 300 },
-          identityCandidates: [
-            { name: 'rice', probability: 3 },
-            { name: 'risotto', probability: 1 },
-            { name: 'porridge', probability: 0 },
-            { name: 'fourth', probability: 1 },
-          ],
-        },
-      ],
+      scaleEvidence: { available: true, source: 'printed ruler', knownDimensionMm: -40, confidence: 8 },
+      items: [item('rice', { portionG: { low: 9000, median: -20, high: 300 } })],
     });
     expect(normalized.items[0].portionG).toEqual({ low: 0, median: 300, high: 5000 });
-    expect(normalized.items[0].identityCandidates).toHaveLength(3);
-    expect(sumProbabilities(normalized.items[0].identityCandidates)).toBeCloseTo(1, 4);
     expect(normalized.scaleEvidence).toEqual({
       available: false,
       source: null,
@@ -261,163 +170,92 @@ describe('meal evidence normalization', () => {
     });
   });
 
+  it('puts an out-of-order energy range back in order', () => {
+    const normalized = normalizeMealEvidence({
+      items: [item('rice', { energyKcal: { low: 400, median: 100, high: 250 } })],
+    });
+    expect(normalized.items[0].energyKcal).toEqual({ low: 100, median: 250, high: 400 });
+  });
+
+  it('refuses a nutrition figure that is not a number', () => {
+    const normalized = normalizeMealEvidence({
+      items: [item('rice', { energyKcal: { low: 100, median: 'nope', high: 300 }, macrosG: { protein: 'x' } })],
+    });
+    expect(normalized.items[0].energyKcal).toBeNull();
+    expect(normalized.items[0].macrosG.protein).toBeNull();
+  });
+
   it('drops items without a finite positive median', () => {
-    expect(normalizeMealEvidence({ items: [{ name: 'rice', portionG: { low: 0, median: 0, high: 5 } }] }).items)
-      .toEqual([]);
+    expect(
+      normalizeMealEvidence({ items: [item('rice', { portionG: { low: 0, median: 0, high: 5 } })] }).items,
+    ).toEqual([]);
   });
 });
 
-const sumProbabilities = (items) => items.reduce((total, candidate) => total + candidate.probability, 0);
-
-describe('hybrid reconciliation', () => {
-  const holistic = (energyKcal, overrides = {}) => ({
-    mealType: 'mixed_dish',
-    energyKcal,
-    macrosG: {
-      protein: { low: 20, median: 30, high: 40 },
-      carbs: { low: 30, median: 50, high: 70 },
-      fat: { low: 10, median: 20, high: 35 },
-      fiber: { low: 2, median: 5, high: 8 },
-    },
-    hiddenIngredientRisks: [],
-    uncertaintyReasons: [],
-    ...overrides,
-  });
-
-  it('rejects a holistic result without a complete finite energy range', () => {
-    expect(normalizeHolisticEstimate({ energyKcal: { low: 100, median: 'nope', high: 300 } })).toBeNull();
-  });
-
-  it('uses a holistic residual to stop an unresolved mixed dish from counting as zero', () => {
-    const database = estimateMeal(db, {
-      mealType: 'mixed_dish',
-      items: [
-        { id: 'chicken', name: 'chicken breast', grams: 150, confidence: 'high' },
-        { id: 'rendang', name: 'rendang', grams: 200, confidence: 'low' },
-      ],
-    });
-    const result = reconcileMealEstimates(database, holistic({ low: 600, median: 800, high: 1000 }));
-    const rendang = result.items.find((entry) => entry.id === 'rendang');
-    expect(result.path.selected).toBe('hybrid');
-    expect(result.total.calories).toBe(800);
-    expect(rendang.nutrition.calories).toBeGreaterThan(0);
-    expect(result.total.low).toBe(Math.min(database.total.low, 600));
-    expect(result.total.high).toBe(Math.max(database.total.high, 1000));
-    expect(rendang.range.low).toBeLessThanOrEqual(rendang.nutrition.calories);
-    expect(rendang.range.high).toBeGreaterThanOrEqual(rendang.nutrition.calories);
-  });
-
-  it('keeps a generated holistic row distinct from a parser item with the same id', () => {
-    const database = estimateMeal(db, {
-      mealType: 'mixed_dish',
-      items: [{ id: 'holistic_adjustment', name: 'white rice', grams: 100 }],
-    });
-    const result = reconcileMealEstimates(database, holistic({ low: 300, median: 500, high: 700 }));
-    expect(new Set(result.items.map((entry) => entry.id)).size).toBe(result.items.length);
-    expect(result.items.map((entry) => entry.id)).toContain('holistic_adjustment_2');
-  });
-
-  it('does not raise a reliable simple plate merely because the holistic point is higher', () => {
-    const database = estimateMeal(db, {
-      mealType: 'simple_plate',
-      items: [{ id: 'rice', name: 'white rice', grams: 200, confidence: 'high' }],
-    });
-    const result = reconcileMealEstimates(database, holistic({ low: 300, median: 500, high: 700 }));
-    expect(result.total.calories).toBe(260);
-    expect(result.total.low).toBe(Math.min(database.total.low, 300));
-    expect(result.total.high).toBe(Math.max(database.total.high, 700));
-  });
-
-  it('does not count a holistic residual range twice', () => {
-    const database = estimateMeal(db, {
-      mealType: 'mixed_dish',
-      items: [
-        {
-          id: 'rice',
-          name: 'white rice',
-          portionG: { low: 100, median: 200, high: 400 },
-          hiddenIngredientRisks: [
-            { ingredient: 'olive oil', likelihood: 0.6, quantityG: { low: 0, high: 20 } },
-          ],
-        },
-      ],
-    });
-    const result = reconcileMealEstimates(database, holistic({ low: 500, median: 700, high: 900 }));
-
-    expect(result.total.calories).toBe(700);
-    expect(result.total.low).toBe(Math.min(database.total.low, 500));
-    expect(result.total.high).toBe(Math.max(database.total.high, 900));
-    expect(result.total.protein).toBe(30);
-    expect(result.total.fat).toBe(20);
-  });
-
-  it('falls back to a loggable whole-meal item when item parsing is unavailable', () => {
-    const database = estimateMeal(db, { mealType: 'other', items: [] });
-    const result = reconcileMealEstimates(database, holistic({ low: 350, median: 500, high: 700 }));
-    expect(result.path.selected).toBe('holistic');
-    expect(result.items).toHaveLength(1);
-    expect(result.items[0].nutrition.calories).toBe(500);
-    expect(result.total).toMatchObject({ calories: 500, low: 350, high: 700 });
-  });
-
+describe('the portion question', () => {
   it('selects at most the single highest-impact portion question above the threshold', () => {
-    const estimate = estimateMeal(db, {
+    const estimate = estimateMeal({
       items: [
-        {
-          id: 'rice',
-          name: 'white rice',
+        item('rice', {
           portionG: { low: 100, median: 200, high: 400 },
-        },
-        {
-          id: 'broccoli',
-          name: 'broccoli',
-          portionG: { low: 50, median: 100, high: 200 },
-        },
+          energyKcal: { low: 150, median: 250, high: 450 },
+        }),
+        item('broccoli', { energyKcal: { low: 30, median: 35, high: 40 } }),
       ],
     });
-    const question = selectPortionQuestion(estimate);
-    expect(question.targetItemId).toBe('rice');
-    expect(question.choices).toHaveLength(3);
-    expect(question.expectedReductionKcal).toBeGreaterThan(80);
+    expect(estimate.question.targetItemId).toBe('rice');
+    expect(estimate.question.choices).toHaveLength(3);
+    expect(estimate.question.expectedReductionKcal).toBe(300);
+    expect(estimate.status).toBe('needs_question');
   });
 
   it('asks nothing when no portion can reduce the interval enough', () => {
-    const estimate = estimateMeal(db, [item('broccoli', 100, 'high')]);
+    const estimate = estimateMeal({ items: [item('broccoli', { energyKcal: { low: 33, median: 35, high: 37 } })] });
     expect(selectPortionQuestion(estimate)).toBeNull();
+    expect(estimate.status).toBe('ready');
+  });
+
+  it('asks about the food by the name on the screen', () => {
+    const estimate = estimateMeal({
+      items: [
+        item('roast potatoes', {
+          portionG: { low: 100, median: 200, high: 400 },
+          energyKcal: { low: 150, median: 250, high: 450 },
+        }),
+      ],
+    });
+    expect(estimate.question.question).toMatch(/roast potatoes/);
   });
 });
 
 describe('the meal task itself', () => {
-  it('names the food before it weighs it', () => {
-    // Field order is generation order. A weight produced before the model has
-    // committed to what the food is, and to what it measured against, is a
-    // guess with nothing behind it.
+  it('names and weighs the food before it prices it', () => {
+    // Field order is generation order. Energy committed before the model has
+    // said what the food is, and how much of it there is, is a guess with
+    // nothing behind it.
     const fields = Object.keys(TASKS.meal.schema.properties.items.items.properties);
-    expect(Object.keys(TASKS.meal.schema.properties)[0]).toBe('captureQuality');
-    expect(Object.keys(TASKS.meal.schema.properties).indexOf('scaleEvidence')).toBeLessThan(
-      Object.keys(TASKS.meal.schema.properties).indexOf('items'),
-    );
-    expect(fields.indexOf('query')).toBeLessThan(fields.indexOf('portionG'));
+    expect(fields.indexOf('name')).toBeLessThan(fields.indexOf('portionG'));
+    expect(fields.indexOf('portionG')).toBeLessThan(fields.indexOf('energyKcal'));
+    expect(fields.indexOf('energyKcal')).toBeLessThan(fields.indexOf('macrosG'));
   });
 
-  it('has nowhere to put a calorie figure', () => {
-    // The guarantee this milestone rests on: the model cannot return nutrition
-    // because the schema it is constrained to has no field for it.
+  it('has somewhere to put a calorie figure, which is the point', () => {
     const fields = Object.keys(TASKS.meal.schema.properties.items.items.properties);
-    expect(fields).toContain('portionG');
-    expect(fields).toContain('identityCandidates');
-    expect(JSON.stringify(TASKS.meal.schema)).not.toMatch(/calorie|protein|carb|fat|kcal/i);
+    expect(fields).toContain('energyKcal');
+    expect(fields).toContain('macrosG');
   });
 
-  it('tells the model in words as well', () => {
-    expect(TASKS.meal.prompt).toMatch(/Do not give calories/i);
+  it('tells the model in words that the range is not decoration', () => {
+    expect(TASKS.meal.prompt).toMatch(/Never return a range so tight/i);
   });
 });
 
 describe('POST /api/meals/estimate', () => {
+  let db;
   let visionDb;
 
   beforeEach(() => {
+    db = new Database(':memory:');
     visionDb = new Database(':memory:');
     visionDb.exec(`CREATE TABLE vision_requests (
       id TEXT PRIMARY KEY, createdAt TEXT NOT NULL, task TEXT NOT NULL,
@@ -427,7 +265,7 @@ describe('POST /api/meals/estimate', () => {
       responseJson TEXT, userId TEXT, mealPhotoRunId TEXT)`);
   });
 
-  const handlerReturning = (data, holisticData = {}) =>
+  const handlerReturning = (data) =>
     createMealEstimateHandler({
       db,
       visionHandler: createVisionExtractHandler({
@@ -435,22 +273,19 @@ describe('POST /api/meals/estimate', () => {
         provider: {
           configured: true,
           model: 'test-model',
-          extract: vi.fn(async ({ schema }) => {
-            const answer = 'energyKcal' in schema.properties ? holisticData : data;
-            return {
-              data: answer,
-              raw: JSON.stringify(answer),
-              model: 'test-model',
-              latencyMs: 900,
-              usage: { inputTokens: 400, outputTokens: 60, totalTokens: 460 },
-            };
-          }),
+          extract: vi.fn(async () => ({
+            data,
+            raw: JSON.stringify(data),
+            model: 'test-model',
+            latencyMs: 900,
+            usage: { inputTokens: 400, outputTokens: 60, totalTokens: 460 },
+          })),
         },
         dailyLimit: 10,
       }),
     });
 
-  const post = async (handler, body) => {
+  const post = async (handler, body, userId = 'test-user') => {
     const res = {
       statusCode: 200,
       body: null,
@@ -463,7 +298,7 @@ describe('POST /api/meals/estimate', () => {
         return res;
       },
     };
-    await handler({ body, userId: 'test-user' }, res);
+    await handler({ body, userId }, res);
     return res;
   };
 
@@ -479,64 +314,41 @@ describe('POST /api/meals/estimate', () => {
 
     await expect(post(handler, { image })).rejects.toThrow('unexpected');
     expect(
-      db.prepare("SELECT status FROM meal_photo_runs ORDER BY createdAt DESC LIMIT 1").get().status,
+      db.prepare('SELECT status FROM meal_photo_runs ORDER BY createdAt DESC LIMIT 1').get().status,
     ).toBe('failed');
   });
 
   it('returns priced items and a total', async () => {
-    const handler = handlerReturning({
-      items: [
-        { name: 'grilled chicken breast', grams: 150, confidence: 'high' },
-        { name: 'white rice', grams: 200, confidence: 'medium' },
-      ],
-    });
-    const res = await post(handler, { image });
+    const res = await post(handlerReturning({ items: [item('rice'), item('chicken')] }), { image });
     expect(res.statusCode).toBe(200);
     expect(res.body.items).toHaveLength(2);
-    expect(res.body.total.calories).toBe(508);
+    expect(res.body.total.calories).toBe(320);
     expect(res.body.total.low).toBeLessThan(res.body.total.calories);
     expect(res.body.total.high).toBeGreaterThan(res.body.total.calories);
-    expect(res.body.meta.usage.totalTokens).toBe(920);
-    expect(res.body.meta.models).toEqual({ parser: 'test-model', holistic: 'test-model' });
+    expect(res.body.meta.usage.totalTokens).toBe(460);
     expect(res.body.estimateId).toMatch(/^[0-9a-f-]{36}$/);
   });
 
-  it('gives both readings the same description and keeps it with the run', async () => {
-    const visionHandler = vi.fn(async (req, res) =>
-      res.json({
-        data:
-          req.body.task === 'meal'
-            ? { items: [{ name: 'white rice', grams: 200, confidence: 'high' }] }
-            : {
-                mealType: 'mixed_dish',
-                energyKcal: { low: 200, median: 260, high: 320 },
-                macrosG: {
-                  protein: { low: 4, median: 5, high: 6 },
-                  carbs: { low: 50, median: 56, high: 60 },
-                  fat: { low: 0, median: 1, high: 2 },
-                  fiber: { low: 0, median: 1, high: 2 },
-                },
-                hiddenIngredientRisks: [],
-                uncertaintyReasons: [],
-              },
-        meta: {
-          model: 'test-model',
-          promptVersion: '3+hint',
-          latencyMs: 10,
-          usage: { inputTokens: 1, outputTokens: 1, totalTokens: 2 },
-          callsRemainingToday: 8,
-        },
-      }),
+  it('reads the photograph once', async () => {
+    // Two calls were needed only to hold a database lookup against something.
+    const visionHandler = vi.fn(async (_req, res) =>
+      res.json({ data: { items: [item('rice')] }, meta: { model: 'm', promptVersion: '5' } }),
+    );
+    await post(createMealEstimateHandler({ db, visionHandler }), { image });
+    expect(visionHandler).toHaveBeenCalledOnce();
+    expect(visionHandler.mock.calls[0][0].body.task).toBe('meal');
+  });
+
+  it('gives the reading the description someone typed, and keeps it with the run', async () => {
+    const visionHandler = vi.fn(async (_req, res) =>
+      res.json({ data: { items: [item('white rice')] }, meta: { model: 'm', promptVersion: '5+hint' } }),
     );
     const res = await post(createMealEstimateHandler({ db, visionHandler }), {
       image,
       hint: '  white  rice  ',
     });
 
-    expect(visionHandler.mock.calls.map((call) => [call[0].body.task, call[0].body.hint])).toEqual([
-      ['meal', '  white  rice  '],
-      ['mealHolistic', '  white  rice  '],
-    ]);
+    expect(visionHandler.mock.calls[0][0].body.hint).toBe('  white  rice  ');
     // Normalized once for the record, so a hinted run can be told from an
     // unhinted one long after the photo is gone.
     expect(res.body.hint).toBe('white rice');
@@ -546,9 +358,7 @@ describe('POST /api/meals/estimate', () => {
   });
 
   it('chains a second reading of the same photograph to the first', async () => {
-    const handler = handlerReturning({
-      items: [{ name: 'white rice', grams: 100, confidence: 'high' }],
-    });
+    const handler = handlerReturning({ items: [item('white rice')] });
     const first = await post(handler, { image });
     const second = await post(handler, {
       image,
@@ -564,14 +374,9 @@ describe('POST /api/meals/estimate', () => {
   });
 
   it('ignores a previous estimate that is not the caller’s', async () => {
-    const handler = handlerReturning({
-      items: [{ name: 'white rice', grams: 100, confidence: 'high' }],
-    });
+    const handler = handlerReturning({ items: [item('white rice')] });
     const mine = await post(handler, { image });
-    const res = { statusCode: 200, body: null };
-    res.status = (code) => ((res.statusCode = code), res);
-    res.json = (payload) => ((res.body = payload), res);
-    await handler({ body: { image, previousEstimateId: mine.body.estimateId }, userId: 'mallory' }, res);
+    const res = await post(handler, { image, previousEstimateId: mine.body.estimateId }, 'mallory');
 
     expect(
       db.prepare('SELECT previousRunId FROM meal_photo_runs WHERE id = ?').get(res.body.estimateId)
@@ -580,24 +385,11 @@ describe('POST /api/meals/estimate', () => {
   });
 
   it('records no description when none was typed', async () => {
-    const res = await post(
-      handlerReturning({ items: [{ name: 'white rice', grams: 100, confidence: 'high' }] }),
-      { image, hint: '   ' },
-    );
+    const res = await post(handlerReturning({ items: [item('white rice')] }), { image, hint: '   ' });
     expect(res.body.hint).toBeNull();
-    expect(db.prepare('SELECT hint FROM meal_photo_runs WHERE id = ?').get(res.body.estimateId).hint).toBeNull();
-  });
-
-  it('ignores nutrition the model volunteers anyway', async () => {
-    // Structured output should prevent this, but a number that arrives is
-    // still not allowed anywhere near the total.
-    const handler = handlerReturning({
-      items: [{ name: 'white rice', grams: 200, confidence: 'high', calories: 9999 }],
-    });
-    const res = await post(handler, { image });
-    expect(res.body.total.calories).toBe(260); // 130 × 2, from the database
-    expect(res.body.items[0]).not.toHaveProperty('calories');
-    expect(res.body.evidence.items[0]).not.toHaveProperty('calories');
+    expect(
+      db.prepare('SELECT hint FROM meal_photo_runs WHERE id = ?').get(res.body.estimateId).hint,
+    ).toBeNull();
   });
 
   it('returns an empty meal when there was no food in the photo', async () => {
@@ -623,30 +415,7 @@ describe('POST /api/meals/estimate', () => {
     expect(res.body.error.code).toBe('unconfigured');
   });
 
-  it('keeps the database result when the independent whole-meal call is rate limited', async () => {
-    const visionHandler = vi.fn(async (req, res) => {
-      if (req.body.task === 'mealHolistic') {
-        return res.status(429).json({ error: { code: 'rate_limited', message: 'model quota' } });
-      }
-      return res.json({
-        data: { items: [{ name: 'white rice', grams: 200, confidence: 'high' }] },
-        meta: {
-          model: 'parser',
-          promptVersion: '3',
-          latencyMs: 10,
-          usage: { inputTokens: 1, outputTokens: 1, totalTokens: 2 },
-          callsRemainingToday: 8,
-        },
-      });
-    });
-    const res = await post(createMealEstimateHandler({ db, visionHandler }), { image });
-    expect(res.statusCode).toBe(200);
-    expect(res.body.total.calories).toBe(260);
-    expect(res.body.path.holistic).toBeNull();
-    expect(res.body.meta.partialFailures).toEqual([{ role: 'holistic', code: 'rate_limited' }]);
-  });
-
-  it('returns one rate-limit failure when both meal paths are unavailable', async () => {
+  it('passes a rate limit through rather than inventing a meal', async () => {
     const visionHandler = vi.fn(async (_req, res) =>
       res.status(429).json({ error: { code: 'rate_limited', message: 'model quota' } }),
     );
@@ -654,56 +423,28 @@ describe('POST /api/meals/estimate', () => {
 
     expect(res.statusCode).toBe(429);
     expect(res.body.error.code).toBe('rate_limited');
-    expect(visionHandler).toHaveBeenCalledTimes(2);
+    expect(visionHandler).toHaveBeenCalledOnce();
   });
 
-  it('returns a loggable whole-meal fallback when item parsing fails', async () => {
-    const visionHandler = vi.fn(async (req, res) => {
-      if (req.body.task === 'meal') {
-        return res.status(502).json({ error: { code: 'provider_error', message: 'bad parser' } });
-      }
-      return res.json({
-        data: {
-          mealType: 'mixed_dish',
-          energyKcal: { low: 400, median: 550, high: 750 },
-          macrosG: {
-            protein: { low: 20, median: 30, high: 40 },
-            carbs: { low: 40, median: 60, high: 80 },
-            fat: { low: 10, median: 20, high: 35 },
-            fiber: { low: 2, median: 5, high: 8 },
-          },
-          hiddenIngredientRisks: [],
-          uncertaintyReasons: [],
-        },
-        meta: {
-          model: 'holistic',
-          promptVersion: '1',
-          latencyMs: 10,
-          usage: { inputTokens: 1, outputTokens: 1, totalTokens: 2 },
-          callsRemainingToday: 8,
-        },
-      });
-    });
-    const res = await post(createMealEstimateHandler({ db, visionHandler }), { image });
-    expect(res.statusCode).toBe(200);
-    expect(res.body.path.selected).toBe('holistic');
-    expect(res.body.items[0].nutrition.calories).toBe(550);
-    expect(res.body.uncertaintyReasons[0]).toMatch(/fallback/i);
+  it('discards a run rejected before the model was ever reached', async () => {
+    // Otherwise a client retrying against the daily limit fills the run table.
+    const visionHandler = vi.fn(async (_req, res) =>
+      res.status(429).json({ error: { code: 'quota_exceeded', message: 'daily limit' } }),
+    );
+    await post(createMealEstimateHandler({ db, visionHandler }), { image });
+    expect(db.prepare('SELECT count(*) n FROM meal_photo_runs').get().n).toBe(0);
   });
 
   it('logs the call like any other', async () => {
-    const res = await post(
-      handlerReturning({ items: [{ name: 'white rice', grams: 100, confidence: 'high' }] }),
-      { image },
-    );
+    const res = await post(handlerReturning({ items: [item('white rice')] }), { image });
     expect(
       visionDb
-        .prepare('SELECT task FROM vision_requests WHERE mealPhotoRunId = ? ORDER BY task')
+        .prepare('SELECT task FROM vision_requests WHERE mealPhotoRunId = ?')
         .all(res.body.estimateId)
         .map((row) => row.task),
-    ).toEqual(['meal', 'mealHolistic']);
-    expect(db.prepare('SELECT status FROM meal_photo_runs WHERE id = ?').get(res.body.estimateId).status).toBe(
-      'reviewing',
-    );
+    ).toEqual(['meal']);
+    expect(
+      db.prepare('SELECT status FROM meal_photo_runs WHERE id = ?').get(res.body.estimateId).status,
+    ).toBe('reviewing');
   });
 });
