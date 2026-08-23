@@ -34,3 +34,18 @@ export const EXERCISES: ExerciseType[] = [
 export function caloriesBurned(met: number, weightKg: number, minutes: number): number {
   return Math.round(((met * 3.5 * weightKg) / 200) * minutes);
 }
+
+/**
+ * What the minutes box holds while it is being typed. An empty box is a real
+ * state on the way to another number, so it reads as "no minutes yet" rather
+ * than being snapped up to 1 — clamping on every keystroke left a digit that
+ * could not be deleted, and every duration had to start with it.
+ */
+export function parseMinutes(text: string): number | null {
+  const trimmed = text.trim();
+  if (trimmed === '') return null;
+  const value = Number(trimmed);
+  if (!Number.isFinite(value)) return null;
+  const minutes = Math.round(value);
+  return minutes > 0 ? minutes : null;
+}
