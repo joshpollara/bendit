@@ -5,7 +5,10 @@ import {
   bmr,
   computeBudget,
   dailyDeficit,
+  KCAL_PER_G,
+  macroCalories,
   remaining,
+  suggestedMacros,
   tdee,
 } from "./budget";
 
@@ -183,5 +186,42 @@ describe("computeBudget with a measured expenditure", () => {
     );
     expect(r.measured).toBe(false);
     expect(r.tdee).toBe(r.formulaTdee);
+  });
+});
+
+describe("suggestedMacros", () => {
+  it("protein from goal weight, fat as a quarter of the budget, carbs the rest", () => {
+    const t = suggestedMacros(2000, 70);
+    // protein: 70 × 1.6 = 112 → 110 (nearest 5)
+    expect(t.protein).toBe(110);
+    // fat: 2000 × 0.25 / 9 = 55.6 → 55 (nearest 5)
+    expect(t.fat).toBe(55);
+    // carbs: (2000 − 440 − 495) / 4 = 266.25 → 266
+    expect(t.carbs).toBe(266);
+  });
+
+  it("adds back up to the budget, within the rounding of a gram of carbs", () => {
+    for (const [budget, goal] of [
+      [1586, 75],
+      [1200, 55],
+      [2400, 90],
+      [3100, 100],
+    ]) {
+      const t = suggestedMacros(budget, goal);
+      expect(Math.abs(macroCalories(t) - budget)).toBeLessThanOrEqual(2);
+    }
+  });
+
+  it("never suggests negative carbs when protein and fat already fill the budget", () => {
+    // 150 kg goal → 240 g protein = 960 kcal; fat 35 g = 315 kcal; nothing left.
+    const t = suggestedMacros(1200, 150);
+    expect(t.protein).toBe(240);
+    expect(t.fat).toBe(35);
+    expect(t.carbs).toBe(0);
+  });
+
+  it("uses the Atwater factors", () => {
+    expect(KCAL_PER_G).toEqual({ protein: 4, carbs: 4, fat: 9 });
+    expect(macroCalories({ protein: 100, carbs: 200, fat: 50 })).toBe(400 + 800 + 450);
   });
 });

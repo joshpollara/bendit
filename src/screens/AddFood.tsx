@@ -2,12 +2,15 @@ import { lazy, Suspense, useEffect, useRef, useState } from 'react';
 import { useNavigate, useSearchParams } from 'react-router-dom';
 import { api, type MealTemplate } from '../lib/api';
 import { useData } from '../lib/useData';
-import { todayStr } from '../lib/dates';
+import { shiftDay, todayStr } from '../lib/dates';
+import { computeBudget } from '../lib/budget';
+import { macroTargets, standingFor, type Addition, type DayStanding } from '../lib/macros';
+import { pendingForDate, useQueue } from '../lib/offlineQueue';
 import { lookupBarcodeRemote, searchOpenFoodFacts } from '../lib/openfoodfacts';
 import { formatCalories } from '../lib/units';
 import { STRINGS } from '../lib/strings';
 import { useUI } from '../store/ui';
-import { MEALS, MEAL_LABELS, type Food, type Meal } from '../types';
+import { MEALS, MEAL_LABELS, type Food, type FoodLogEntry, type Meal, type Profile } from '../types';
 import {
   prepareMealPhoto,
   requestMealEstimate,
@@ -18,6 +21,7 @@ import {
 } from '../lib/mealPhoto';
 import ServingSheet from '../components/ServingSheet';
 import FoodForm from '../components/FoodForm';
+import DayImpact from '../components/DayImpact';
 import MealPhotoProgress from '../components/MealPhotoProgress';
 import MacroInputs, {
   EMPTY_MACROS,
@@ -165,9 +169,11 @@ function SavedMeals({
 // meal, done. No Food row is created — the entry stands on its own.
 function QuickAddForm({
   initialMeal,
+  day,
   onAdd,
 }: {
   initialMeal: Meal;
+  day?: DayStanding;
   onAdd: (entry: QuickAddInput) => void;
 }) {
   const [calories, setCalories] = useState('');
@@ -181,6 +187,12 @@ function QuickAddForm({
   const value = Number(calories);
   const valid = calories.trim() !== '' && Number.isFinite(value) && value > 0;
   const field = 'w-full rounded-xl border border-line bg-card px-3 py-2.5 text-sm';
+  const adding: Addition = {
+    calories: valid ? Math.round(value) : 0,
+    protein: macroGrams(macros.protein),
+    carbs: macroGrams(macros.carbs),
+    fat: macroGrams(macros.fat),
+  };
 
   return (
     <form
@@ -221,6 +233,8 @@ function QuickAddForm({
       />
 
       <MacroInputs values={macros} onChange={setMacros} />
+
+      {day && <DayImpact day={day} adding={adding} />}
 
       {(recent?.length ?? 0) > 0 && (
         <div className="flex flex-wrap gap-1.5">
@@ -273,7 +287,7 @@ function QuickAddForm({
   );
 }
 
-export default function AddFood() {
+export default function AddFood({ profile }: { profile: Profile }) {
   const navigate = useNavigate();
   const [params] = useSearchParams();
   const setDate = useUI((s) => s.setDate);
@@ -281,6 +295,24 @@ export default function AddFood() {
 
   const meal = (params.get('meal') as Meal | null) ?? defaultMeal();
   const date = params.get('date') ?? todayStr();
+
+  // Where the day being logged to already stands, so each sheet can show what
+  // the entry it is about to add would do to it. Entries still waiting to
+  // sync are as real to the person who logged them as the ones that have.
+  const dayData = useData(() => api.getDay(date, shiftDay(date, -1)), [date]);
+  const queue = useQueue((s) => s.queue);
+  const day: DayStanding | undefined = dayData
+    ? standingFor(
+        [
+          ...dayData.entries,
+          ...pendingForDate(queue, date)
+            .filter((w) => w.path === '/api/food-log')
+            .map((w) => w.body as FoodLogEntry),
+        ],
+        computeBudget(profile, date, dayData.latestWeightKg).budget,
+        macroTargets(profile),
+      )
+    : undefined;
 
   const [tab, setTab] = useState<Tab>(params.get('tab') === 'quick' ? 'quick' : 'search');
   const [query, setQuery] = useState('');
@@ -583,7 +615,7 @@ export default function AddFood() {
       </div>
 
       <div className="mx-4 mt-3 mb-4 overflow-hidden rounded-2xl border border-line bg-card shadow-sm lg:mx-0">
-        {tab === 'quick' && <QuickAddForm initialMeal={meal} onAdd={quickAdd} />}
+        {tab === 'quick' && <QuickAddForm initialMeal={meal} day={day} onAdd={quickAdd} />}
 
         {tab === 'search' && (
           <>
@@ -718,6 +750,7 @@ export default function AddFood() {
             key={estimate.estimateId}
             estimate={estimate}
             meal={meal}
+            day={day}
             onLog={logMealPhoto}
             onClose={closeEstimate}
             onReanalyze={reanalyzeMealPhoto}
@@ -741,6 +774,7 @@ export default function AddFood() {
         <ServingSheet
           food={selected}
           initialMeal={meal}
+          day={day}
           onClose={() => setSelected(null)}
           onAdd={(servings, chosenMeal) => addEntry(selected, servings, chosenMeal)}
         />

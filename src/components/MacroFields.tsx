@@ -2,8 +2,9 @@
 // photographed item that matched nothing. Blank stays blank: an unfilled field
 // is unknown, and the day's totals count it as unknown rather than as zero.
 
-export const MACROS = ['protein', 'carbs', 'fat'] as const;
-export type Macro = (typeof MACROS)[number];
+import { MACROS, type Macro } from '../lib/macros';
+
+export { MACROS, type Macro };
 export type MacroFields = Record<Macro, string>;
 
 export const EMPTY_MACROS: MacroFields = { protein: '', carbs: '', fat: '' };

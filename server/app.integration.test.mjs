@@ -437,3 +437,53 @@ describe('macros typed onto a quick add', () => {
     expect(logged.fatCached).toBe(5);
   });
 });
+
+describe('macro targets on the profile', () => {
+  const profile = {
+    sex: 'male',
+    birthDate: '1990-01-01',
+    heightCm: 180,
+    startWeightKg: 90,
+    goalWeightKg: 80,
+    activityLevel: 'light',
+    weeklyRateKg: 0.5,
+    units: 'metric',
+    createdAt: '2026-01-01T00:00:00.000Z',
+  };
+
+  it('keeps carbohydrate and fat targets beside the protein one', async () => {
+    const { status } = await put('/api/profile', {
+      ...profile,
+      proteinTargetG: 130,
+      carbsTargetG: 200,
+      fatTargetG: 55,
+    });
+    expect(status).toBe(200);
+    const { body } = await get('/api/profile');
+    expect(body.proteinTargetG).toBe(130);
+    expect(body.carbsTargetG).toBe(200);
+    expect(body.fatTargetG).toBe(55);
+  });
+
+  it('leaves a target that was never set unknown, not zero', async () => {
+    // An existing profile saved before there were such targets: protein only.
+    await put('/api/profile', { ...profile, proteinTargetG: 130 });
+    const { body } = await get('/api/profile');
+    expect(body.proteinTargetG).toBe(130);
+    expect(body.carbsTargetG).toBeNull();
+    expect(body.fatTargetG).toBeNull();
+  });
+
+  it('can be cleared back to just calories', async () => {
+    await put('/api/profile', {
+      ...profile,
+      proteinTargetG: null,
+      carbsTargetG: null,
+      fatTargetG: null,
+    });
+    const { body } = await get('/api/profile');
+    expect(body.proteinTargetG).toBeNull();
+    expect(body.carbsTargetG).toBeNull();
+    expect(body.fatTargetG).toBeNull();
+  });
+});

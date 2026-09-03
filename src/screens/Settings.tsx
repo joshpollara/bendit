@@ -5,7 +5,7 @@ import { useUI } from '../store/ui';
 import { useTheme, type ThemeMode } from '../store/theme';
 import PasswordChange from '../components/PasswordChange';
 import ReminderSetting from '../components/ReminderSetting';
-import { computeBudget, suggestedProteinG } from '../lib/budget';
+import { computeBudget, suggestedMacros } from '../lib/budget';
 import { todayStr } from '../lib/dates';
 import { cmToFtIn, ftInToCm, formatCalories, kgToLb, lbToKg } from '../lib/units';
 import type { ActivityLevel, Profile, Sex, Units } from '../types';
@@ -44,9 +44,10 @@ export default function Settings({ profile }: { profile: Profile }) {
   );
   const [activity, setActivity] = useState<ActivityLevel>(profile.activityLevel);
   const [rateKg, setRateKg] = useState(profile.weeklyRateKg);
-  const [proteinTarget, setProteinTarget] = useState(
-    profile.proteinTargetG == null ? '' : String(profile.proteinTargetG),
-  );
+  const targetText = (g: number | null | undefined) => (g == null ? '' : String(g));
+  const [proteinTarget, setProteinTarget] = useState(targetText(profile.proteinTargetG));
+  const [carbsTarget, setCarbsTarget] = useState(targetText(profile.carbsTargetG));
+  const [fatTarget, setFatTarget] = useState(targetText(profile.fatTargetG));
   const [saved, setSaved] = useState(false);
 
   const { ft, inch } = cmToFtIn(heightCm);
@@ -75,14 +76,22 @@ export default function Settings({ profile }: { profile: Profile }) {
   };
   const preview = computeBudget(draft, todayStr(), latestKg);
 
+  // The goal weight as typed, so a suggestion follows the form and not the
+  // last save.
+  const goal = Number(goalInput);
+  const goalWeightKg =
+    Number.isFinite(goal) && goal > 0
+      ? units === 'imperial'
+        ? lbToKg(goal)
+        : goal
+      : profile.goalWeightKg;
+  const suggested = suggestedMacros(preview.budget, goalWeightKg);
+  const targetGrams = (text: string) => {
+    const grams = Number(text);
+    return text.trim() === '' || !Number.isFinite(grams) || grams <= 0 ? null : grams;
+  };
+
   async function save() {
-    const goal = Number(goalInput);
-    const goalWeightKg =
-      Number.isFinite(goal) && goal > 0
-        ? units === 'imperial'
-          ? lbToKg(goal)
-          : goal
-        : profile.goalWeightKg;
     await api.putProfile({
       ...profile,
       sex,
@@ -92,7 +101,9 @@ export default function Settings({ profile }: { profile: Profile }) {
       activityLevel: activity,
       weeklyRateKg: closestRate.value,
       units,
-      proteinTargetG: proteinTarget.trim() === '' ? null : Number(proteinTarget),
+      proteinTargetG: targetGrams(proteinTarget),
+      carbsTargetG: targetGrams(carbsTarget),
+      fatTargetG: targetGrams(fatTarget),
     });
     bump();
     setSaved(true);
@@ -204,26 +215,49 @@ export default function Settings({ profile }: { profile: Profile }) {
             </label>
           </div>
 
-          <label className={label}>
-            <span className="flex items-baseline justify-between">
-              Daily protein target (g)
+          <div className="flex flex-col gap-1">
+            <span className="flex items-baseline justify-between text-sm text-ink-secondary">
+              Daily macro targets (g)
               <button
                 type="button"
-                onClick={() => setProteinTarget(String(suggestedProteinG(profile.goalWeightKg)))}
+                onClick={() => {
+                  setProteinTarget(String(suggested.protein));
+                  setCarbsTarget(String(suggested.carbs));
+                  setFatTarget(String(suggested.fat));
+                }}
                 className="text-xs font-medium text-accent"
               >
-                Suggest {suggestedProteinG(profile.goalWeightKg)} g
+                Suggest P {suggested.protein} · C {suggested.carbs} · F {suggested.fat}
               </button>
             </span>
-            <input
-              type="number"
-              inputMode="numeric"
-              className={field}
-              placeholder="Leave empty to skip protein"
-              value={proteinTarget}
-              onChange={(e) => setProteinTarget(e.target.value)}
-            />
-          </label>
+            <div className="grid grid-cols-3 gap-2">
+              {(
+                [
+                  ['Protein', proteinTarget, setProteinTarget],
+                  ['Carbs', carbsTarget, setCarbsTarget],
+                  ['Fat', fatTarget, setFatTarget],
+                ] as const
+              ).map(([name, value, set]) => (
+                <label key={name} className={label}>
+                  <span className="text-xs">{name}</span>
+                  <input
+                    type="number"
+                    inputMode="numeric"
+                    min={0}
+                    className={field}
+                    placeholder="—"
+                    aria-label={`Daily ${name.toLowerCase()} target in grams`}
+                    value={value}
+                    onChange={(e) => set(e.target.value)}
+                  />
+                </label>
+              ))}
+            </div>
+            <p className="text-xs text-ink-muted">
+              Leave one empty to skip it. The suggestion is 1.6 g protein per kg of goal weight, a
+              quarter of the budget from fat, and carbs take the rest.
+            </p>
+          </div>
 
           <label className={label}>
             Activity level

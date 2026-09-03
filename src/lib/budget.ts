@@ -125,3 +125,40 @@ export function suggestedProteinG(goalWeightKg: number): number {
 export function remaining(budget: number, foodCalories: number): number {
   return budget - foodCalories;
 }
+
+/** Calories in a gram of each macronutrient — the Atwater factors. */
+export const KCAL_PER_G = { protein: 4, carbs: 4, fat: 9 } as const;
+
+/**
+ * The share of the budget that comes from fat when targets are suggested. A
+ * quarter sits inside the 20–35% range the dietary guidelines allow, and
+ * leaves room for the protein target without squeezing carbohydrate to nothing.
+ */
+export const FAT_SHARE = 0.25;
+
+export interface MacroTargets {
+  protein: number;
+  carbs: number;
+  fat: number;
+}
+
+/** The calories a set of macro grams accounts for. */
+export function macroCalories(g: MacroTargets): number {
+  return g.protein * KCAL_PER_G.protein + g.carbs * KCAL_PER_G.carbs + g.fat * KCAL_PER_G.fat;
+}
+
+/**
+ * Macro targets to suggest, in grams, from the daily budget and the goal
+ * weight. Protein comes first and from body weight rather than the budget,
+ * because that is what keeps a deficit from coming out of muscle. Fat takes a
+ * fixed share of the calories. Carbohydrate is whatever is left, so the three
+ * add back up to the budget — and it is the one that gives when the budget is
+ * small. Protein and fat round to 5 g; carbs stay exact so the sum holds.
+ */
+export function suggestedMacros(budget: number, goalWeightKg: number): MacroTargets {
+  const protein = suggestedProteinG(goalWeightKg);
+  const fat = Math.round((budget * FAT_SHARE) / KCAL_PER_G.fat / 5) * 5;
+  const left = budget - protein * KCAL_PER_G.protein - fat * KCAL_PER_G.fat;
+  const carbs = Math.max(0, Math.round(left / KCAL_PER_G.carbs));
+  return { protein, carbs, fat };
+}

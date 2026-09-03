@@ -1,17 +1,22 @@
 import { useState } from 'react';
 import { MEAL_LABELS, MEALS, type Food, type Meal } from '../types';
 import { formatCalories } from '../lib/units';
+import type { Addition, DayStanding } from '../lib/macros';
+import DayImpact from './DayImpact';
 import Sheet from './Sheet';
 
 // The 3-tap logging surface: pick a food → adjust servings → add to a meal.
 export default function ServingSheet({
   food,
   initialMeal,
+  day,
   onClose,
   onAdd,
 }: {
   food: Food;
   initialMeal: Meal;
+  /** Where the day stands, so the sheet can show what this would do to it. */
+  day?: DayStanding;
   onClose: () => void;
   onAdd: (servings: number, meal: Meal) => void;
 }) {
@@ -25,6 +30,13 @@ export default function ServingSheet({
   const step = (delta: number) => setServings((s) => Math.max(0.25, Math.round((s + delta) * 4) / 4));
   const calories = Math.round(food.caloriesPerServing * servings);
   const grams = gramsPerServing ? Math.round(servings * gramsPerServing) : undefined;
+  // A food that doesn't record a macro adds an unknown to the day, not a zero.
+  const adding: Addition = {
+    calories,
+    protein: food.protein == null ? null : food.protein * servings,
+    carbs: food.carbs == null ? null : food.carbs * servings,
+    fat: food.fat == null ? null : food.fat * servings,
+  };
 
   const macro = (label: string, grams?: number) =>
     grams == null ? null : (
@@ -129,6 +141,8 @@ export default function ServingSheet({
           {macro('F', food.fat)}
         </p>
       </div>
+
+      {day && <DayImpact day={day} adding={adding} />}
 
       <div className="mb-4 grid grid-cols-4 gap-2">
         {MEALS.map((m) => (
