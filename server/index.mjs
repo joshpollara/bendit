@@ -354,6 +354,9 @@ db.exec(`CREATE UNIQUE INDEX IF NOT EXISTS idx_food_log_meal_item
 
 ensureColumns('profile', {
   proteinTargetG: 'REAL',
+  // Daily carbohydrate and fat targets in grams; null means not tracked.
+  carbsTargetG: 'REAL',
+  fatTargetG: 'REAL',
   // 'formula' (Mifflin-St Jeor) or 'measured' (from logged intake vs weight trend)
   budgetSource: "TEXT NOT NULL DEFAULT 'formula'",
   measuredTdee: 'REAL',
@@ -792,6 +795,8 @@ app.get('/api/profile', (req, res) => {
 app.put('/api/profile', (req, res) => {
   const p = {
     proteinTargetG: null,
+    carbsTargetG: null,
+    fatTargetG: null,
     budgetSource: 'formula',
     measuredTdee: null,
     reminderHour: null,
@@ -803,9 +808,9 @@ app.put('/api/profile', (req, res) => {
   };
   db.prepare(`INSERT OR REPLACE INTO profile
     (id, sex, birthDate, heightCm, startWeightKg, goalWeightKg, activityLevel, weeklyRateKg, units, createdAt,
-     proteinTargetG, budgetSource, measuredTdee, reminderHour, timezone, fastGoalHours, userId)
+     proteinTargetG, carbsTargetG, fatTargetG, budgetSource, measuredTdee, reminderHour, timezone, fastGoalHours, userId)
     VALUES (@id, @sex, @birthDate, @heightCm, @startWeightKg, @goalWeightKg, @activityLevel, @weeklyRateKg, @units, @createdAt,
-     @proteinTargetG, @budgetSource, @measuredTdee, @reminderHour, @timezone, @fastGoalHours, @userId)`).run(p);
+     @proteinTargetG, @carbsTargetG, @fatTargetG, @budgetSource, @measuredTdee, @reminderHour, @timezone, @fastGoalHours, @userId)`).run(p);
   res.json(p);
 });
 

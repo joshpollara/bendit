@@ -9,6 +9,20 @@ import { STRINGS } from "../lib/strings";
 import { useUI } from "../store/ui";
 import MealGrade, { type MealGradeData } from "../components/MealGrade";
 import FastingCard from "../components/FastingCard";
+import { STATUS_FILL, STATUS_TEXT } from "../components/DayImpact";
+import {
+  MACRO_LABELS,
+  MACRO_SENSE,
+  MACROS,
+  entryMacro,
+  macroTargets,
+  standingFor,
+  standingWithout,
+  sumMacros,
+  targetStatus,
+  tracksAnyMacro,
+  type DayStanding,
+} from "../lib/macros";
 import { pendingForDate, useQueue } from "../lib/offlineQueue";
 import {
   MEAL_LABELS,
@@ -34,27 +48,12 @@ import {
 // serving. Two decimals is as much as anyone reads.
 const round2 = (n: number) => Math.round(n * 100) / 100;
 
-function entryMacroTotal(
-  entry: JoinedEntry,
-  macro: "protein" | "carbs" | "fat",
-) {
-  const cached = entry[`${macro}Cached`];
-  if (cached != null) return cached;
-  if (!entry.food) return 0;
-  return (entry.food[macro] ?? 0) * entry.servings;
-}
-
 function mealMacros(entries: JoinedEntry[]) {
+  const total = sumMacros(entries);
   return {
-    protein: Math.round(
-      entries.reduce((sum, entry) => sum + entryMacroTotal(entry, "protein"), 0),
-    ),
-    carbs: Math.round(
-      entries.reduce((sum, entry) => sum + entryMacroTotal(entry, "carbs"), 0),
-    ),
-    fat: Math.round(
-      entries.reduce((sum, entry) => sum + entryMacroTotal(entry, "fat"), 0),
-    ),
+    protein: Math.round(total.protein),
+    carbs: Math.round(total.carbs),
+    fat: Math.round(total.fat),
   };
 }
 
@@ -233,47 +232,70 @@ function WeekLine({
   );
 }
 
-// Macros come from the food behind an entry, or from the entry itself when it
-// has none and they were typed with it. Anything that knows neither counts as
-// nothing, so the totals are a floor, not a claim of completeness.
-function MacroRow({
-  entries,
-  proteinTargetG,
-}: {
-  entries: JoinedEntry[];
-  proteinTargetG?: number | null;
-}) {
-  const { protein, carbs, fat } = mealMacros(entries);
-  if (protein + carbs + fat === 0) return null;
-
-  const target = proteinTargetG ?? 0;
-  const pct = target > 0 ? Math.min(100, (protein / target) * 100) : 0;
-  const hit = target > 0 && protein >= target;
+// The day's macros against their targets: protein a floor to reach, carbs
+// and fat ceilings to stay under. Macros come from the food behind an entry,
+// or from the entry itself when it has none and they were typed with it.
+// Anything that knows neither counts as nothing, so the totals are a floor,
+// not a claim of completeness. With targets set the card is always there,
+// because where you stand at breakfast is as much the point as at night.
+function MacroBreakdown({ day }: { day: DayStanding }) {
+  const { eaten, targets } = day.macros;
+  const tracked = tracksAnyMacro(targets);
+  if (!tracked && eaten.protein + eaten.carbs + eaten.fat === 0) return null;
 
   return (
     <section className="mx-4 mt-3 rounded-2xl border border-line bg-card p-4 shadow-sm lg:mx-0 lg:mt-0">
-      <div className="flex items-baseline justify-between">
-        <h2 className="text-sm font-semibold">Protein</h2>
-        <span className="text-sm tabular-nums">
-          <strong className={hit ? "text-good" : ""}>{protein} g</strong>
-          {target > 0 && <span className="text-ink-muted"> of {target} g</span>}
-        </span>
-      </div>
-      {target > 0 && (
-        <div
-          className="mt-2 h-2 overflow-hidden rounded-full bg-line"
-          role="presentation"
-        >
-          <div
-            className={`h-full rounded-full transition-all ${hit ? "bg-good" : "bg-accent"}`}
-            style={{ width: `${pct}%` }}
-          />
-        </div>
+      <h2 className="text-sm font-semibold">Macros</h2>
+      <ul className="mt-2 flex flex-col gap-2.5">
+        {MACROS.map((macro) => {
+          const grams = Math.round(eaten[macro]);
+          const target = targets[macro];
+          const status = target != null ? targetStatus(macro, grams, target) : null;
+          const left = target != null ? target - grams : null;
+          return (
+            <li key={macro}>
+              <div className="flex items-baseline justify-between text-sm">
+                <span>{MACRO_LABELS[macro]}</span>
+                <span className="tabular-nums">
+                  <strong className={status ? STATUS_TEXT[status] : ""}>
+                    {grams} g
+                  </strong>
+                  {target != null && (
+                    <span className="text-ink-muted"> of {target} g</span>
+                  )}
+                </span>
+              </div>
+              {target != null && status && left != null && (
+                <>
+                  <div
+                    className="mt-1 h-2 overflow-hidden rounded-full bg-line"
+                    role="presentation"
+                  >
+                    <div
+                      className={`h-full rounded-full transition-all ${STATUS_FILL[status]}`}
+                      style={{ width: `${Math.min(100, (grams / target) * 100)}%` }}
+                    />
+                  </div>
+                  <p className="mt-1 text-xs text-ink-muted">
+                    {MACRO_SENSE[macro] === "floor"
+                      ? left > 0
+                        ? `${left} g to go`
+                        : "Target reached"
+                      : left >= 0
+                        ? `${left} g left`
+                        : `${-left} g over`}
+                  </p>
+                </>
+              )}
+            </li>
+          );
+        })}
+      </ul>
+      {!tracked && (
+        <p className="mt-2 text-xs text-ink-muted">
+          Set macro targets in Settings to see how each day measures up.
+        </p>
       )}
-      <p className="mt-2 text-xs text-ink-muted">
-        Carbs {carbs} g · Fat {fat} g
-        {target === 0 && " · set a protein target in More"}
-      </p>
     </section>
   );
 }
@@ -284,12 +306,15 @@ function MealSection({
   entries,
   yesterdayCount,
   grade,
+  day,
 }: {
   meal: Meal;
   date: string;
   entries: JoinedEntry[];
   yesterdayCount: number;
   grade?: MealGradeData | null;
+  /** The whole day's standing, for measuring an edit against the rest of it. */
+  day: DayStanding;
 }) {
   const [open, setOpen] = useState(true);
   const [editing, setEditing] = useState<JoinedEntry | null>(null);
@@ -423,9 +448,9 @@ function MealSection({
                           : "Calories only"}
                     </p>
                     {(() => {
-                      const protein = Math.round(entryMacroTotal(e, "protein"));
-                      const carbs = Math.round(entryMacroTotal(e, "carbs"));
-                      const fat = Math.round(entryMacroTotal(e, "fat"));
+                      const protein = Math.round(entryMacro(e, "protein"));
+                      const carbs = Math.round(entryMacro(e, "carbs"));
+                      const fat = Math.round(entryMacro(e, "fat"));
                       if (protein + carbs + fat === 0) return null;
                       return (
                         <p className="truncate text-xs text-ink-muted">
@@ -464,6 +489,7 @@ function MealSection({
       {editing && (
         <EntrySheet
           entry={editing}
+          day={standingWithout(day, editing)}
           onClose={() => setEditing(null)}
           onChanged={() => {
             setEditing(null);
@@ -551,6 +577,7 @@ export default function Today({ profile }: { profile: Profile }) {
   const { budget } = computeBudget(profile, date, day?.latestWeightKg);
   const yesterdayByMeal = day?.yesterdayMealCounts ?? {};
   const left = remaining(budget, foodCalories);
+  const standing = standingFor(joined, budget, macroTargets(profile));
 
   return (
     <div className="pt-[env(safe-area-inset-top)]">
@@ -569,7 +596,7 @@ export default function Today({ profile }: { profile: Profile }) {
         <div className="lg:sticky lg:top-8 lg:space-y-3">
           <BudgetSummary budget={budget} food={foodCalories} />
           <WeekLine date={date} dailyBudget={budget} />
-          <MacroRow entries={joined} proteinTargetG={profile.proteinTargetG} />
+          <MacroBreakdown day={standing} />
           {/* A fast is running now, not on the day you happen to be reading. */}
           {date === todayStr() && <FastingCard profile={profile} />}
           <div className="hidden lg:block">
@@ -587,6 +614,7 @@ export default function Today({ profile }: { profile: Profile }) {
               entries={joined.filter((e) => e.meal === meal)}
               yesterdayCount={yesterdayByMeal[meal] ?? 0}
               grade={day?.meals?.[meal]}
+              day={standing}
             />
           ))}
 

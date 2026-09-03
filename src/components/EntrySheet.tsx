@@ -2,6 +2,8 @@ import { useState } from 'react';
 import { api, type JoinedEntry } from '../lib/api';
 import { formatCalories } from '../lib/units';
 import { MEALS, MEAL_LABELS, type Meal } from '../types';
+import type { Addition, DayStanding } from '../lib/macros';
+import DayImpact from './DayImpact';
 import Sheet from './Sheet';
 import MacroInputs, { macroFields, macroGrams } from './MacroFields';
 
@@ -10,10 +12,13 @@ import MacroInputs, { macroFields, macroGrams } from './MacroFields';
 
 export default function EntrySheet({
   entry,
+  day,
   onClose,
   onChanged,
 }: {
   entry: JoinedEntry;
+  /** The day without this entry, so what it becomes is measured against the rest. */
+  day?: DayStanding;
   onClose: () => void;
   onChanged: () => void;
 }) {
@@ -41,6 +46,12 @@ export default function EntrySheet({
   const nextCalories = food ? Math.round(food.caloriesPerServing * servings) : Number(calories);
   const valid = food ? servings > 0 : Number.isFinite(nextCalories) && nextCalories > 0;
   const grams = gramsPerServing ? Math.round(servings * gramsPerServing) : undefined;
+  const adding: Addition = {
+    calories: valid ? nextCalories : 0,
+    protein: macroGrams(macros.protein),
+    carbs: macroGrams(macros.carbs),
+    fat: macroGrams(macros.fat),
+  };
 
   async function save() {
     await api.updateLogEntry(entry.id, {
@@ -184,6 +195,8 @@ export default function EntrySheet({
           </span>
         </p>
       )}
+
+      {day && <DayImpact day={day} adding={adding} title="The day with this change" />}
 
       <div className="mb-4 grid grid-cols-4 gap-2">
         {MEALS.map((m) => (
