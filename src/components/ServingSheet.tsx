@@ -1,6 +1,7 @@
 import { useState } from 'react';
 import { MEAL_LABELS, MEALS, type Food, type Meal } from '../types';
 import { formatCalories } from '../lib/units';
+import NumberInput from './NumberInput';
 import Sheet from './Sheet';
 
 // The 3-tap logging surface: pick a food → adjust servings → add to a meal.
@@ -64,16 +65,12 @@ export default function ServingSheet({
 
       {byWeight && gramsPerServing ? (
         <div className="my-4 flex flex-col items-center gap-1">
-          <input
-            type="number"
+          <NumberInput
             inputMode="decimal"
             min={1}
             step={1}
-            value={grams ?? ''}
-            onChange={(e) => {
-              const g = Number(e.target.value);
-              if (Number.isFinite(g) && g > 0) setServings(g / gramsPerServing);
-            }}
+            value={grams ?? null}
+            onCommit={(g) => setServings(g / gramsPerServing)}
             className="w-32 rounded-xl border border-line bg-surface py-2 text-center text-2xl font-semibold tabular-nums"
             aria-label="Grams"
           />
@@ -92,16 +89,12 @@ export default function ServingSheet({
           −
         </button>
         <div className="flex flex-col items-center">
-          <input
-            type="number"
+          <NumberInput
             inputMode="decimal"
             min={0.25}
             step={0.25}
             value={servings}
-            onChange={(e) => {
-              const v = Number(e.target.value);
-              if (Number.isFinite(v) && v > 0) setServings(v);
-            }}
+            onCommit={setServings}
             className="w-24 rounded-xl border border-line bg-surface py-2 text-center text-2xl font-semibold tabular-nums"
             aria-label="Servings"
           />

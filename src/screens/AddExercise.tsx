@@ -7,6 +7,7 @@ import { caloriesBurned, EXERCISES, type ExerciseType } from '../lib/mets';
 import { formatCalories } from '../lib/units';
 import { useUI } from '../store/ui';
 import type { Profile } from '../types';
+import NumberInput from '../components/NumberInput';
 import Sheet from '../components/Sheet';
 import { ChevronLeftIcon, FlameIcon, SearchIcon } from '../components/Icons';
 
@@ -72,15 +73,11 @@ export default function AddExercise({ profile }: { profile: Profile }) {
   const minutesField = (
     <label className="flex flex-col gap-1 text-sm">
       <span className="text-ink-secondary">Minutes</span>
-      <input
-        type="number"
+      <NumberInput
         inputMode="numeric"
         min={1}
         value={minutes}
-        onChange={(e) => {
-          const v = Math.max(1, Math.round(Number(e.target.value) || 0));
-          setMinutes(v);
-        }}
+        onCommit={(v) => setMinutes(Math.max(1, Math.round(v)))}
         className="rounded-xl border border-line bg-surface px-3 py-2.5 text-lg font-semibold tabular-nums"
       />
     </label>

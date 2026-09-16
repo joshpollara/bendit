@@ -1,4 +1,4 @@
-import { useEffect, useState } from 'react';
+import { useState } from 'react';
 import { api } from '../lib/api';
 import {
   applyMealQuestionChoice,
@@ -8,7 +8,6 @@ import {
   MAX_MEAL_FEEDBACK_ITEMS,
   MAX_MEAL_HINT_LENGTH,
   normalizeMealHint,
-  positiveMealNumber,
   replaceItemFood,
   rescaleItem,
   setCalories,
@@ -26,6 +25,7 @@ import { formatCalories } from '../lib/units';
 import type { Food, Meal } from '../types';
 import { BarcodeIcon, CameraIcon, WarnIcon } from './Icons';
 import FoodPicker from './FoodPicker';
+import NumberInput from './NumberInput';
 import Sheet from './Sheet';
 
 // What a photographed plate turned into, before any of it is logged.
@@ -74,50 +74,6 @@ const FEEDBACK_ISSUES: { value: MealFeedbackIssue; label: string }[] = [
   { value: 'sauce_preparation', label: 'Sauce / preparation' },
   { value: 'calories_macros', label: 'Calories / macros' },
 ];
-
-function PositiveNumberInput({
-  value,
-  label,
-  className,
-  onCommit,
-}: {
-  value: number | null;
-  label: string;
-  className: string;
-  onCommit: (value: number) => void;
-}) {
-  const displayed = value == null ? '' : String(value);
-  const [draft, setDraft] = useState(displayed);
-
-  useEffect(() => setDraft(displayed), [displayed]);
-
-  const commit = () => {
-    const next = positiveMealNumber(draft);
-    if (next == null) {
-      setDraft(displayed);
-      return;
-    }
-    setDraft(String(next));
-    if (next !== value) onCommit(next);
-  };
-
-  return (
-    <input
-      type="number"
-      inputMode="decimal"
-      min="0.1"
-      step="any"
-      aria-label={label}
-      className={className}
-      value={draft}
-      onChange={(event) => setDraft(event.target.value)}
-      onBlur={commit}
-      onKeyDown={(event) => {
-        if (event.key === 'Enter') event.currentTarget.blur();
-      }}
-    />
-  );
-}
 
 export default function MealPhotoSheet({
   estimate,
@@ -402,8 +358,12 @@ export default function MealPhotoSheet({
               )}
 
               <div className="mt-2 flex flex-wrap items-center gap-2">
-                <PositiveNumberInput
-                  label={`Grams of ${item.food?.name ?? item.name}`}
+                <NumberInput
+                  aria-label={`Grams of ${item.food?.name ?? item.name}`}
+                  inputMode="decimal"
+                  min="0.1"
+                  step="any"
+                  commitOnBlur
                   className="w-20 rounded-lg border border-line bg-card px-2 py-1.5 text-sm tabular-nums"
                   value={item.grams}
                   onCommit={(grams) => setGrams(index, grams)}
@@ -431,8 +391,12 @@ export default function MealPhotoSheet({
                     isn't. Against a chosen food record this sets the weight;
                     against an estimate the typed figure is the entry. */}
                 <span className="ml-auto flex items-center gap-1.5 text-sm tabular-nums">
-                  <PositiveNumberInput
-                    label={`Calories of ${item.food?.name ?? item.name}`}
+                  <NumberInput
+                    aria-label={`Calories of ${item.food?.name ?? item.name}`}
+                    inputMode="decimal"
+                    min="0.1"
+                    step="any"
+                    commitOnBlur
                     className="w-20 rounded-lg border border-line bg-card px-2 py-1.5 text-right text-sm font-semibold tabular-nums"
                     value={item.nutrition ? Math.round(item.nutrition.calories) : null}
                     onCommit={(calories) => setCals(index, calories)}

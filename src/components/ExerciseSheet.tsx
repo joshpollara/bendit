@@ -2,6 +2,7 @@ import { useState } from 'react';
 import { api } from '../lib/api';
 import { formatCalories } from '../lib/units';
 import type { ExerciseEntry } from '../types';
+import NumberInput from './NumberInput';
 import Sheet from './Sheet';
 
 // Editing a logged workout, matching how food entries behave. Calories scale
@@ -34,15 +35,11 @@ export default function ExerciseSheet({
           −
         </button>
         <div className="flex flex-col items-center">
-          <input
-            type="number"
+          <NumberInput
             inputMode="numeric"
             min={1}
             value={minutes}
-            onChange={(e) => {
-              const v = Number(e.target.value);
-              if (Number.isFinite(v) && v > 0) setMinutes(v);
-            }}
+            onCommit={setMinutes}
             className="w-24 rounded-xl border border-line bg-surface py-2 text-center text-2xl font-semibold tabular-nums"
             aria-label="Minutes"
           />
