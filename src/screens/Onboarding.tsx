@@ -1,7 +1,7 @@
 import { useState } from 'react';
 import { api } from '../lib/api';
 import { useUI } from '../store/ui';
-import { computeBudget, suggestedProteinG } from '../lib/budget';
+import { computeBudget, suggestedMacros, suggestedProteinG } from '../lib/budget';
 import { todayStr } from '../lib/dates';
 import { cmToFtIn, formatCalories, ftInToCm, kgToLb, lbToKg } from '../lib/units';
 import { STRINGS } from '../lib/strings';
@@ -18,7 +18,7 @@ const ACTIVITY_OPTIONS: { value: ActivityLevel; title: string; sub: string }[] =
 ];
 
 const STEPS = [
-  'welcome', 'sex', 'birth', 'height', 'weight', 'goal', 'rate', 'activity', 'protein', 'reveal',
+  'welcome', 'sex', 'birth', 'height', 'weight', 'goal', 'rate', 'activity', 'macros', 'reveal',
 ] as const;
 type Step = (typeof STEPS)[number];
 
@@ -40,6 +40,8 @@ export default function Onboarding() {
   const [rateIndex, setRateIndex] = useState(1);
   const [activity, setActivity] = useState<ActivityLevel | null>(null);
   const [proteinTarget, setProteinTarget] = useState<number | null>(null);
+  const [carbsTarget, setCarbsTarget] = useState<number | null>(null);
+  const [fatTarget, setFatTarget] = useState<number | null>(null);
 
   const step: Step = STEPS[stepIndex];
   const next = () => setStepIndex((i) => Math.min(i + 1, STEPS.length - 1));
@@ -72,6 +74,8 @@ export default function Onboarding() {
         }
       : null;
   const result = draft ? computeBudget(draft, todayStr()) : null;
+  // The targets the formula suggests, once there's a budget to carve them from.
+  const macros = result && goalWeightKg ? suggestedMacros(result.budget, goalWeightKg) : null;
 
   function switchUnits(nextUnits: Units) {
     if (nextUnits === units) return;
@@ -94,6 +98,8 @@ export default function Onboarding() {
       goalWeightKg,
       units,
       proteinTargetG: proteinTarget,
+      carbsTargetG: carbsTarget,
+      fatTargetG: fatTarget,
       createdAt: new Date().toISOString(),
     });
     await api.putWeight({ date: todayStr(), weightKg: draft.startWeightKg });
@@ -251,27 +257,50 @@ export default function Onboarding() {
         </div>
       )}
 
-      {step === 'protein' && (
+      {step === 'macros' && (
         <div className="flex flex-1 flex-col gap-3">
-          <h2 className="text-2xl font-bold">Track protein too?</h2>
+          <h2 className="text-2xl font-bold">Track macros too?</h2>
           <p className="mb-2 text-sm text-ink-muted">
             Eating enough protein while losing weight is what keeps the loss from coming out of your
-            muscle. Optional — you can change or turn this off later.
+            muscle. Carbs and fat show where the rest of the budget goes. Optional — you can change
+            or turn this off later in Settings.
           </p>
+          {macros && (
+            <button
+              type="button"
+              onClick={() => {
+                setProteinTarget(macros.protein);
+                setCarbsTarget(macros.carbs);
+                setFatTarget(macros.fat);
+                next();
+              }}
+              className={choice(proteinTarget != null && carbsTarget != null)}
+            >
+              <span className="block font-semibold">
+                Protein {macros.protein} g · Carbs {macros.carbs} g · Fat {macros.fat} g
+              </span>
+              <span className="block text-xs text-ink-muted">
+                1.6 g protein per kg of your goal weight, a quarter of your calories from fat, and
+                carbs take the rest
+              </span>
+            </button>
+          )}
           {goalWeightKg && (
             <button
               type="button"
               onClick={() => {
                 setProteinTarget(suggestedProteinG(goalWeightKg));
+                setCarbsTarget(null);
+                setFatTarget(null);
                 next();
               }}
-              className={choice(proteinTarget != null)}
+              className={choice(proteinTarget != null && carbsTarget == null)}
             >
               <span className="block font-semibold">
-                Yes — aim for {suggestedProteinG(goalWeightKg)} g a day
+                Just protein — aim for {suggestedProteinG(goalWeightKg)} g a day
               </span>
               <span className="block text-xs text-ink-muted">
-                1.6 g per kg of your goal weight, the usual recommendation in a deficit
+                The one macro that matters most in a deficit
               </span>
             </button>
           )}
@@ -279,6 +308,8 @@ export default function Onboarding() {
             type="button"
             onClick={() => {
               setProteinTarget(null);
+              setCarbsTarget(null);
+              setFatTarget(null);
               next();
             }}
             className={choice(false)}
@@ -298,6 +329,13 @@ export default function Onboarding() {
             {formatCalories(result.budget)}
           </p>
           <p className="text-ink-secondary">{STRINGS.budgetReveal(formatCalories(result.budget))}</p>
+          {proteinTarget != null && (
+            <p className="text-sm tabular-nums text-ink-secondary">
+              Protein {proteinTarget} g
+              {carbsTarget != null && ` · Carbs ${carbsTarget} g`}
+              {fatTarget != null && ` · Fat ${fatTarget} g`}
+            </p>
+          )}
           {result.floored && (
             <p className="flex items-start gap-2 rounded-xl bg-over-soft p-3 text-left text-sm text-over">
               <WarnIcon className="mt-0.5 h-4 w-4 shrink-0" />

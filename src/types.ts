@@ -16,6 +16,9 @@ export interface Profile {
   createdAt: string;
   /** Daily protein goal in grams; unset means protein isn't being tracked. */
   proteinTargetG?: number | null;
+  /** Daily carbohydrate and fat goals in grams; unset means not tracked. */
+  carbsTargetG?: number | null;
+  fatTargetG?: number | null;
   /** 'formula' = Mifflin-St Jeor; 'measured' = expenditure from your own data. */
   budgetSource?: 'formula' | 'measured';
   measuredTdee?: number | null;

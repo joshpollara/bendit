@@ -1,8 +1,8 @@
 import { useState } from 'react';
 import { api } from '../lib/api';
+import { parseMinutes } from '../lib/mets';
 import { formatCalories } from '../lib/units';
 import type { ExerciseEntry } from '../types';
-import NumberInput from './NumberInput';
 import Sheet from './Sheet';
 
 // Editing a logged workout, matching how food entries behave. Calories scale
@@ -16,9 +16,11 @@ export default function ExerciseSheet({
   onClose: () => void;
   onChanged: () => void;
 }) {
-  const [minutes, setMinutes] = useState(entry.minutes);
+  // Text, so the box can be emptied on the way to another duration.
+  const [minutes, setMinutes] = useState(String(entry.minutes));
+  const mins = parseMinutes(minutes);
   const perMinute = entry.minutes > 0 ? entry.caloriesBurned / entry.minutes : 0;
-  const burned = Math.round(perMinute * minutes);
+  const burned = Math.round(perMinute * (mins ?? 0));
 
   return (
     <Sheet onClose={onClose}>
@@ -29,17 +31,18 @@ export default function ExerciseSheet({
         <button
           type="button"
           aria-label="Fewer minutes"
-          onClick={() => setMinutes((m) => Math.max(1, m - 5))}
+          onClick={() => setMinutes((m) => String(Math.max(1, (parseMinutes(m) ?? 0) - 5)))}
           className="h-11 w-11 rounded-full border border-line text-xl font-medium text-ink-secondary active:bg-surface"
         >
           −
         </button>
         <div className="flex flex-col items-center">
-          <NumberInput
+          <input
+            type="number"
             inputMode="numeric"
             min={1}
             value={minutes}
-            onCommit={setMinutes}
+            onChange={(e) => setMinutes(e.target.value)}
             className="w-24 rounded-xl border border-line bg-surface py-2 text-center text-2xl font-semibold tabular-nums"
             aria-label="Minutes"
           />
@@ -48,7 +51,7 @@ export default function ExerciseSheet({
         <button
           type="button"
           aria-label="More minutes"
-          onClick={() => setMinutes((m) => m + 5)}
+          onClick={() => setMinutes((m) => String((parseMinutes(m) ?? 0) + 5))}
           className="h-11 w-11 rounded-full border border-line text-xl font-medium text-ink-secondary active:bg-surface"
         >
           +
@@ -70,10 +73,12 @@ export default function ExerciseSheet({
         </button>
         <button
           type="button"
+          disabled={mins === null}
           onClick={() =>
-            api.updateExercise(entry.id, { minutes, caloriesBurned: burned }).then(onChanged)
+            mins !== null &&
+            api.updateExercise(entry.id, { minutes: mins, caloriesBurned: burned }).then(onChanged)
           }
-          className="flex-1 rounded-xl bg-accent py-3.5 font-semibold text-white"
+          className="flex-1 rounded-xl bg-accent py-3.5 font-semibold text-white disabled:opacity-40"
         >
           Save changes
         </button>

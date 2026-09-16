@@ -3,11 +3,10 @@ import { useNavigate, useSearchParams } from 'react-router-dom';
 import { api } from '../lib/api';
 import { useData } from '../lib/useData';
 import { todayStr } from '../lib/dates';
-import { caloriesBurned, EXERCISES, type ExerciseType } from '../lib/mets';
+import { caloriesBurned, EXERCISES, parseMinutes, type ExerciseType } from '../lib/mets';
 import { formatCalories } from '../lib/units';
 import { useUI } from '../store/ui';
 import type { Profile } from '../types';
-import NumberInput from '../components/NumberInput';
 import Sheet from '../components/Sheet';
 import { ChevronLeftIcon, FlameIcon, SearchIcon } from '../components/Icons';
 
@@ -25,38 +24,42 @@ export default function AddExercise({ profile }: { profile: Profile }) {
   const [selected, setSelected] = useState<ExerciseType | null>(null);
   const [customOpen, setCustomOpen] = useState(false);
 
-  const [minutes, setMinutes] = useState(30);
+  // The typed text, not a number: the box must be allowed to be empty while
+  // the old duration is being deleted.
+  const [minutes, setMinutes] = useState('30');
   const [calsOverride, setCalsOverride] = useState<string | null>(null);
   const [customName, setCustomName] = useState('');
 
   const q = query.trim().toLowerCase();
   const list = EXERCISES.filter((e) => e.name.toLowerCase().includes(q));
 
-  const estimated = selected ? caloriesBurned(selected.met, weightKg, minutes) : 0;
+  const mins = parseMinutes(minutes);
+  const estimated = selected && mins !== null ? caloriesBurned(selected.met, weightKg, mins) : 0;
   const calories = calsOverride !== null ? Math.max(0, Math.round(Number(calsOverride) || 0)) : estimated;
 
   function openExercise(e: ExerciseType) {
     setSelected(e);
-    setMinutes(30);
+    setMinutes('30');
     setCalsOverride(null);
   }
 
   function openCustom() {
     setCustomOpen(true);
     setCustomName('');
-    setMinutes(30);
+    setMinutes('30');
     setCalsOverride('');
   }
 
   const [failed, setFailed] = useState<string | null>(null);
 
   async function save(name: string, kcal: number) {
+    if (mins === null) return; // a half-typed duration is nothing to save
     // A refused write used to leave by the same door as a saved one: back to
     // the day, where the workout simply wasn't. If it didn't save, stay here
     // and say so — the sheet still holds everything needed to try again.
     setFailed(null);
     try {
-      await api.addExercise({ date, name, minutes, caloriesBurned: kcal });
+      await api.addExercise({ date, name, minutes: mins, caloriesBurned: kcal });
     } catch (e) {
       setFailed(e instanceof Error ? e.message : "That didn't save.");
       return;
@@ -73,11 +76,12 @@ export default function AddExercise({ profile }: { profile: Profile }) {
   const minutesField = (
     <label className="flex flex-col gap-1 text-sm">
       <span className="text-ink-secondary">Minutes</span>
-      <NumberInput
+      <input
+        type="number"
         inputMode="numeric"
         min={1}
         value={minutes}
-        onCommit={(v) => setMinutes(Math.max(1, Math.round(v)))}
+        onChange={(e) => setMinutes(e.target.value)}
         className="rounded-xl border border-line bg-surface px-3 py-2.5 text-lg font-semibold tabular-nums"
       />
     </label>
@@ -159,8 +163,9 @@ export default function AddExercise({ profile }: { profile: Profile }) {
           {failure}
           <button
             type="button"
+            disabled={mins === null}
             onClick={() => save(selected.name, calories)}
-            className="w-full rounded-xl bg-accent py-3.5 font-semibold text-white active:bg-accent-deep"
+            className="w-full rounded-xl bg-accent py-3.5 font-semibold text-white active:bg-accent-deep disabled:opacity-40"
           >
             Add · +{formatCalories(calories)} cal
           </button>
@@ -199,7 +204,7 @@ export default function AddExercise({ profile }: { profile: Profile }) {
           {failure}
           <button
             type="button"
-            disabled={customName.trim() === '' || calories <= 0}
+            disabled={customName.trim() === '' || calories <= 0 || mins === null}
             onClick={() => save(customName.trim(), calories)}
             className="w-full rounded-xl bg-accent py-3.5 font-semibold text-white disabled:opacity-40"
           >

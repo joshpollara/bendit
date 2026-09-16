@@ -22,8 +22,10 @@ import {
   type MealItem,
 } from '../lib/mealPhoto';
 import { formatCalories } from '../lib/units';
+import type { DayStanding } from '../lib/macros';
 import type { Food, Meal } from '../types';
 import { BarcodeIcon, CameraIcon, WarnIcon } from './Icons';
+import DayImpact from './DayImpact';
 import FoodPicker from './FoodPicker';
 import NumberInput from './NumberInput';
 import Sheet from './Sheet';
@@ -78,6 +80,7 @@ const FEEDBACK_ISSUES: { value: MealFeedbackIssue; label: string }[] = [
 export default function MealPhotoSheet({
   estimate,
   meal,
+  day,
   onLog,
   onClose,
   onRetake,
@@ -87,6 +90,8 @@ export default function MealPhotoSheet({
 }: {
   estimate: MealEstimate;
   meal: Meal;
+  /** Where the day stands, so the plate can be seen against it. */
+  day?: DayStanding;
   onLog: (items: MealItem[], meal: Meal) => Promise<void> | void;
   onClose: () => void;
   onRetake: () => void;
@@ -492,6 +497,20 @@ export default function MealPhotoSheet({
           P {total.protein}g · C {total.carbs}g · F {total.fat}g
         </p>
       </div>
+
+      {day && (
+        <div className="mt-3">
+          <DayImpact
+            day={day}
+            adding={{
+              calories: total.calories,
+              protein: total.protein,
+              carbs: total.carbs,
+              fat: total.fat,
+            }}
+          />
+        </div>
+      )}
 
       {(estimate.uncertaintyReasons?.length ?? 0) > 0 && (
         <div className="mt-3 border-y border-line py-2.5">

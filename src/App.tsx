@@ -39,7 +39,7 @@ function Shell({ profile }: { profile: Profile }) {
         <main className="w-full min-w-0 flex-1">
           <Routes>
             <Route path="/" element={<Today profile={profile} />} />
-            <Route path="/add-food" element={<AddFood />} />
+            <Route path="/add-food" element={<AddFood profile={profile} />} />
             <Route path="/add-exercise" element={<AddExercise profile={profile} />} />
             <Route path="/weight" element={<Weight profile={profile} />} />
             <Route path="/fasting" element={<Fasting profile={profile} />} />
