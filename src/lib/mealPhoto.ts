@@ -438,12 +438,6 @@ export function totalsFor(items: MealItem[]): MealEstimate['total'] {
   };
 }
 
-/** Blank, zero and malformed number drafts are not valid meal amounts. */
-export function positiveMealNumber(value: string): number | null {
-  const number = Number(value);
-  return value.trim() !== '' && Number.isFinite(number) && number > 0 ? number : null;
-}
-
 /** One action per kind and item is enough; the final snapshot carries the values. */
 export function appendMealFeedbackAction(
   actions: MealFeedbackAction[],

@@ -3,6 +3,7 @@ import { api } from '../lib/api';
 import { useData } from '../lib/useData';
 import { useUI } from '../store/ui';
 import { useTheme, type ThemeMode } from '../store/theme';
+import NumberInput from '../components/NumberInput';
 import PasswordChange from '../components/PasswordChange';
 import ReminderSetting from '../components/ReminderSetting';
 import { computeBudget, suggestedMacros } from '../lib/budget';
@@ -154,35 +155,33 @@ export default function Settings({ profile }: { profile: Profile }) {
               <div className="grid grid-cols-2 gap-2">
                 <label className={label}>
                   Height (ft)
-                  <input
-                    type="number"
+                  <NumberInput
                     className={field}
                     value={ft}
                     min={3}
                     max={8}
-                    onChange={(e) => setHeightCm(ftInToCm(Number(e.target.value) || 0, inch))}
+                    onCommit={(v) => setHeightCm(ftInToCm(v, inch))}
                   />
                 </label>
                 <label className={label}>
                   (in)
-                  <input
-                    type="number"
+                  <NumberInput
                     className={field}
                     value={inch}
                     min={0}
                     max={11}
-                    onChange={(e) => setHeightCm(ftInToCm(ft, Number(e.target.value) || 0))}
+                    allowZero
+                    onCommit={(v) => setHeightCm(ftInToCm(ft, v))}
                   />
                 </label>
               </div>
             ) : (
               <label className={label}>
                 Height (cm)
-                <input
-                  type="number"
+                <NumberInput
                   className={field}
                   value={Math.round(heightCm)}
-                  onChange={(e) => setHeightCm(Number(e.target.value) || 0)}
+                  onCommit={setHeightCm}
                 />
               </label>
             )}

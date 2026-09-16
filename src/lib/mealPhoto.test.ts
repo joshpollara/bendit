@@ -4,7 +4,6 @@ import {
   appendMealFeedbackAction,
   itemFromFood,
   mealFeedbackFor,
-  positiveMealNumber,
   replaceItemFood,
   rescaleItem,
   setCalories,
@@ -265,16 +264,6 @@ describe('totalsFor', () => {
       low: 273,
       high: 273,
     });
-  });
-});
-
-describe('positiveMealNumber', () => {
-  it.each(['', ' ', '0', '-1', 'not a number'])('rejects an invalid edit draft: %j', (value) => {
-    expect(positiveMealNumber(value)).toBeNull();
-  });
-
-  it('accepts a positive decimal', () => {
-    expect(positiveMealNumber(' 125.5 ')).toBe(125.5);
   });
 });
 

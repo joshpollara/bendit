@@ -6,6 +6,7 @@ import type { Addition, DayStanding } from '../lib/macros';
 import DayImpact from './DayImpact';
 import Sheet from './Sheet';
 import MacroInputs, { macroFields, macroGrams } from './MacroFields';
+import NumberInput from './NumberInput';
 
 // Edit something already logged: change the amount, move it to another meal, or
 // remove it — without deleting and re-adding.
@@ -112,15 +113,11 @@ export default function EntrySheet({
 
           {byWeight && gramsPerServing ? (
             <div className="my-4 flex flex-col items-center gap-1">
-              <input
-                type="number"
+              <NumberInput
                 inputMode="decimal"
                 min={1}
-                value={grams ?? ''}
-                onChange={(e) => {
-                  const g = Number(e.target.value);
-                  if (Number.isFinite(g) && g > 0) setServings(g / gramsPerServing);
-                }}
+                value={grams ?? null}
+                onCommit={(g) => setServings(g / gramsPerServing)}
                 className="w-32 rounded-xl border border-line bg-surface py-2 text-center text-2xl font-semibold tabular-nums"
                 aria-label="Grams"
               />
@@ -137,16 +134,12 @@ export default function EntrySheet({
                 −
               </button>
               <div className="flex flex-col items-center">
-                <input
-                  type="number"
+                <NumberInput
                   inputMode="decimal"
                   min={0.25}
                   step={0.25}
                   value={servings}
-                  onChange={(e) => {
-                    const v = Number(e.target.value);
-                    if (Number.isFinite(v) && v > 0) setServings(v);
-                  }}
+                  onCommit={setServings}
                   className="w-24 rounded-xl border border-line bg-surface py-2 text-center text-2xl font-semibold tabular-nums"
                   aria-label="Servings"
                 />

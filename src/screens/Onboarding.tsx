@@ -7,6 +7,7 @@ import { cmToFtIn, formatCalories, ftInToCm, kgToLb, lbToKg } from '../lib/units
 import { STRINGS } from '../lib/strings';
 import type { ActivityLevel, Sex, Units } from '../types';
 import { WarnIcon } from '../components/Icons';
+import NumberInput from '../components/NumberInput';
 
 const ACTIVITY_OPTIONS: { value: ActivityLevel; title: string; sub: string }[] = [
   { value: 'sedentary', title: 'Sedentary', sub: 'Desk job, little exercise' },
@@ -187,17 +188,17 @@ export default function Onboarding() {
             <div className="grid grid-cols-2 gap-3">
               <label className="flex flex-col gap-1 text-center text-xs text-ink-muted">
                 feet
-                <input type="number" min={3} max={8} value={ft} onChange={(e) => setHeightCm(ftInToCm(Number(e.target.value) || 0, inch))} className={field} />
+                <NumberInput min={3} max={8} value={ft} onCommit={(v) => setHeightCm(ftInToCm(v, inch))} className={field} />
               </label>
               <label className="flex flex-col gap-1 text-center text-xs text-ink-muted">
                 inches
-                <input type="number" min={0} max={11} value={inch} onChange={(e) => setHeightCm(ftInToCm(ft, Number(e.target.value) || 0))} className={field} />
+                <NumberInput min={0} max={11} allowZero value={inch} onCommit={(v) => setHeightCm(ftInToCm(ft, v))} className={field} />
               </label>
             </div>
           ) : (
             <label className="flex flex-col gap-1 text-center text-xs text-ink-muted">
               centimeters
-              <input type="number" min={90} max={250} value={Math.round(heightCm)} onChange={(e) => setHeightCm(Number(e.target.value) || 0)} className={field} />
+              <NumberInput min={90} max={250} value={Math.round(heightCm)} onCommit={setHeightCm} className={field} />
             </label>
           )}
           <button type="button" onClick={next} disabled={heightCm < 90} className={bigButton}>
