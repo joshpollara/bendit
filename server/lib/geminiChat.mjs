@@ -10,13 +10,20 @@ import { usageOf, VisionError } from './vision.mjs';
 const ENDPOINT =
   process.env.VISION_ENDPOINT ?? 'https://generativelanguage.googleapis.com/v1beta/models';
 
-/** One turn of a conversation can take a while when the model thinks first. */
-const TIMEOUT_MS = 45_000;
+/**
+ * Per attempt; with one retry, a turn gives up in under a minute. A normal
+ * answer takes about a second. 45 s left people watching a spinner for a
+ * minute and a half while gemini-3.7-flash was overloaded.
+ */
+const TIMEOUT_MS = 25_000;
 const isRetryable = (status) => status === 429 || (status >= 500 && status < 600);
 
 export function createChatModel({
   apiKey = process.env.GEMINI_API_KEY,
-  model = process.env.ASSISTANT_MODEL ?? 'gemini-3.7-flash',
+  // flash-lite answered the assistant's first turn in ~0.5 s and chose the
+  // right tool every time, on 2026-10-16, while 3.7-flash took 2 s to 84 s and
+  // sometimes returned 503. ASSISTANT_MODEL moves it to a stronger model.
+  model = process.env.ASSISTANT_MODEL ?? 'gemini-3.5-flash-lite',
   thinkingLevel = process.env.ASSISTANT_THINKING_LEVEL ?? 'low',
   fetchImpl = globalThis.fetch,
   timeoutMs = TIMEOUT_MS,

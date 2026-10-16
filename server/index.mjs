@@ -2156,6 +2156,14 @@ const assistant = createAssistant({
 });
 
 const ASSISTANT_STATUS = { unconfigured: 503, quota_exceeded: 429, rate_limited: 429, timeout: 504 };
+const ASSISTANT_MESSAGES = {
+  quota_exceeded: "That's today's limit for the assistant. Try again tomorrow.",
+  timeout: 'The model took too long to answer. Try again.',
+  rate_limited: 'The model is busy. Try again in a moment.',
+  provider_error: 'The model is busy. Try again in a moment.',
+  unconfigured: 'The assistant is not set up on this server.',
+  default: 'The assistant could not answer just now.',
+};
 
 const assistantRoute = (fn) => async (req, res) => {
   try {
@@ -2163,9 +2171,11 @@ const assistantRoute = (fn) => async (req, res) => {
   } catch (error) {
     if (error instanceof ToolError) return res.status(409).json({ error: { message: error.message } });
     if (error?.name === 'VisionError') {
+      // Handled, but worth seeing in the logs: a timeout here looked like silence.
+      console.error(`assistant model failed: ${error.code} ${error.message}`);
       return res
         .status(ASSISTANT_STATUS[error.code] ?? 502)
-        .json({ error: { code: error.code, message: error.code === 'quota_exceeded' ? error.message : 'The assistant could not answer just now.' } });
+        .json({ error: { code: error.code, message: ASSISTANT_MESSAGES[error.code] ?? ASSISTANT_MESSAGES.default } });
     }
     console.error('assistant failed:', error);
     res.status(500).json({ error: { message: 'Something went wrong.' } });

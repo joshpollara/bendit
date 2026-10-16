@@ -146,6 +146,29 @@ describe('the assistant', () => {
     expect(names.some((n) => /checkout|pay|confirm/.test(n))).toBe(false);
   });
 
+  it('replaces a question the model never answered instead of stacking another after it', async () => {
+    let fail = true;
+    const model = scriptedModel([say('Here you go.')]);
+    const flaky = {
+      ...model,
+      generate: async (args) => {
+        if (fail) {
+          fail = false;
+          throw Object.assign(new Error('slow'), { name: 'VisionError', code: 'timeout' });
+        }
+        return model.generate(args);
+      },
+    };
+    const assistant = createAssistant({ db, picnic, model: flaky });
+    await expect(assistant.send(ann, 'first try', context)).rejects.toMatchObject({ code: 'timeout' });
+    const state = await assistant.send(ann, 'second try', context);
+    expect(model.sent[0].contents).toEqual([{ role: 'user', parts: [{ text: 'second try' }] }]);
+    expect(state.log).toEqual([
+      { role: 'user', text: 'second try' },
+      { role: 'assistant', text: 'Here you go.' },
+    ]);
+  });
+
   it('stops at its own daily ceiling', async () => {
     const model = scriptedModel([say('one'), say('two')]);
     const assistant = createAssistant({ db, picnic, model, dailyLimit: 1 });
