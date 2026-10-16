@@ -150,6 +150,13 @@ export const GradeIcon = (p: IconProps) => (
   </Svg>
 );
 
+export const CalendarIcon = (p: IconProps) => (
+  <Svg {...p}>
+    <rect x="3.5" y="5" width="17" height="15.5" rx="2.5" />
+    <path d="M3.5 10h17M8 3v4M16 3v4" />
+  </Svg>
+);
+
 export const BasketIcon = (p: IconProps) => (
   <Svg {...p}>
     <path d="M4 9h16l-1.5 10.5a1.5 1.5 0 0 1-1.5 1.5H7a1.5 1.5 0 0 1-1.5-1.5L4 9z" />

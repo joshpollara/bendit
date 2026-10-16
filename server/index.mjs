@@ -14,6 +14,7 @@ import {
   countUsers,
   createUsersTable,
   findUser,
+  listUsers,
   setPassword,
   USER_TABLES,
 } from './lib/users.mjs';
@@ -38,6 +39,18 @@ import {
 import { createRecipeTables } from './lib/recipeStore.mjs';
 import { createPicnic, PicnicError } from './lib/picnic.mjs';
 import { picnicFood } from './lib/picnicNutrition.mjs';
+import {
+  addItem as addPlanItem,
+  createMealPlanTables,
+  listPlan,
+  logItem as logPlanItem,
+  plannedFor,
+  PlanError,
+  removeItem as removePlanItem,
+  setChecked,
+  shoppingList,
+  updateItem as updatePlanItem,
+} from './lib/mealPlan.mjs';
 import { createVisionExtractHandler } from './lib/visionRoute.mjs';
 import { createVisionUsageHandler } from './lib/visionUsage.mjs';
 import webpush from 'web-push';
@@ -295,6 +308,8 @@ db.exec('CREATE INDEX IF NOT EXISTS idx_food_log_meal_run ON food_log(mealPhotoR
 // left blank must not count as 0 g of protein against the day's total.
 const ENTRY_MACROS = { proteinCached: 'REAL', carbsCached: 'REAL', fatCached: 'REAL' };
 ensureColumns('food_log', ENTRY_MACROS);
+// The planned meal an entry was logged from, so the plan knows it was eaten.
+ensureColumns('food_log', { planItemId: 'TEXT' });
 ensureColumns('meal_template_items', ENTRY_MACROS);
 
 // Three tables were unique on a date alone, which is right for one person and
@@ -320,6 +335,7 @@ function widenKey(table, hasOldKey, create, columns) {
 // reads one filters by it. Rows written before there were accounts have no
 // owner and are visible to nobody — there is no sensible person to give them
 // to, and guessing would hand one user another's history.
+createMealPlanTables(db);
 for (const table of USER_TABLES) ensureColumns(table, { userId: 'TEXT' });
 
 widenKey(
@@ -907,7 +923,15 @@ app.get('/api/day', (req, res) => {
     if (nutrition || processing) meals[meal] = { ...nutrition, processing };
   }
 
-  res.json({ entries, exercises, latestWeightKg: latest?.weightKg, yesterdayMealCounts, done, meals });
+  res.json({
+    entries,
+    exercises,
+    latestWeightKg: latest?.weightKg,
+    yesterdayMealCounts,
+    done,
+    meals,
+    planned: plannedFor(db, req.userId, date),
+  });
 });
 
 // Browsing the whole database: every food, newest sources first, with how many
@@ -1808,6 +1832,43 @@ app.delete('/api/recipes/:id', recipes.remove);
 app.post('/api/recipes/price', createRecipePriceHandler({ db }));
 app.post('/api/recipes/from-url', createRecipeFromUrlHandler({ db, visionHandler }));
 app.post('/api/recipes/from-photo', bigJson, createRecipeFromPhotoHandler({ db, visionHandler }));
+
+// ——— meal plan ———
+//
+// One plan for the household; servings in it are per person. See lib/mealPlan.mjs.
+
+const planRoute = (fn) => (req, res) => {
+  try {
+    res.json(fn(req));
+  } catch (error) {
+    if (error instanceof PlanError) return res.status(error.status).json({ error: error.message });
+    throw error;
+  }
+};
+
+// Everyone who can be planned for: a shared home, so names are no secret here.
+app.get('/api/household', (req, res) => res.json(listUsers(db).map(({ id, username }) => ({ id, username }))));
+
+app.get('/api/meal-plan', planRoute((req) => listPlan(db, req.query.from, req.query.to)));
+app.post('/api/meal-plan', planRoute((req) => addPlanItem(db, req.body ?? {}, { userId: req.userId })));
+app.patch('/api/meal-plan/:id', planRoute((req) => updatePlanItem(db, req.params.id, req.body ?? {})));
+app.delete(
+  '/api/meal-plan/:id',
+  planRoute((req) => {
+    removePlanItem(db, req.params.id);
+    return { ok: true };
+  }),
+);
+app.post('/api/meal-plan/:id/log', planRoute((req) => logPlanItem(db, req.params.id, req.userId)));
+
+app.get('/api/shopping-list', planRoute((req) => shoppingList(db, req.query.from, req.query.to)));
+app.put(
+  '/api/shopping-list/checks',
+  planRoute((req) => {
+    setChecked(db, req.body ?? {}, { userId: req.userId });
+    return { ok: true };
+  }),
+);
 
 // ——— Picnic ———
 //
