@@ -1,9 +1,12 @@
 import { useEffect, useState } from 'react';
+import { format, parseISO } from 'date-fns';
 import { Link, useNavigate } from 'react-router-dom';
 import {
   api,
   ApiError,
   type PicnicCart,
+  type PicnicDelivery,
+  type PicnicSlots,
   type PicnicCartArticle,
   type PicnicProduct,
   type PicnicProductDetails,
@@ -11,33 +14,10 @@ import {
 import { useData } from '../lib/useData';
 import { ChevronLeftIcon, PlusIcon, SearchIcon } from '../components/Icons';
 import Sheet from '../components/Sheet';
-
-const euros = (cents: number) =>
-  (cents / 100).toLocaleString('nl-NL', { style: 'currency', currency: 'EUR' });
-
-const image = (id: string | undefined, size: 'small' | 'medium' = 'small') =>
-  id ? `/api/picnic/images/${encodeURIComponent(id)}/${size}` : undefined;
+import { euros, Thumb, useSettled } from '../components/PicnicBits';
 
 const quantityOf = (article: PicnicCartArticle) =>
   article.decorators?.find((d) => d.type === 'QUANTITY')?.quantity ?? 1;
-
-/** The search term, once typing has paused: every keystroke would be a request to Picnic. */
-function useSettled(value: string, ms = 400) {
-  const [settled, setSettled] = useState(value);
-  useEffect(() => {
-    const timer = setTimeout(() => setSettled(value), ms);
-    return () => clearTimeout(timer);
-  }, [value, ms]);
-  return settled;
-}
-
-function Thumb({ id, size = 'h-12 w-12' }: { id?: string; size?: string }) {
-  return (
-    <span className={`${size} shrink-0 overflow-hidden rounded-lg bg-white`}>
-      {id && <img src={image(id)} alt="" loading="lazy" className="h-full w-full object-contain" />}
-    </span>
-  );
-}
 
 function ProductSheet({
   id,
@@ -212,10 +192,187 @@ function CartView({
   );
 }
 
+const when = (iso: string | null | undefined, pattern = 'EEE d MMM HH:mm') =>
+  iso ? format(parseISO(iso), pattern) : '—';
+const windowText = (start: string | null | undefined, end: string | null | undefined) =>
+  start ? `${when(start)}–${when(end, 'HH:mm')}` : '—';
+
+/** The delivery slot the cart is booked into, and the ones it could move to. */
+function SlotSection({ onChanged }: { onChanged: () => void }) {
+  const [slots, setSlots] = useState<PicnicSlots>();
+  const [picking, setPicking] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+
+  const load = () => api.picnicSlots().then(setSlots, (err) => setError(err.message));
+  useEffect(() => {
+    void load();
+  }, []);
+
+  const selected = slots?.selectedSlot;
+  const available = (slots?.slots ?? []).filter((slot) => slot.isAvailable);
+  const days = [...new Set(available.map((slot) => slot.windowStart.slice(0, 10)))];
+
+  async function choose(slotId: string) {
+    setError(null);
+    try {
+      await api.picnicSetSlot(slotId);
+      setPicking(false);
+      await load();
+      onChanged();
+    } catch (err) {
+      setError(err instanceof Error ? err.message : 'Could not change the slot.');
+    }
+  }
+
+  return (
+    <div className="flex items-center gap-3 border-b border-line px-4 py-3">
+      <div className="min-w-0 flex-1">
+        <p className="text-xs text-ink-muted">Delivery</p>
+        <p className="truncate text-sm font-medium">
+          {!slots ? 'Loading…' : selected ? windowText(selected.windowStart, selected.windowEnd) : 'No slot chosen'}
+          {selected && !selected.isExplicitSelection && (
+            <span className="ml-1 font-normal text-ink-muted">(Picnic's pick)</span>
+          )}
+        </p>
+        {error && <p className="text-xs text-over">{error}</p>}
+      </div>
+      {available.length > 0 && (
+        <button type="button" onClick={() => setPicking(true)} className="text-sm font-semibold text-accent">
+          Change
+        </button>
+      )}
+      {picking && (
+        <Sheet onClose={() => setPicking(false)}>
+          <h2 className="mb-3 text-lg font-semibold">Delivery slot</h2>
+          <div className="max-h-[60vh] space-y-3 overflow-y-auto">
+            {days.map((day) => (
+              <div key={day}>
+                <p className="mb-1 text-xs font-semibold text-ink-muted">{when(day, 'EEEE d MMMM')}</p>
+                <div className="grid grid-cols-2 gap-2">
+                  {available
+                    .filter((slot) => slot.windowStart.startsWith(day))
+                    .map((slot) => (
+                      <button
+                        key={slot.slotId}
+                        type="button"
+                        onClick={() => choose(slot.slotId)}
+                        className={`rounded-xl border px-3 py-2 text-left text-sm ${
+                          slot.slotId === selected?.slotId
+                            ? 'border-accent bg-accent-soft text-accent'
+                            : 'border-line'
+                        }`}
+                      >
+                        <span className="block tabular-nums">
+                          {when(slot.windowStart, 'HH:mm')}–{when(slot.windowEnd, 'HH:mm')}
+                        </span>
+                        {slot.minimumOrderValue != null && (
+                          <span className="block text-xs text-ink-muted">
+                            Minimum {euros(slot.minimumOrderValue)}
+                          </span>
+                        )}
+                      </button>
+                    ))}
+                </div>
+              </div>
+            ))}
+          </div>
+        </Sheet>
+      )}
+    </div>
+  );
+}
+
+const STATUS_LABEL: Record<string, string> = {
+  CURRENT: 'Upcoming',
+  IN_PROGRESS: 'On its way',
+  COMPLETED: 'Delivered',
+  CANCELLED: 'Cancelled',
+};
+
+function DeliverySheet({ id, onClose }: { id: string; onClose: () => void }) {
+  const [delivery, setDelivery] = useState<PicnicDelivery>();
+  const [error, setError] = useState<string | null>(null);
+  useEffect(() => {
+    api.picnicDelivery(id).then(setDelivery, (err) => setError(err.message));
+  }, [id]);
+
+  return (
+    <Sheet onClose={onClose}>
+      {error ? (
+        <p className="text-sm text-over">{error}</p>
+      ) : !delivery ? (
+        <p className="text-sm text-ink-muted">Loading…</p>
+      ) : (
+        <div className="space-y-3">
+          <div>
+            <h2 className="text-lg font-semibold">{STATUS_LABEL[delivery.status] ?? delivery.status}</h2>
+            <p className="text-sm text-ink-secondary">
+              {delivery.status === 'COMPLETED' && delivery.delivered
+                ? `Delivered ${when(delivery.delivered.start)}`
+                : `Slot ${windowText(delivery.window.start, delivery.window.end)}`}
+            </p>
+            {delivery.position ? (
+              <p className="text-sm font-medium text-accent">
+                Expected {when(new Date(delivery.position.eta).toISOString(), 'HH:mm')}
+              </p>
+            ) : (
+              delivery.status !== 'COMPLETED' &&
+              delivery.eta && (
+                <p className="text-sm text-ink-secondary">Expected {windowText(delivery.eta.start, delivery.eta.end)}</p>
+              )
+            )}
+          </div>
+          <ul className="max-h-[55vh] divide-y divide-line overflow-y-auto">
+            {delivery.items.map((item) => (
+              <li key={item.id} className="flex items-center gap-3 py-2">
+                <Thumb id={item.imageId} size="h-10 w-10" />
+                <span className="min-w-0 flex-1">
+                  <span className="block truncate text-sm">{item.name}</span>
+                  <span className="block truncate text-xs text-ink-muted">{item.unitQuantity}</span>
+                </span>
+                <span className="text-sm tabular-nums text-ink-secondary">× {item.quantity}</span>
+              </li>
+            ))}
+          </ul>
+        </div>
+      )}
+    </Sheet>
+  );
+}
+
+function OrdersView() {
+  const deliveries = useData(() => api.picnicDeliveries(), []);
+  const [open, setOpen] = useState<string | null>(null);
+  if (!deliveries) return <p className="px-4 py-6 text-center text-sm text-ink-muted">Loading…</p>;
+  if (deliveries.length === 0) return <p className="px-4 py-6 text-center text-sm text-ink-muted">No orders yet.</p>;
+  return (
+    <>
+      <ul>
+        {deliveries.map((d) => (
+          <li key={d.id} className="border-b border-line last:border-b-0">
+            <button
+              type="button"
+              onClick={() => setOpen(d.id)}
+              className="flex w-full items-center gap-3 px-4 py-2.5 text-left hover:bg-surface"
+            >
+              <span className="min-w-0 flex-1">
+                <span className="block truncate text-sm font-medium">{windowText(d.windowStart, d.windowEnd)}</span>
+                <span className="block text-xs text-ink-muted">{STATUS_LABEL[d.status] ?? d.status}</span>
+              </span>
+              <span className="text-sm tabular-nums text-ink-secondary">{euros(d.totalPrice)}</span>
+            </button>
+          </li>
+        ))}
+      </ul>
+      {open && <DeliverySheet id={open} onClose={() => setOpen(null)} />}
+    </>
+  );
+}
+
 export default function Picnic() {
   const navigate = useNavigate();
   const status = useData(() => api.picnicStatus(), []);
-  const [tab, setTab] = useState<'search' | 'cart'>('search');
+  const [tab, setTab] = useState<'search' | 'cart' | 'orders'>('search');
   const [query, setQuery] = useState('');
   const [open, setOpen] = useState<{ id: string; name: string } | null>(null);
   const [cart, setCart] = useState<PicnicCart>();
@@ -284,15 +441,15 @@ export default function Picnic() {
         </p>
       ) : (
         <>
-          <div className="mx-4 grid grid-cols-2 rounded-xl bg-card p-1 text-center text-xs font-semibold lg:mx-0">
-            {(['search', 'cart'] as const).map((t) => (
+          <div className="mx-4 grid grid-cols-3 rounded-xl bg-card p-1 text-center text-xs font-semibold lg:mx-0">
+            {(['search', 'cart', 'orders'] as const).map((t) => (
               <button
                 key={t}
                 type="button"
                 onClick={() => setTab(t)}
                 className={`rounded-lg py-2 ${tab === t ? 'bg-accent text-white' : 'text-ink-secondary'}`}
               >
-                {t === 'search' ? 'Search' : `Cart${cart ? ` ${cart.total_count}` : ''}`}
+                {t === 'search' ? 'Search' : t === 'orders' ? 'Orders' : `Cart${cart ? ` ${cart.total_count}` : ''}`}
               </button>
             ))}
           </div>
@@ -355,9 +512,14 @@ export default function Picnic() {
                 </div>
               )}
             </>
+          ) : tab === 'cart' ? (
+            <div className="mx-4 mt-3 overflow-hidden rounded-2xl border border-line bg-card shadow-sm lg:mx-0">
+              <SlotSection onChanged={() => api.picnicCart().then(setCart)} />
+              <CartView cart={cart} onChange={changeCart} />
+            </div>
           ) : (
             <div className="mx-4 mt-3 overflow-hidden rounded-2xl border border-line bg-card shadow-sm lg:mx-0">
-              <CartView cart={cart} onChange={changeCart} />
+              <OrdersView />
             </div>
           )}
         </>

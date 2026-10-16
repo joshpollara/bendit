@@ -40,6 +40,15 @@ import { createRecipeTables } from './lib/recipeStore.mjs';
 import { createPicnic, PicnicError } from './lib/picnic.mjs';
 import { picnicFood } from './lib/picnicNutrition.mjs';
 import {
+  cartAdditions,
+  clearChoice,
+  createPicnicShoppingTables,
+  createSuggester,
+  productFrom,
+  setChoice,
+  withProducts,
+} from './lib/picnicShopping.mjs';
+import {
   addItem as addPlanItem,
   createMealPlanTables,
   listPlan,
@@ -1876,6 +1885,8 @@ app.put(
 // with. See lib/picnic.mjs for how the session is kept.
 
 const picnic = createPicnic({ db });
+createPicnicShoppingTables(db);
+const suggestProduct = createSuggester((term) => picnic.search(term));
 
 /** An async handler whose PicnicErrors become a status and a code the client can act on. */
 const picnicRoute = (fn) => async (req, res) => {
@@ -1885,10 +1896,15 @@ const picnicRoute = (fn) => async (req, res) => {
     if (error instanceof PicnicError) {
       return res.status(error.status).json({ error: { message: error.message, code: error.code } });
     }
+    if (error instanceof PlanError) return res.status(error.status).json({ error: error.message });
     console.error('picnic route failed:', error);
     res.status(500).json({ error: 'Something went wrong talking to Picnic.' });
   }
 };
+
+function picnicNotConnected() {
+  throw new PicnicError('not_connected', 'Picnic is not connected.', { status: 409 });
+}
 
 /** A product count from a request: a whole number from 1 to 50, or 1. */
 const countOf = (value) => {
@@ -1959,6 +1975,87 @@ app.delete(
   picnicRoute((req) => picnic.removeFromCart(req.params.productId, countOf(req.query.count))),
 );
 app.delete('/api/picnic/cart', picnicRoute(() => picnic.clearCart()));
+
+// The week's shopping list with a Picnic product on each line.
+app.get(
+  '/api/shopping-list/picnic',
+  picnicRoute((req) => {
+    picnic.status().connected || picnicNotConnected();
+    return withProducts(db, shoppingList(db, req.query.from, req.query.to), suggestProduct);
+  }),
+);
+
+// Remembering which product a line is bought as, for the whole household.
+app.put(
+  '/api/picnic/choices',
+  picnicRoute((req) => {
+    const { itemKey, product } = req.body ?? {};
+    if (!itemKey || !product?.id || !product?.name) throw new PlanError('itemKey and product are required');
+    setChoice(db, String(itemKey), productFrom(product), { userId: req.userId });
+    return { ok: true };
+  }),
+);
+app.delete(
+  '/api/picnic/choices/:itemKey',
+  picnicRoute((req) => {
+    clearChoice(db, req.params.itemKey);
+    return { ok: true };
+  }),
+);
+
+// Everything on the list that isn't ticked off and has a chosen product, into
+// the cart in one request.
+app.post(
+  '/api/shopping-list/picnic/cart',
+  picnicRoute(async (req) => {
+    const list = await withProducts(db, shoppingList(db, req.body?.from, req.body?.to), suggestProduct);
+    const additions = cartAdditions(list.items);
+    if (additions.length === 0) throw new PlanError('Nothing on the list has a product chosen yet.');
+    const cart = await picnic.addProducts(additions);
+    return { added: additions.reduce((sum, a) => sum + a.quantity, 0), cart };
+  }),
+);
+
+app.get('/api/picnic/slots', picnicRoute(() => picnic.slots()));
+app.put(
+  '/api/picnic/slot',
+  picnicRoute((req) => {
+    const slotId = String(req.body?.slotId ?? '');
+    if (!slotId) throw new PlanError('slotId is required');
+    return picnic.setSlot(slotId);
+  }),
+);
+
+// Most recent first. There can be hundreds; nobody scrolls past the last few.
+app.get('/api/picnic/deliveries', picnicRoute(async () => (await picnic.deliveries()).slice(0, 30)));
+app.get(
+  '/api/picnic/deliveries/:id',
+  picnicRoute(async (req) => {
+    const delivery = await picnic.delivery(req.params.id);
+    const live = ['CURRENT', 'IN_PROGRESS'].includes(delivery.status);
+    return {
+      id: delivery.id ?? delivery.delivery_id,
+      status: delivery.status,
+      createdAt: delivery.creation_time,
+      window: { start: delivery.slot?.window_start ?? null, end: delivery.slot?.window_end ?? null },
+      eta: delivery.eta2 ?? null,
+      delivered: delivery.delivery_time ?? null,
+      position: live ? await picnic.position(delivery.id ?? delivery.delivery_id) : null,
+      // Per-item prices on a past delivery aren't in cents, so only names and counts are passed on.
+      items: delivery.orders.flatMap((order) =>
+        order.items.flatMap((line) =>
+          line.items.map((article) => ({
+            id: article.id,
+            name: article.name,
+            unitQuantity: article.unit_quantity,
+            imageId: article.image_ids?.[0] ?? null,
+            quantity: article.decorators?.find((d) => d.type === 'QUANTITY')?.quantity ?? 1,
+          })),
+        ),
+      ),
+    };
+  }),
+);
 
 // ——— progress photos ———
 

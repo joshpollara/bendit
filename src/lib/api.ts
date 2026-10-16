@@ -220,6 +220,67 @@ export interface ShoppingList {
   }[];
 }
 
+/** A Picnic product as a shopping-list line carries it. */
+export interface PicnicListProduct {
+  productId: string;
+  name: string;
+  imageId: string | null;
+  unitQuantity: string | null;
+  price: number | null;
+}
+
+export interface PicnicShoppingList extends ShoppingList {
+  items: (ShoppingList['items'][number] & {
+    /** What the household picked for this line. */
+    choice: PicnicListProduct | null;
+    /** Picnic's top search result, when nobody has picked yet. */
+    suggestion: PicnicListProduct | null;
+    /** How many packs cover what the plan needs. */
+    packs: number | null;
+  })[];
+}
+
+export interface PicnicSlot {
+  slotId: string;
+  windowStart: string;
+  windowEnd: string;
+  cutOffTime: string;
+  isAvailable: boolean;
+  isGreenChoice: boolean;
+  minimumOrderValue: number | null;
+}
+
+export interface PicnicSlots {
+  slots: PicnicSlot[];
+  selectedSlot: {
+    slotId: string;
+    windowStart: string | null;
+    windowEnd: string | null;
+    /** False when Picnic picked it rather than someone here. */
+    isExplicitSelection: boolean;
+  } | null;
+}
+
+export interface PicnicDeliverySummary {
+  id: string;
+  status: string;
+  creationTime: string;
+  windowStart: string | null;
+  windowEnd: string | null;
+  totalPrice: number;
+}
+
+export interface PicnicDelivery {
+  id: string;
+  status: string;
+  createdAt: string;
+  window: { start: string | null; end: string | null };
+  eta: { start: string; end: string } | null;
+  delivered: { start: string; end: string } | null;
+  position: { eta: number; eta_window: { start: string; end: string } } | null;
+  items: { id: string; name: string; unitQuantity: string; imageId: string | null; quantity: number }[];
+}
+
 export interface DayData {
   entries: JoinedEntry[];
   /** Your portions from the household plan for this day, not yet logged. */
@@ -593,6 +654,18 @@ export const api = {
     j<ShoppingList>(`/api/shopping-list?${new URLSearchParams({ from, to })}`),
   setShoppingCheck: (listKey: string, itemKey: string, checked: boolean) =>
     post('/api/shopping-list/checks', { listKey, itemKey, checked }, 'PUT'),
+  picnicShoppingList: (from: string, to: string) =>
+    j<PicnicShoppingList>(`/api/shopping-list/picnic?${new URLSearchParams({ from, to })}`),
+  picnicChoose: (itemKey: string, product: PicnicProduct) =>
+    post('/api/picnic/choices', { itemKey, product }, 'PUT'),
+  picnicForget: (itemKey: string) =>
+    j<unknown>(`/api/picnic/choices/${encodeURIComponent(itemKey)}`, { method: 'DELETE' }),
+  picnicAddList: (from: string, to: string) =>
+    post('/api/shopping-list/picnic/cart', { from, to }) as Promise<{ added: number; cart: PicnicCart }>,
+  picnicSlots: () => j<PicnicSlots>('/api/picnic/slots'),
+  picnicSetSlot: (slotId: string) => post('/api/picnic/slot', { slotId }, 'PUT') as Promise<PicnicCart>,
+  picnicDeliveries: () => j<PicnicDeliverySummary[]>('/api/picnic/deliveries'),
+  picnicDelivery: (id: string) => j<PicnicDelivery>(`/api/picnic/deliveries/${encodeURIComponent(id)}`),
   picnicStatus: () => j<PicnicStatus>('/api/picnic/status'),
   picnicConnect: () => post('/api/picnic/connect', {}) as Promise<PicnicStatus>,
   picnicVerify: (code: string) => post('/api/picnic/verify', { code }) as Promise<PicnicStatus>,

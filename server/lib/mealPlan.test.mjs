@@ -38,9 +38,11 @@ beforeEach(() => {
       VALUES ('i1', 'chili', 0, '500 g ground beef', 'ground beef', 500, 'beef'),
              ('i2', 'chili', 1, '400 g kidney beans', 'kidney beans', 400, 'beans'),
              ('i3', 'chili', 2, '1 tsp cumin', 'cumin', NULL, NULL),
-             ('i4', 'chili', 3, '1 onion', 'onion', NULL, NULL);
+             ('i4', 'chili', 3, '1 onion', 'onion', NULL, NULL),
+             ('i5', 'chili', 4, '400 ml stock', 'stock', NULL, NULL);
     UPDATE recipe_ingredients SET quantity = 1, unit = 'tsp' WHERE id = 'i3';
     UPDATE recipe_ingredients SET quantity = 1 WHERE id = 'i4';
+    UPDATE recipe_ingredients SET quantity = 400, unit = 'ml' WHERE id = 'i5';
   `);
   ann = createUser(db, 'ann', 'password-ann').id;
   ben = createUser(db, 'ben', 'password-ben').id;
@@ -128,6 +130,7 @@ describe('the shopping list', () => {
       ['ground beef', 250, []],
       ['kidney beans', 200, []],
       ['onion', null, ['1']],
+      ['stock', 200, []],
     ]);
   });
 

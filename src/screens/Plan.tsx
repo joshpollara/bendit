@@ -1,9 +1,11 @@
 import { useEffect, useMemo, useState } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { format, parseISO, startOfWeek } from 'date-fns';
+import { Link } from 'react-router-dom';
 import {
   api,
   type HouseholdMember,
+  type PicnicShoppingList,
   type PlanItem,
   type Recipe,
   type ShoppingList,
@@ -17,6 +19,7 @@ import { useUI } from '../store/ui';
 import { MEALS, MEAL_LABELS, type Food, type Meal, type Profile } from '../types';
 import { ChevronLeftIcon, ChevronRightIcon, PlusIcon, SearchIcon } from '../components/Icons';
 import Sheet from '../components/Sheet';
+import { euros, ProductPicker, Thumb } from '../components/PicnicBits';
 
 const mondayOf = (date: string) => format(startOfWeek(parseISO(date), { weekStartsOn: 1 }), DAY);
 const round2 = (n: number) => Math.round(n * 100) / 100;
@@ -450,35 +453,106 @@ function DayCard({
   );
 }
 
-function ShoppingView({ list, onToggle }: { list: ShoppingList | undefined; onToggle: (key: string, checked: boolean) => void }) {
+type ListItem = ShoppingList['items'][number] & Partial<PicnicShoppingList['items'][number]>;
+type ListData = Omit<ShoppingList, 'items'> & { items: ListItem[] };
+
+const amountOf = (item: ListItem) =>
+  [item.grams != null ? (item.grams >= 1000 ? `${round2(item.grams / 1000)} kg` : `${item.grams} g`) : null, ...item.written]
+    .filter(Boolean)
+    .join(' + ');
+
+function ShoppingView({
+  list,
+  picnic,
+  onToggle,
+  onChoose,
+  onAccept,
+  onAddToCart,
+}: {
+  list: ListData | undefined;
+  /** Picnic is connected, so lines carry products. */
+  picnic: boolean;
+  onToggle: (key: string, checked: boolean) => void;
+  onChoose: (item: ListItem) => void;
+  onAccept: (item: ListItem) => void;
+  onAddToCart: () => void;
+}) {
   if (!list) return <p className="px-4 py-6 text-center text-sm text-ink-muted">Loading…</p>;
   if (list.items.length === 0) {
     return <p className="px-4 py-6 text-center text-sm text-ink-muted">Nothing planned this week.</p>;
   }
-  const amount = (item: ShoppingList['items'][number]) =>
-    [item.grams != null ? (item.grams >= 1000 ? `${round2(item.grams / 1000)} kg` : `${item.grams} g`) : null, ...item.written]
-      .filter(Boolean)
-      .join(' + ');
+  // Only what someone chose is bought; a suggestion needs accepting first.
+  const buying = list.items.filter((i) => !i.checked && i.choice);
+  const total = buying.reduce((sum, i) => sum + (i.choice?.price ?? 0) * (i.packs ?? 1), 0);
   return (
-    <ul>
-      {list.items.map((item) => (
-        <li key={item.key} className="border-b border-line last:border-b-0">
-          <label className="flex cursor-pointer items-center gap-3 px-4 py-2.5">
-            <input
-              type="checkbox"
-              checked={item.checked}
-              onChange={(e) => onToggle(item.key, e.target.checked)}
-              className="h-4 w-4 accent-[var(--color-accent)]"
-            />
-            <span className={`min-w-0 flex-1 ${item.checked ? 'text-ink-muted line-through' : ''}`}>
-              <span className="block truncate text-sm font-medium">{item.name}</span>
-              <span className="block truncate text-xs text-ink-muted">{item.usedIn.join(', ')}</span>
-            </span>
-            <span className="text-sm tabular-nums text-ink-secondary">{amount(item)}</span>
-          </label>
-        </li>
-      ))}
-    </ul>
+    <>
+      <ul>
+        {list.items.map((item) => {
+          const product = item.choice ?? item.suggestion;
+          return (
+            <li key={item.key} className="border-b border-line last:border-b-0">
+              <label className="flex cursor-pointer items-center gap-3 px-4 pt-2.5 pb-2">
+                <input
+                  type="checkbox"
+                  checked={item.checked}
+                  onChange={(e) => onToggle(item.key, e.target.checked)}
+                  className="h-4 w-4 accent-[var(--color-accent)]"
+                />
+                <span className={`min-w-0 flex-1 ${item.checked ? 'text-ink-muted line-through' : ''}`}>
+                  <span className="block truncate text-sm font-medium">{item.name}</span>
+                  <span className="block truncate text-xs text-ink-muted">{item.usedIn.join(', ')}</span>
+                </span>
+                <span className="text-sm tabular-nums text-ink-secondary">{amountOf(item)}</span>
+              </label>
+              {picnic && !item.checked && (
+                <div className="flex items-center gap-2 pr-4 pb-2.5 pl-11">
+                  {product ? (
+                    <>
+                      <Thumb id={product.imageId} size="h-8 w-8" />
+                      <span className="min-w-0 flex-1 text-xs">
+                        <span className="block truncate text-ink-secondary">
+                          {item.packs ?? 1} × {product.name}
+                        </span>
+                        <span className="block truncate text-ink-muted">
+                          {product.unitQuantity}
+                          {product.price != null ? ` · ${euros(product.price * (item.packs ?? 1))}` : ''}
+                          {!item.choice ? ' · suggested' : ''}
+                        </span>
+                      </span>
+                    </>
+                  ) : (
+                    <span className="flex-1 text-xs text-ink-muted">No Picnic product found.</span>
+                  )}
+                  {!item.choice && item.suggestion && (
+                    <button
+                      type="button"
+                      onClick={() => onAccept(item)}
+                      className="rounded-full bg-accent-soft px-2.5 py-1 text-xs font-semibold text-accent"
+                    >
+                      Use
+                    </button>
+                  )}
+                  <button type="button" onClick={() => onChoose(item)} className="text-xs font-semibold text-accent">
+                    {product ? 'Change' : 'Choose'}
+                  </button>
+                </div>
+              )}
+            </li>
+          );
+        })}
+      </ul>
+      {picnic && buying.length > 0 && (
+        <div className="border-t border-line p-3">
+          <button
+            type="button"
+            onClick={onAddToCart}
+            className="w-full rounded-xl bg-accent py-2.5 text-sm font-semibold text-white"
+          >
+            Add {buying.length} to Picnic cart · {euros(total)}
+          </button>
+        </div>
+      )}
+    </>
   );
 }
 
@@ -496,14 +570,26 @@ export default function Plan({ profile }: { profile: Profile }) {
   const session = useData(() => api.session(), []);
   const weights = useData(() => api.getWeights(), []);
   const items = useData(() => api.mealPlan(monday, sunday), [monday]);
-  const shopping = useData(() => (tab === 'shopping' ? api.shoppingList(monday, sunday) : Promise.resolve(undefined)), [monday, tab]);
+  const picnic = useData(() => api.picnicStatus(), []);
+  const viaPicnic = picnic?.connected === true;
+  const shopping = useData(
+    (): Promise<ListData | undefined> =>
+      tab !== 'shopping' || picnic === undefined
+        ? Promise.resolve(undefined)
+        : viaPicnic
+          ? api.picnicShoppingList(monday, sunday)
+          : api.shoppingList(monday, sunday),
+    [monday, tab, viaPicnic, picnic === undefined],
+  );
   const [checks, setChecks] = useState<Record<string, boolean>>({});
+  const [choosing, setChoosing] = useState<ListItem | null>(null);
+  const [notice, setNotice] = useState<string | null>(null);
 
   const me = members.find((m) => m.username === session?.username)?.id;
   const latestWeight = weights?.length ? [...weights].sort((a, b) => b.date.localeCompare(a.date))[0].weightKg : undefined;
   const targets = macroTargets(profile);
 
-  const shown: ShoppingList | undefined = shopping && {
+  const shown = shopping && {
     ...shopping,
     items: shopping.items.map((i) => (i.key in checks ? { ...i, checked: checks[i.key] } : i)),
   };
@@ -512,6 +598,21 @@ export default function Plan({ profile }: { profile: Profile }) {
     if (!shopping) return;
     setChecks((c) => ({ ...c, [key]: checked }));
     await api.setShoppingCheck(shopping.listKey, key, checked);
+    // A ticked line is no longer bought, which changes the total and the suggestions.
+    if (viaPicnic) bump();
+  }
+
+  async function addToCart() {
+    // The cart is the household's, and it may already hold someone else's shopping.
+    if (!window.confirm('Add the chosen products on this list to the Picnic cart?')) return;
+    setNotice(null);
+    try {
+      const { added } = await api.picnicAddList(monday, sunday);
+      setNotice(`Added ${added} to the Picnic cart.`);
+      bump();
+    } catch (err) {
+      setNotice(err instanceof Error ? err.message : 'Could not add them.');
+    }
   }
 
   return (
@@ -577,8 +678,47 @@ export default function Plan({ profile }: { profile: Profile }) {
         </div>
       ) : (
         <div className={`${card} overflow-hidden`}>
-          <ShoppingView list={shown} onToggle={toggle} />
+          <ShoppingView
+            list={shown}
+            picnic={viaPicnic}
+            onToggle={toggle}
+            onChoose={setChoosing}
+            onAccept={async (item) => {
+              const p = item.suggestion;
+              if (!p) return;
+              await api.picnicChoose(item.key, {
+                id: p.productId,
+                name: p.name,
+                image_id: p.imageId ?? '',
+                unit_quantity: p.unitQuantity ?? '',
+                display_price: p.price ?? 0,
+                max_count: 0,
+              });
+              bump();
+            }}
+            onAddToCart={addToCart}
+          />
         </div>
+      )}
+      {tab === 'shopping' && notice && (
+        <p className="mx-4 mt-2 text-sm text-ink-secondary lg:mx-0">
+          {notice}{' '}
+          <Link to="/picnic" className="font-medium text-accent underline">
+            Open the cart
+          </Link>
+        </p>
+      )}
+      {choosing && (
+        <ProductPicker
+          title={choosing.name}
+          initial={choosing.name}
+          onClose={() => setChoosing(null)}
+          onPick={async (product) => {
+            await api.picnicChoose(choosing.key, product);
+            setChoosing(null);
+            bump();
+          }}
+        />
       )}
 
       {adding && (
