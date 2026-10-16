@@ -1,6 +1,6 @@
 import { useState } from 'react';
 import { useNavigate } from 'react-router-dom';
-import { api, type BrowsedFood } from '../lib/api';
+import { api, type BrowsedFood, type FoodSort, type NutriGrade } from '../lib/api';
 import { useData } from '../lib/useData';
 import { formatCalories } from '../lib/units';
 import { useUI } from '../store/ui';
@@ -8,6 +8,7 @@ import type { Food } from '../types';
 import { ChevronLeftIcon, SearchIcon, TrashIcon } from '../components/Icons';
 import Sheet from '../components/Sheet';
 import FoodForm from '../components/FoodForm';
+import { GRADE_STYLE } from '../components/MealGrade';
 
 type Filter = 'all' | Food['source'];
 
@@ -17,6 +18,14 @@ const FILTERS: { key: Filter; label: string }[] = [
   { key: 'openfoodfacts', label: 'Packaged' },
   { key: 'usda', label: 'USDA' },
   { key: 'seed', label: 'Built-in' },
+];
+
+const GRADES: NutriGrade[] = ['A', 'B', 'C', 'D', 'E'];
+
+const SORTS: { key: FoodSort; label: string }[] = [
+  { key: 'default', label: 'Default order' },
+  { key: 'grade', label: 'Nutri-Score, best first' },
+  { key: 'grade-desc', label: 'Nutri-Score, worst first' },
 ];
 
 const SOURCE_LABELS: Record<Food['source'], string> = {
@@ -50,7 +59,15 @@ function FoodRow({
           {food.usageCount > 0 ? ` · logged ${food.usageCount}×` : ''}
         </p>
       </button>
-      <span className="text-sm font-medium tabular-nums text-ink-secondary">
+      {food.grade && (
+        <span
+          title={`Nutri-Score ${food.grade}`}
+          className={`flex h-5 w-5 shrink-0 items-center justify-center rounded text-[11px] font-bold ${GRADE_STYLE[food.grade]}`}
+        >
+          {food.grade}
+        </span>
+      )}
+      <span className="w-12 text-right text-sm font-medium tabular-nums text-ink-secondary">
         {formatCalories(food.caloriesPerServing)}
       </span>
       {food.source === 'seed' ? (
@@ -74,13 +91,23 @@ export default function Foods() {
   const bump = useUI((s) => s.bump);
   const [query, setQuery] = useState('');
   const [filter, setFilter] = useState<Filter>('all');
+  const [grades, setGrades] = useState<NutriGrade[]>([]);
+  const [sort, setSort] = useState<FoodSort>('default');
   const [editing, setEditing] = useState<BrowsedFood | null>(null);
 
   const q = query.trim();
   const foods = useData(
-    () => api.browseFoods(q, filter === 'all' ? undefined : filter),
-    [q, filter],
+    () => api.browseFoods(q, { source: filter === 'all' ? undefined : filter, grades, sort }),
+    [q, filter, grades.join(), sort],
   );
+
+  function toggleGrade(grade: NutriGrade) {
+    setGrades((current) =>
+      current.includes(grade)
+        ? current.filter((g) => g !== grade)
+        : GRADES.filter((g) => g === grade || current.includes(g)),
+    );
+  }
   const counts = useData(() => api.foodCounts(), []);
 
   async function remove(food: BrowsedFood) {
@@ -93,7 +120,7 @@ export default function Foods() {
     bump();
   }
 
-  const total = counts ? counts.custom + counts.openfoodfacts + counts.seed : undefined;
+  const total = counts ? counts.custom + counts.openfoodfacts + counts.usda + counts.seed : undefined;
 
   return (
     <div className="pt-[env(safe-area-inset-top)] pb-4">
@@ -135,6 +162,40 @@ export default function Foods() {
             {counts && f.key === 'all' ? ` ${total}` : ''}
           </button>
         ))}
+      </div>
+
+      <div className="mx-4 mt-3 flex flex-wrap items-center gap-2 lg:mx-0">
+        <span className="text-xs font-medium text-ink-muted">Nutri-Score</span>
+        <div className="flex gap-1">
+          {GRADES.map((g) => {
+            const on = grades.includes(g);
+            return (
+              <button
+                key={g}
+                type="button"
+                aria-pressed={on}
+                onClick={() => toggleGrade(g)}
+                className={`flex h-8 w-8 items-center justify-center rounded-lg text-xs font-bold ${
+                  on ? GRADE_STYLE[g] : 'border border-line bg-card text-ink-secondary'
+                }`}
+              >
+                {g}
+              </button>
+            );
+          })}
+        </div>
+        <select
+          aria-label="Sort"
+          value={sort}
+          onChange={(e) => setSort(e.target.value as FoodSort)}
+          className="ml-auto min-w-0 rounded-lg border border-line bg-card px-2 py-1.5 text-xs text-ink-secondary"
+        >
+          {SORTS.map((s) => (
+            <option key={s.key} value={s.key}>
+              {s.label}
+            </option>
+          ))}
+        </select>
       </div>
 
       <p className="mx-4 mt-3 text-xs text-ink-muted lg:mx-0">

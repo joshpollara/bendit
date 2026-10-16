@@ -48,7 +48,13 @@ export interface QuickAddSuggestion {
 
 export interface BrowsedFood extends Food {
   usageCount: number;
+  /** Nutri-Score A–E: published where the source states one, otherwise computed. */
+  grade: NutriGrade | null;
 }
+
+export type NutriGrade = 'A' | 'B' | 'C' | 'D' | 'E';
+
+export type FoodSort = 'default' | 'grade' | 'grade-desc';
 
 export type FoodCounts = Record<Food['source'], number>;
 
@@ -415,10 +421,16 @@ export const api = {
   foodByBarcode: (code: string) => j<Food | null>(`/api/foods/barcode/${encodeURIComponent(code)}`),
   saveFoods: (foods: Food | Food[]) => post('/api/foods', foods),
   recentFoods: () => j<Food[]>('/api/recents'),
-  browseFoods: (q: string, source?: Food['source']) =>
-    j<BrowsedFood[]>(
-      `/api/foods/browse?q=${encodeURIComponent(q)}${source ? `&source=${source}` : ''}`,
-    ),
+  browseFoods: (
+    q: string,
+    { source, grades = [], sort = 'default' }: { source?: Food['source']; grades?: NutriGrade[]; sort?: FoodSort } = {},
+  ) => {
+    const params = new URLSearchParams({ q });
+    if (source) params.set('source', source);
+    if (grades.length) params.set('grades', grades.join(','));
+    if (sort !== 'default') params.set('sort', sort);
+    return j<BrowsedFood[]>(`/api/foods/browse?${params}`);
+  },
   foodCounts: () => j<FoodCounts>('/api/foods/counts'),
   deleteFood: (id: string) => j<unknown>(`/api/foods/${encodeURIComponent(id)}`, { method: 'DELETE' }),
 
