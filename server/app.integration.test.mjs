@@ -487,3 +487,49 @@ describe('macro targets on the profile', () => {
     expect(body.fatTargetG).toBeNull();
   });
 });
+
+describe('browsing the food database by Nutri-Score', () => {
+  it('keeps only the grades asked for, together with the search', async () => {
+    const all = await get('/api/foods/browse?q=chicken');
+    expect(all.status).toBe(200);
+    const shown = new Set(all.body.map((f) => f.grade));
+    // The curated chicken dishes span more than the two grades asked for, so
+    // the filter has something to remove.
+    expect([...shown].some((g) => g !== 'A' && g !== 'B')).toBe(true);
+
+    const { status, body } = await get('/api/foods/browse?q=chicken&grades=a,B');
+    expect(status).toBe(200);
+    expect(body.length).toBeGreaterThan(0);
+    expect(body.length).toBeLessThan(all.body.length);
+    for (const food of body) {
+      expect(['A', 'B']).toContain(food.grade);
+      expect(food.name.toLowerCase()).toContain('chicken');
+    }
+  });
+
+  it('sorts by grade either way, with ungraded foods last', async () => {
+    const rank = (g) => (g ? 'ABCDE'.indexOf(g) : 99);
+    const best = (await get('/api/foods/browse?q=chicken&sort=grade')).body.map((f) => rank(f.grade));
+    expect(best).toEqual([...best].sort((a, b) => a - b));
+
+    const worst = (await get('/api/foods/browse?q=chicken&sort=grade-desc')).body.map((f) =>
+      rank(f.grade),
+    );
+    const graded = worst.filter((r) => r !== 99);
+    expect(graded).toEqual([...graded].sort((a, b) => b - a));
+    expect(worst.slice(graded.length).every((r) => r === 99)).toBe(true);
+  });
+
+  it('ignores a grade that is not one', async () => {
+    const plain = await get('/api/foods/browse?q=chicken');
+    const junk = await get('/api/foods/browse?q=chicken&grades=Z,1');
+    expect(junk.body.length).toBe(plain.body.length);
+  });
+});
+
+describe('food counts', () => {
+  it('reports every source, including one with no foods yet', async () => {
+    const { body } = await get('/api/foods/counts');
+    expect(body).toMatchObject({ custom: expect.any(Number), openfoodfacts: expect.any(Number), usda: 0, seed: expect.any(Number) });
+  });
+});

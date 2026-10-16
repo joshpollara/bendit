@@ -51,6 +51,16 @@ const PORT = Number(process.env.PORT ?? 8080);
 fs.mkdirSync(path.dirname(DB_PATH), { recursive: true });
 const db = new Database(DB_PATH);
 db.pragma('journal_mode = WAL');
+// A food's Nutri-Score from its per-100g figures, callable from SQL so the food
+// database can be filtered and sorted by grade without storing a second copy
+// that would go stale when the nutrients are edited.
+db.function(
+  'nutri_grade',
+  { deterministic: true },
+  (kcal100, sugar100, satFat100, sodiumMg100, fiber100, protein100, fruitVeg, basis) =>
+    nutriScore({ kcal100, sugar100, satFat100, sodiumMg100, fiber100, protein100, fruitVeg, basis })
+      ?.grade ?? null,
+);
 
 db.exec(`
 CREATE TABLE IF NOT EXISTS profile (
@@ -899,7 +909,11 @@ app.get('/api/week', (req, res) => {
 });
 
 app.get('/api/foods/browse', (req, res) => {
-  const { q, source } = req.query;
+  const { q, source, sort } = req.query;
+  const grades = String(req.query.grades ?? '')
+    .toUpperCase()
+    .split(',')
+    .filter((g) => /^[A-E]$/.test(g));
   // How often *you* have logged it, not how often anyone has.
   const params = [req.userId];
   // Reference data plus the foods you made — never another user's.
@@ -913,18 +927,37 @@ app.get('/api/foods/browse', (req, res) => {
     where.push('f.source = ?');
     params.push(source);
   }
+  const outer = [];
+  if (grades.length) {
+    outer.push(`grade IN (${grades.map(() => '?').join(', ')})`);
+    params.push(...grades);
+  }
+  // Your own foods first, then the curated ones, and the 300,000 crowd-sourced
+  // products last: unfiltered, they would be the entire list and nothing you
+  // recognise would appear in it.
+  const bySource = `CASE source
+                      WHEN 'custom' THEN 0 WHEN 'seed' THEN 1 WHEN 'usda' THEN 2 ELSE 3 END`;
+  // Ungraded foods go last either way round.
+  const order =
+    sort === 'grade'
+      ? `grade IS NULL, grade, ${bySource}, name COLLATE NOCASE`
+      : sort === 'grade-desc'
+        ? `grade IS NULL, grade DESC, ${bySource}, name COLLATE NOCASE`
+        : `${bySource}, name COLLATE NOCASE`;
   res.json(
     db
       .prepare(
-        `SELECT f.*, (SELECT COUNT(*) FROM food_log l WHERE l.foodId = f.id AND l.userId = ?) AS usageCount
-         FROM foods f
-         WHERE ${where.join(' AND ')}
-         -- Your own foods first, then the curated ones, and the 300,000
-         -- crowd-sourced products last: unfiltered, they would be the entire
-         -- list and nothing you recognise would appear in it.
-         ORDER BY CASE f.source
-                    WHEN 'custom' THEN 0 WHEN 'seed' THEN 1 WHEN 'usda' THEN 2 ELSE 3 END,
-                  f.name COLLATE NOCASE
+        `SELECT g.*, (SELECT COUNT(*) FROM food_log l WHERE l.foodId = g.id AND l.userId = ?) AS usageCount
+         FROM (
+           -- The published grade where the source states one, otherwise the
+           -- one computed from the nutrients — the same rule meals are graded by.
+           SELECT f.*, COALESCE(f.nutriGrade, nutri_grade(f.kcal100, f.sugar100, f.satFat100,
+                    f.sodiumMg100, f.fiber100, f.protein100, f.fruitVeg, f.basis)) AS grade
+           FROM foods f
+           WHERE ${where.join(' AND ')}
+         ) g
+         ${outer.length ? `WHERE ${outer.join(' AND ')}` : ''}
+         ORDER BY ${order}
          LIMIT 500`,
       )
       .all(...params),
@@ -932,7 +965,7 @@ app.get('/api/foods/browse', (req, res) => {
 });
 
 app.get('/api/foods/counts', (req, res) => {
-  const counts = { custom: 0, openfoodfacts: 0, seed: 0 };
+  const counts = { custom: 0, openfoodfacts: 0, usda: 0, seed: 0 };
   // The counts on the Foods screen should add up to what that screen lists,
   // which is the shared data plus this user's own.
   for (const row of db

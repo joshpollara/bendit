@@ -4,7 +4,7 @@
 // European front-of-pack algorithm, and 1–4 is the NOVA processing
 // classification. Both can be looked up and argued with.
 
-const GRADE_STYLE: Record<string, string> = {
+export const GRADE_STYLE: Record<string, string> = {
   A: 'bg-good text-white',
   B: 'bg-good-soft text-good',
   C: 'bg-warn-soft text-warn-deep',
