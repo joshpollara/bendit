@@ -95,6 +95,62 @@ export interface NutriScoreGuide {
   foods: GradedFood[];
 }
 
+export interface PicnicStatus {
+  /** The server has a Picnic account in its environment. */
+  configured: boolean;
+  connected: boolean;
+  /** Picnic sent an SMS code and is waiting for it. */
+  awaitingCode: boolean;
+  countryCode: string;
+}
+
+/** A product as Picnic's search returns it. Prices are in cents. */
+export interface PicnicProduct {
+  id: string;
+  name: string;
+  image_id: string;
+  display_price: number;
+  unit_quantity: string;
+  max_count: number;
+}
+
+export interface PicnicProductDetails {
+  id: string;
+  name: string;
+  brand: string | null;
+  unitQuantity: string;
+  unitPrice: string | null;
+  displayPrice: number;
+  maxCount: number;
+  imageIds: string[];
+  description: string | null;
+  highlights: string[];
+  allergens: string[];
+  infoSections: { title: string; content: string }[];
+  promotion: { id: string; label: string } | null;
+  /** The food this product would add to the database; null when Picnic lists no nutrition. */
+  food: (Food & { kcal100: number }) | null;
+}
+
+export interface PicnicCartArticle {
+  id: string;
+  name: string;
+  unit_quantity: string;
+  price: number;
+  image_ids: string[];
+  max_count: number;
+  /** A QUANTITY decorator carries how many are in the cart; absent means one. */
+  decorators: { type: string; quantity?: number }[];
+}
+
+export interface PicnicCart {
+  id: string;
+  items: { id: string; items: PicnicCartArticle[]; display_price: number; price: number }[];
+  total_count: number;
+  total_price: number;
+  checkout_total_price: number;
+}
+
 export type FoodSort = 'default' | 'grade' | 'grade-desc';
 
 export type FoodCounts = Record<Food['source'], number>;
@@ -464,16 +520,31 @@ export const api = {
   recentFoods: () => j<Food[]>('/api/recents'),
   browseFoods: (
     q: string,
-    { source, grades = [], sort = 'default' }: { source?: Food['source']; grades?: NutriGrade[]; sort?: FoodSort } = {},
+    { sources = [], grades = [], sort = 'default' }: { sources?: Food['source'][]; grades?: NutriGrade[]; sort?: FoodSort } = {},
   ) => {
     const params = new URLSearchParams({ q });
-    if (source) params.set('source', source);
+    if (sources.length) params.set('source', sources.join(','));
     if (grades.length) params.set('grades', grades.join(','));
     if (sort !== 'default') params.set('sort', sort);
     return j<BrowsedFood[]>(`/api/foods/browse?${params}`);
   },
   nutriScoreGuide: (grade: NutriGrade, q: string) =>
     j<NutriScoreGuide>(`/api/nutri-score?${new URLSearchParams({ grade, q })}`),
+  picnicStatus: () => j<PicnicStatus>('/api/picnic/status'),
+  picnicConnect: () => post('/api/picnic/connect', {}) as Promise<PicnicStatus>,
+  picnicVerify: (code: string) => post('/api/picnic/verify', { code }) as Promise<PicnicStatus>,
+  picnicDisconnect: () => post('/api/picnic/disconnect', {}) as Promise<PicnicStatus>,
+  picnicSearch: (q: string) => j<PicnicProduct[]>(`/api/picnic/search?${new URLSearchParams({ q })}`),
+  picnicProduct: (id: string, name: string) =>
+    j<PicnicProductDetails>(`/api/picnic/products/${encodeURIComponent(id)}?${new URLSearchParams({ name })}`),
+  picnicSaveFood: (id: string, name: string) =>
+    post(`/api/picnic/products/${encodeURIComponent(id)}/food`, { name }) as Promise<Food>,
+  picnicCart: () => j<PicnicCart>('/api/picnic/cart'),
+  picnicAddToCart: (productId: string, count = 1) =>
+    post('/api/picnic/cart', { productId, count }) as Promise<PicnicCart>,
+  picnicRemoveFromCart: (productId: string, count = 1) =>
+    j<PicnicCart>(`/api/picnic/cart/${encodeURIComponent(productId)}?count=${count}`, { method: 'DELETE' }),
+  picnicClearCart: () => j<PicnicCart>('/api/picnic/cart', { method: 'DELETE' }),
   foodCounts: () => j<FoodCounts>('/api/foods/counts'),
   deleteFood: (id: string) => j<unknown>(`/api/foods/${encodeURIComponent(id)}`, { method: 'DELETE' }),
 

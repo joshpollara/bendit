@@ -8,3 +8,5 @@ dist/
 *.db-shm
 *.db-wal
 server/public/
+.picnic-session.json
+picnic-probe.json

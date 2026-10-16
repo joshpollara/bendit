@@ -10,14 +10,15 @@ import Sheet from '../components/Sheet';
 import FoodForm from '../components/FoodForm';
 import { GRADE_STYLE } from '../components/MealGrade';
 
-type Filter = 'all' | Food['source'];
+type Filter = 'all' | 'custom' | 'packaged' | 'usda' | 'seed';
 
-const FILTERS: { key: Filter; label: string }[] = [
-  { key: 'all', label: 'All' },
-  { key: 'custom', label: 'Mine' },
-  { key: 'openfoodfacts', label: 'Packaged' },
-  { key: 'usda', label: 'USDA' },
-  { key: 'seed', label: 'Built-in' },
+// Packaged products come from Open Food Facts or from Picnic; one tab holds both.
+const FILTERS: { key: Filter; label: string; sources: Food['source'][] }[] = [
+  { key: 'all', label: 'All', sources: [] },
+  { key: 'custom', label: 'Mine', sources: ['custom'] },
+  { key: 'packaged', label: 'Packaged', sources: ['openfoodfacts', 'picnic'] },
+  { key: 'usda', label: 'USDA', sources: ['usda'] },
+  { key: 'seed', label: 'Built-in', sources: ['seed'] },
 ];
 
 const GRADES: NutriGrade[] = ['A', 'B', 'C', 'D', 'E'];
@@ -33,6 +34,7 @@ const SOURCE_LABELS: Record<Food['source'], string> = {
   openfoodfacts: 'Open Food Facts',
   usda: 'USDA',
   seed: 'Built-in',
+  picnic: 'Picnic',
 };
 
 function FoodRow({
@@ -97,7 +99,8 @@ export default function Foods() {
 
   const q = query.trim();
   const foods = useData(
-    () => api.browseFoods(q, { source: filter === 'all' ? undefined : filter, grades, sort }),
+    () =>
+      api.browseFoods(q, { sources: FILTERS.find((f) => f.key === filter)?.sources, grades, sort }),
     [q, filter, grades.join(), sort],
   );
 
@@ -120,7 +123,9 @@ export default function Foods() {
     bump();
   }
 
-  const total = counts ? counts.custom + counts.openfoodfacts + counts.usda + counts.seed : undefined;
+  const total = counts ? Object.values(counts).reduce((sum, n) => sum + n, 0) : undefined;
+  const countFor = (f: (typeof FILTERS)[number]) =>
+    counts ? f.sources.reduce((sum, source) => sum + (counts[source] ?? 0), 0) : 0;
 
   return (
     <div className="pt-[env(safe-area-inset-top)] pb-4">
@@ -158,7 +163,7 @@ export default function Foods() {
             className={`rounded-lg py-2 ${filter === f.key ? 'bg-accent text-white' : 'text-ink-secondary'}`}
           >
             {f.label}
-            {counts && f.key !== 'all' ? ` ${counts[f.key]}` : ''}
+            {counts && f.key !== 'all' ? ` ${countFor(f)}` : ''}
             {counts && f.key === 'all' ? ` ${total}` : ''}
           </button>
         ))}

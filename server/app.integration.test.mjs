@@ -562,3 +562,12 @@ describe('the Nutri-Score guide', () => {
     for (const food of body.foods) expect(food.name.toLowerCase()).toContain('chicken');
   });
 });
+
+describe('Picnic on a server without an account', () => {
+  it('reports that it is not set up, and refuses calls with a code', async () => {
+    expect((await get('/api/picnic/status')).body).toMatchObject({ configured: false, connected: false });
+    const search = await get('/api/picnic/search?q=melk');
+    expect(search.status).toBe(409);
+    expect(search.body.error.code).toBe('not_configured');
+  });
+});

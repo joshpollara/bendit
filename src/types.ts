@@ -50,7 +50,7 @@ export interface Food {
   protein?: number;
   carbs?: number;
   fat?: number; // grams, optional
-  source: 'seed' | 'openfoodfacts' | 'usda' | 'custom';
+  source: 'seed' | 'openfoodfacts' | 'usda' | 'custom' | 'picnic';
   /** Where the row came from in its source database, so a number can be traced. */
   sourceId?: string | null;
   /** Per-100g/ml canonical nutrition; what gram-based estimates are computed from. */
