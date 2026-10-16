@@ -172,5 +172,14 @@ export function createPicnic({ db, env = process.env, Client = PicnicClient }) {
     addToCart: (id, count) => call((p) => p.cart.addProductToCart(id, count)),
     removeFromCart: (id, count) => call((p) => p.cart.removeProductFromCart(id, count)),
     clearCart: () => call((p) => p.cart.clearCart()),
+    addProducts: (items) => call((p) => p.cart.addProductsToCart(items)),
+
+    slots: () => call((p) => p.cart.getDeliverySlotOverview()),
+    setSlot: (slotId) => call((p) => p.cart.setDeliverySlot(slotId)),
+
+    deliveries: () => call((p) => p.delivery.getDeliverySummaries()),
+    delivery: (id) => call((p) => p.delivery.getDelivery(id)),
+    /** Live position, or null: Picnic only answers while a delivery is on its way. */
+    position: (id) => call((p) => p.delivery.getDeliveryPosition(id)).catch(() => null),
   };
 }

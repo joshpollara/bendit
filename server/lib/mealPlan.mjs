@@ -233,6 +233,12 @@ export function logItem(db, id, userId) {
 }
 
 const round = (n) => Math.round(n);
+
+/** Units that are already a weight (or a volume, counted like one): grams per unit. */
+const METRIC = { g: 1, gr: 1, gram: 1, grams: 1, kg: 1000, ml: 1, l: 1000, liter: 1000, litre: 1000 };
+/** An ingredient's weight: resolved grams, or a quantity written in a metric unit. */
+const gramsOf = (ing) =>
+  ing.grams ?? (ing.quantity != null && METRIC[String(ing.unit ?? '').toLowerCase()] ? ing.quantity * METRIC[ing.unit.toLowerCase()] : null);
 const keyFor = (foodId, name) => (foodId ? `food:${foodId}` : `name:${String(name).trim().toLowerCase()}`);
 
 /**
@@ -274,8 +280,9 @@ export function shoppingList(db, from, to) {
         .all(item.recipeId);
       for (const ing of ingredients) {
         const name = ing.name ?? ing.raw;
+        const grams = gramsOf(ing);
         const written =
-          ing.grams == null
+          grams == null
             ? ing.quantity != null
               ? ing.unit
                 ? `${Math.round(ing.quantity * factor * 10) / 10} ${ing.unit}`
@@ -284,7 +291,7 @@ export function shoppingList(db, from, to) {
               : ing.raw
             : null;
         add(keyFor(ing.foodId, name), name, {
-          grams: ing.grams != null ? ing.grams * factor : null,
+          grams: grams != null ? grams * factor : null,
           written,
           usedIn: item.recipeName,
         });
