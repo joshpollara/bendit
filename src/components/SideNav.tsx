@@ -3,6 +3,7 @@ import {
   BasketIcon,
   BookIcon,
   CalendarIcon,
+  ChatIcon,
   ChipIcon,
   ClockIcon,
   FlameIcon,
@@ -39,6 +40,7 @@ const GROUPS = [
     links: [
       { to: '/foods', label: 'Foods', icon: <ListIcon className="h-5 w-5" /> },
       { to: '/recipes', label: 'Recipes', icon: <BookIcon className="h-5 w-5" /> },
+      { to: '/assistant', label: 'Assistant', icon: <ChatIcon className="h-5 w-5" /> },
       { to: '/plan', label: 'Plan', icon: <CalendarIcon className="h-5 w-5" /> },
       { to: '/picnic', label: 'Picnic', icon: <BasketIcon className="h-5 w-5" /> },
       { to: '/nutri-score', label: 'Nutri-Score', icon: <GradeIcon className="h-5 w-5" /> },

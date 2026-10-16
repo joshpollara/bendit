@@ -329,6 +329,24 @@ export interface PicnicPayment {
   account: string | null;
 }
 
+/** One line of the assistant conversation as the person sees it. */
+export type AssistantEntry =
+  | { role: 'user' | 'assistant'; text: string }
+  | { role: 'action'; id: string; text: string; status: 'pending' | 'done' | 'skipped' | 'failed'; error?: string };
+
+export interface AssistantState {
+  log: AssistantEntry[];
+  /** Proposals are waiting on a decision before the assistant carries on. */
+  waiting: boolean;
+  configured?: boolean;
+}
+
+export interface AssistantContext {
+  today: string;
+  budget: number;
+  targets: { protein: number | null; carbs: number | null; fat: number | null };
+}
+
 export interface DayData {
   entries: JoinedEntry[];
   /** Your portions from the household plan for this day, not yet logged. */
@@ -692,6 +710,12 @@ export const api = {
   },
   nutriScoreGuide: (grade: NutriGrade, q: string) =>
     j<NutriScoreGuide>(`/api/nutri-score?${new URLSearchParams({ grade, q })}`),
+  assistant: () => j<AssistantState>('/api/assistant'),
+  assistantSend: (text: string, context: AssistantContext) =>
+    post('/api/assistant/messages', { text, context }) as Promise<AssistantState>,
+  assistantDecide: (decisions: Record<string, 'approve' | 'skip'>) =>
+    post('/api/assistant/decisions', { decisions }) as Promise<AssistantState>,
+  assistantReset: () => j<AssistantState>('/api/assistant', { method: 'DELETE' }),
   household: () => j<HouseholdMember[]>('/api/household'),
   mealPlan: (from: string, to: string) => j<PlanItem[]>(`/api/meal-plan?${new URLSearchParams({ from, to })}`),
   addPlanItem: (item: PlanItemInput) => post('/api/meal-plan', item) as Promise<PlanItem>,

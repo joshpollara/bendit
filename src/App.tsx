@@ -19,6 +19,7 @@ import NutriScore from './screens/NutriScore';
 import Picnic from './screens/Picnic';
 import PicnicCheckout from './screens/PicnicCheckout';
 import Plan from './screens/Plan';
+import Assistant from './screens/Assistant';
 import Reports from './screens/Reports';
 import Menu from './screens/Menu';
 import Settings from './screens/Settings';
@@ -54,6 +55,7 @@ function Shell({ profile }: { profile: Profile }) {
             <Route path="/picnic" element={<Picnic />} />
             <Route path="/picnic/checkout" element={<PicnicCheckout />} />
             <Route path="/plan" element={<Plan profile={profile} />} />
+            <Route path="/assistant" element={<Assistant profile={profile} />} />
             <Route path="/more" element={<Menu />} />
             <Route path="/settings" element={<Settings profile={profile} />} />
             <Route path="/ai-usage" element={<AiUsage />} />
