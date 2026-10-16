@@ -15,6 +15,7 @@ import Weight from './screens/Weight';
 import Fasting from './screens/Fasting';
 import Foods from './screens/Foods';
 import Recipes from './screens/Recipes';
+import NutriScore from './screens/NutriScore';
 import Reports from './screens/Reports';
 import Menu from './screens/Menu';
 import Settings from './screens/Settings';
@@ -46,6 +47,7 @@ function Shell({ profile }: { profile: Profile }) {
             <Route path="/reports" element={<Reports profile={profile} />} />
             <Route path="/foods" element={<Foods />} />
             <Route path="/recipes" element={<Recipes />} />
+            <Route path="/nutri-score" element={<NutriScore />} />
             <Route path="/more" element={<Menu />} />
             <Route path="/settings" element={<Settings profile={profile} />} />
             <Route path="/ai-usage" element={<AiUsage />} />

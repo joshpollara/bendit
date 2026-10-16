@@ -533,3 +533,25 @@ describe('food counts', () => {
     expect(body).toMatchObject({ custom: expect.any(Number), openfoodfacts: expect.any(Number), usda: 0, seed: expect.any(Number) });
   });
 });
+
+describe('the Nutri-Score guide', () => {
+  it('lists the reference foods in one grade, with a count for each', async () => {
+    const { status, body } = await get('/api/nutri-score?grade=b');
+    expect(status).toBe(200);
+    expect(body.grade).toBe('B');
+    expect(body.foods.length).toBe(body.counts.B);
+    expect(body.counts.A + body.counts.C + body.counts.D + body.counts.E).toBeGreaterThan(0);
+    for (const food of body.foods) {
+      expect(food.grade).toBe('B');
+      expect(food.breakdown).toBeTruthy();
+    }
+  });
+
+  it('narrows by name, counts included', async () => {
+    const all = (await get('/api/nutri-score?grade=A')).body;
+    const { body } = await get('/api/nutri-score?grade=A&q=chicken');
+    const total = (c) => Object.values(c).reduce((a, b) => a + b, 0);
+    expect(total(body.counts)).toBeLessThan(total(all.counts));
+    for (const food of body.foods) expect(food.name.toLowerCase()).toContain('chicken');
+  });
+});

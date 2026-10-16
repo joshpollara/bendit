@@ -141,6 +141,15 @@ export const FlagIcon = (p: IconProps) => (
   </Svg>
 );
 
+export const GradeIcon = (p: IconProps) => (
+  <Svg {...p}>
+    <rect x="3.5" y="3.5" width="17" height="17" rx="3" />
+    <path d="M7.5 8h9" />
+    <path d="M7.5 12h6" />
+    <path d="M7.5 16h3" />
+  </Svg>
+);
+
 export const ListIcon = (p: IconProps) => (
   <Svg {...p}>
     <path d="M4 7h16M4 12h16M4 17h16" />

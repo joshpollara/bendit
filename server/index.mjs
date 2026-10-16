@@ -964,6 +964,43 @@ app.get('/api/foods/browse', (req, res) => {
   );
 });
 
+// The reference foods by Nutri-Score: the curated and USDA rows, which describe
+// a food rather than a product. Graded here rather than in SQL because each one
+// comes back with its breakdown — the points for and against it.
+app.get('/api/nutri-score', (req, res) => {
+  const q = String(req.query.q ?? '').trim();
+  const wanted = String(req.query.grade ?? 'A').toUpperCase();
+  const grade = /^[A-E]$/.test(wanted) ? wanted : 'A';
+  const rows = db
+    .prepare(
+      `SELECT id, name, servingLabel, basis, kcal100, protein100, fiber100, sugar100, satFat100,
+              sodiumMg100, fruitVeg, nutriGrade
+       FROM foods
+       WHERE source IN ('seed', 'usda') AND ownerId IS NULL ${q ? 'AND name LIKE ?' : ''}
+       ORDER BY name COLLATE NOCASE`,
+    )
+    .all(...(q ? [`%${q}%`] : []));
+
+  const counts = { A: 0, B: 0, C: 0, D: 0, E: 0 };
+  const foods = [];
+  for (const row of rows) {
+    const scored = nutriScore(row);
+    const rowGrade = row.nutriGrade ?? scored?.grade;
+    if (!rowGrade) continue;
+    counts[rowGrade]++;
+    if (rowGrade !== grade) continue;
+    const { nutriGrade, ...food } = row;
+    foods.push({
+      ...food,
+      grade: rowGrade,
+      published: nutriGrade != null,
+      score: scored?.score ?? null,
+      breakdown: scored?.breakdown ?? null,
+    });
+  }
+  res.json({ grade, counts, total: foods.length, foods: foods.slice(0, 500) });
+});
+
 app.get('/api/foods/counts', (req, res) => {
   const counts = { custom: 0, openfoodfacts: 0, usda: 0, seed: 0 };
   // The counts on the Foods screen should add up to what that screen lists,

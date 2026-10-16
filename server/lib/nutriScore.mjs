@@ -81,14 +81,11 @@ export function nutriScore(per100, { beverage = per100?.basis === 'ml' } = {}) {
   if (kcal == null || sugar == null || satFat == null || sodium == null) return null;
 
   const kj = kcal * KJ_PER_KCAL;
-  const negative =
-    points(kj, beverage ? DRINK_ENERGY : ENERGY) +
-    points(sugar, beverage ? DRINK_SUGARS : SUGARS) +
-    points(satFat, SAT_FAT) +
-    points(sodium, SODIUM_MG);
-
-  // Water is the only drink the system grades A, by name rather than by score.
-  if (beverage && kj === 0 && sugar === 0) return { score: 0, grade: 'A', computed: true };
+  const energyPoints = points(kj, beverage ? DRINK_ENERGY : ENERGY);
+  const sugarPoints = points(sugar, beverage ? DRINK_SUGARS : SUGARS);
+  const satFatPoints = points(satFat, SAT_FAT);
+  const sodiumPoints = points(sodium, SODIUM_MG);
+  const negative = energyPoints + sugarPoints + satFatPoints + sodiumPoints;
 
   const fibrePoints = points(num(per100?.fiber100) ?? 0, FIBRE);
   const proteinPoints = points(num(per100?.protein100) ?? 0, PROTEIN);
@@ -99,13 +96,27 @@ export function nutriScore(per100, { beverage = per100?.basis === 'ml' } = {}) {
   // Protein stops counting in its favour once a food is this far into the
   // negative — otherwise cured meat and hard cheese score like a salad. A food
   // that is mostly fruit or vegetable keeps it.
-  const positive =
-    negative >= 11 && fruitPoints < 5
-      ? fibrePoints + fruitPoints
-      : fibrePoints + proteinPoints + fruitPoints;
+  const proteinCounted = !(negative >= 11 && fruitPoints < 5);
+  const positive = fibrePoints + fruitPoints + (proteinCounted ? proteinPoints : 0);
+
+  // Each component's points, so a grade can be explained rather than only stated.
+  const breakdown = {
+    beverage,
+    energy: energyPoints,
+    sugars: sugarPoints,
+    satFat: satFatPoints,
+    sodium: sodiumPoints,
+    fibre: fibrePoints,
+    protein: proteinPoints,
+    proteinCounted,
+    fruitVeg: fruitPoints,
+  };
+
+  // Water is the only drink the system grades A, by name rather than by score.
+  if (beverage && kj === 0 && sugar === 0) return { score: 0, grade: 'A', computed: true, breakdown };
 
   const score = negative - positive;
-  return { score, grade: gradeFor(score, beverage), computed: true };
+  return { score, grade: gradeFor(score, beverage), computed: true, breakdown };
 }
 
 /** The order of the grades, worst last, for averaging and comparing. */
