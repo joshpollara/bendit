@@ -170,8 +170,60 @@ export interface WeekData {
   days: { date: string; food: number; exercise: number; entries: number }[];
 }
 
+/** A planned meal you haven't logged yet, as Today shows it. */
+export interface PlannedPortion {
+  itemId: string;
+  meal: Meal;
+  name: string;
+  foodId: string;
+  servings: number;
+  servingLabel: string;
+  calories: number;
+}
+
+export interface HouseholdMember {
+  id: string;
+  username: string;
+}
+
+export interface PlanItem {
+  id: string;
+  date: string;
+  meal: Meal;
+  foodId: string;
+  recipeId: string | null;
+  name: string;
+  servingLabel: string;
+  perServing: { calories: number; protein: number | null; carbs: number | null; fat: number | null };
+  portions: { userId: string; username: string; servings: number; logged: boolean }[];
+}
+
+export interface PlanItemInput {
+  date: string;
+  meal: Meal;
+  foodId?: string;
+  recipeId?: string;
+  portions: { userId: string; servings: number }[];
+}
+
+export interface ShoppingList {
+  listKey: string;
+  items: {
+    key: string;
+    name: string;
+    /** Total weight, where every use of it could be weighed. */
+    grams: number | null;
+    /** Amounts that couldn't be weighed, as written: "0.5 tsp". */
+    written: string[];
+    usedIn: string[];
+    checked: boolean;
+  }[];
+}
+
 export interface DayData {
   entries: JoinedEntry[];
+  /** Your portions from the household plan for this day, not yet logged. */
+  planned?: PlannedPortion[];
   exercises: ExerciseEntry[];
   latestWeightKg?: number;
   yesterdayMealCounts: Partial<Record<Meal, number>>;
@@ -530,6 +582,17 @@ export const api = {
   },
   nutriScoreGuide: (grade: NutriGrade, q: string) =>
     j<NutriScoreGuide>(`/api/nutri-score?${new URLSearchParams({ grade, q })}`),
+  household: () => j<HouseholdMember[]>('/api/household'),
+  mealPlan: (from: string, to: string) => j<PlanItem[]>(`/api/meal-plan?${new URLSearchParams({ from, to })}`),
+  addPlanItem: (item: PlanItemInput) => post('/api/meal-plan', item) as Promise<PlanItem>,
+  updatePlanItem: (id: string, changes: Partial<Pick<PlanItemInput, 'date' | 'meal' | 'portions'>>) =>
+    post(`/api/meal-plan/${encodeURIComponent(id)}`, changes, 'PATCH') as Promise<PlanItem>,
+  deletePlanItem: (id: string) => j<unknown>(`/api/meal-plan/${encodeURIComponent(id)}`, { method: 'DELETE' }),
+  logPlanItem: (id: string) => post(`/api/meal-plan/${encodeURIComponent(id)}/log`, {}),
+  shoppingList: (from: string, to: string) =>
+    j<ShoppingList>(`/api/shopping-list?${new URLSearchParams({ from, to })}`),
+  setShoppingCheck: (listKey: string, itemKey: string, checked: boolean) =>
+    post('/api/shopping-list/checks', { listKey, itemKey, checked }, 'PUT'),
   picnicStatus: () => j<PicnicStatus>('/api/picnic/status'),
   picnicConnect: () => post('/api/picnic/connect', {}) as Promise<PicnicStatus>,
   picnicVerify: (code: string) => post('/api/picnic/verify', { code }) as Promise<PicnicStatus>,

@@ -1,6 +1,6 @@
 import { useState } from "react";
 import { Link } from "react-router-dom";
-import { api, type JoinedEntry } from "../lib/api";
+import { api, type JoinedEntry, type PlannedPortion } from "../lib/api";
 import { useData } from "../lib/useData";
 import { computeBudget, remaining } from "../lib/budget";
 import { dayLabel, shiftDay, todayStr } from "../lib/dates";
@@ -307,10 +307,13 @@ function MealSection({
   yesterdayCount,
   grade,
   day,
+  planned,
 }: {
   meal: Meal;
   date: string;
   entries: JoinedEntry[];
+  /** Your portions of this meal from the household plan, not yet logged. */
+  planned: PlannedPortion[];
   yesterdayCount: number;
   grade?: MealGradeData | null;
   /** The whole day's standing, for measuring an edit against the rest of it. */
@@ -400,7 +403,29 @@ function MealSection({
               P {macros.protein} g · C {macros.carbs} g · F {macros.fat} g
             </div>
           )}
-          {entries.length === 0 ? (
+          {planned.length > 0 && (
+            <ul className="border-b border-line bg-surface/50">
+              {planned.map((p) => (
+                <li key={p.itemId} className="flex items-center gap-3 px-4 py-2.5">
+                  <div className="min-w-0 flex-1">
+                    <p className="truncate text-sm font-medium text-ink-secondary">{p.name}</p>
+                    <p className="truncate text-xs text-ink-muted">
+                      Planned · {round2(p.servings)} × {p.servingLabel}
+                    </p>
+                  </div>
+                  <span className="text-sm tabular-nums text-ink-muted">{formatCalories(p.calories)}</span>
+                  <button
+                    type="button"
+                    onClick={() => api.logPlanItem(p.itemId).then(bump)}
+                    className="rounded-full bg-accent-soft px-3 py-1 text-xs font-semibold text-accent"
+                  >
+                    Log
+                  </button>
+                </li>
+              ))}
+            </ul>
+          )}
+          {entries.length === 0 && planned.length > 0 ? null : entries.length === 0 ? (
             <div className="flex items-center justify-between gap-2 px-4 py-3">
               <p className="text-sm text-ink-muted">{STRINGS.emptyMeal}</p>
               {yesterdayCount > 0 && (
@@ -615,6 +640,7 @@ export default function Today({ profile }: { profile: Profile }) {
               yesterdayCount={yesterdayByMeal[meal] ?? 0}
               grade={day?.meals?.[meal]}
               day={standing}
+              planned={(day?.planned ?? []).filter((p) => p.meal === meal)}
             />
           ))}
 
