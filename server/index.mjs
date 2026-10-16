@@ -60,6 +60,7 @@ import {
   returnUrlFor,
   startCheckout,
 } from './lib/picnicCheckout.mjs';
+import { createHistoryTables, pastOrders, syncHistory, usuals } from './lib/picnicHistory.mjs';
 import {
   addItem as addPlanItem,
   createMealPlanTables,
@@ -1900,6 +1901,7 @@ app.put(
 const picnic = createPicnic({ db });
 createPicnicShoppingTables(db);
 createCheckoutTables(db);
+createHistoryTables(db);
 const suggestProduct = createSuggester((term) => picnic.search(term));
 
 /** An async handler whose PicnicErrors become a status and a code the client can act on. */
@@ -2039,6 +2041,41 @@ app.put(
     const slotId = String(req.body?.slotId ?? '');
     if (!slotId) throw new PlanError('slotId is required');
     return picnic.setSlot(slotId);
+  }),
+);
+
+// ——— Picnic: a new order ———
+//
+// Past orders and usuals to build the next one from. The history is brought up
+// to date when it's more than a few minutes old; see lib/picnicHistory.mjs.
+
+const HISTORY_FRESH_MS = 10 * 60 * 1000;
+let historySyncedAt = 0;
+let historySync = null;
+
+app.get(
+  '/api/picnic/new-order',
+  picnicRoute(async (req) => {
+    picnic.status().connected || picnicNotConnected();
+    if (req.query.refresh === '1' || Date.now() - historySyncedAt > HISTORY_FRESH_MS) {
+      // Two people opening the screen at once share one sync rather than racing.
+      historySync ??= syncHistory(db, picnic).finally(() => (historySync = null));
+      await historySync;
+      historySyncedAt = Date.now();
+    }
+    return { orders: pastOrders(db), usuals: usuals(db) };
+  }),
+);
+
+// A whole draft order into the cart, added to whatever is already there.
+app.post(
+  '/api/picnic/cart/bulk',
+  picnicRoute(async (req) => {
+    const items = (Array.isArray(req.body?.items) ? req.body.items : [])
+      .map((i) => ({ productId: String(i?.productId ?? ''), quantity: countOf(i?.quantity) }))
+      .filter((i) => /^s?\d+$/.test(i.productId));
+    if (items.length === 0) throw new PlanError('Nothing to add.');
+    return picnic.addProducts(items.slice(0, 200));
   }),
 );
 

@@ -1,6 +1,6 @@
 import { useEffect, useState } from 'react';
 import { format, parseISO } from 'date-fns';
-import { Link, useNavigate } from 'react-router-dom';
+import { Link, useNavigate, useSearchParams } from 'react-router-dom';
 import {
   api,
   ApiError,
@@ -523,7 +523,10 @@ function DeliveriesView() {
 export default function Picnic() {
   const navigate = useNavigate();
   const status = useData(() => api.picnicStatus(), []);
-  const [tab, setTab] = useState<'search' | 'cart' | 'orders'>('search');
+  const [params] = useSearchParams();
+  const [tab, setTab] = useState<'search' | 'cart' | 'orders'>(() =>
+    params.get('tab') === 'cart' ? 'cart' : params.get('tab') === 'orders' ? 'orders' : 'search',
+  );
   const [checkingOut, setCheckingOut] = useState(false);
   const [query, setQuery] = useState('');
   const [open, setOpen] = useState<{ id: string; name: string } | null>(null);
@@ -571,7 +574,15 @@ export default function Picnic() {
         >
           <ChevronLeftIcon className="h-5 w-5" />
         </button>
-        <h1 className="text-lg font-semibold md:px-2 lg:text-2xl lg:font-bold lg:tracking-tight">Picnic</h1>
+        <h1 className="flex-1 text-lg font-semibold md:px-2 lg:text-2xl lg:font-bold lg:tracking-tight">Picnic</h1>
+        {status?.connected && (
+          <Link
+            to="/picnic/new"
+            className="rounded-full bg-accent px-3.5 py-1.5 text-sm font-semibold text-white"
+          >
+            New order
+          </Link>
+        )}
       </header>
 
       {status && !ready ? (
