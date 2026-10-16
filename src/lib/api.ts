@@ -24,16 +24,24 @@ export class ApiError extends Error {
   code: string | null;
   status: number;
   retryAfterSeconds: number | null;
+  /** Anything else the server sent about the refusal, such as a Picnic checkout issue. */
+  details: Record<string, unknown> | null;
 
   constructor(
     message: string,
-    { code = null, status, retryAfterSeconds = null }: { code?: string | null; status: number; retryAfterSeconds?: number | null },
+    {
+      code = null,
+      status,
+      retryAfterSeconds = null,
+      details = null,
+    }: { code?: string | null; status: number; retryAfterSeconds?: number | null; details?: Record<string, unknown> | null },
   ) {
     super(message);
     this.name = 'ApiError';
     this.code = code;
     this.status = status;
     this.retryAfterSeconds = retryAfterSeconds;
+    this.details = details;
   }
 }
 
@@ -279,6 +287,46 @@ export interface PicnicDelivery {
   delivered: { start: string; end: string } | null;
   position: { eta: number; eta_window: { start: string; end: string } } | null;
   items: { id: string; name: string; unitQuantity: string; imageId: string | null; quantity: number }[];
+}
+
+export interface PicnicCheckoutSummary {
+  orderId: string;
+  /** Cents, deposit included. */
+  total: number;
+  count: number;
+  deposit: number;
+  savings: number;
+  expiresAt: string | null;
+  address: { street?: string; house_number?: number; postcode?: string; city?: string } | null;
+  slot: { start: string; end: string } | null;
+  minimumOrder: number | null;
+}
+
+/** Something in the cart Picnic wants dealt with before checkout. */
+export interface PicnicCheckoutIssue {
+  title: string;
+  message: string;
+  blocking: boolean;
+  resolveKey: string | null;
+}
+
+export interface PicnicCheckoutState {
+  orderId: string;
+  status: 'STARTED' | 'PAYING' | 'FINISHED' | 'PLACED' | 'CONFIRMED' | 'CANCELLED';
+  total: number | null;
+  startedAt: string;
+  paymentStatus?: string;
+  placed: boolean;
+}
+
+export interface PicnicPayment {
+  id: string;
+  status: string;
+  transaction_type: string;
+  amount_in_cents: number;
+  timestamp: number;
+  display_name: string;
+  account: string | null;
 }
 
 export interface DayData {
@@ -564,6 +612,7 @@ async function j<T>(path: string, init?: RequestInit): Promise<T> {
           status: res.status,
           retryAfterSeconds:
             typeof problem.retryAfterSeconds === 'number' ? problem.retryAfterSeconds : null,
+          details: problem.details && typeof problem.details === 'object' ? problem.details : null,
         },
       );
     }
@@ -664,6 +713,28 @@ export const api = {
     post('/api/shopping-list/picnic/cart', { from, to }) as Promise<{ added: number; cart: PicnicCart }>,
   picnicSlots: () => j<PicnicSlots>('/api/picnic/slots'),
   picnicSetSlot: (slotId: string) => post('/api/picnic/slot', { slotId }, 'PUT') as Promise<PicnicCart>,
+  picnicStartCheckout: (resolveKey?: string) =>
+    post('/api/picnic/checkout', resolveKey ? { resolveKey } : {}) as Promise<PicnicCheckoutSummary>,
+  picnicPay: (orderId: string) =>
+    post(`/api/picnic/checkout/${encodeURIComponent(orderId)}/pay`, { origin: window.location.origin }) as Promise<{
+      transactionId: string;
+      redirectUrl: string | null;
+    }>,
+  picnicCheckoutState: (orderId: string) =>
+    j<PicnicCheckoutState>(`/api/picnic/checkout/${encodeURIComponent(orderId)}`),
+  picnicCancelPayment: (orderId: string) =>
+    post(`/api/picnic/checkout/${encodeURIComponent(orderId)}/cancel`, {}) as Promise<PicnicCheckoutState>,
+  picnicConfirmOrder: (orderId: string) =>
+    post(`/api/picnic/checkout/${encodeURIComponent(orderId)}/confirm`, {}) as Promise<PicnicCheckoutState>,
+  picnicWallet: (page = 1) => j<PicnicPayment[]>(`/api/picnic/wallet?page=${page}`),
+  picnicWalletDetail: (id: string) =>
+    j<{ deliveryId: string | null; lines: { name: string; quantity: number; price: number | null }[] }>(
+      `/api/picnic/wallet/${encodeURIComponent(id)}`,
+    ),
+  picnicRate: (id: string, rating: number) =>
+    post(`/api/picnic/deliveries/${encodeURIComponent(id)}/rating`, { rating }, 'PUT'),
+  picnicCancelDelivery: (id: string) => post(`/api/picnic/deliveries/${encodeURIComponent(id)}/cancel`, {}),
+  picnicEmailInvoice: (id: string) => post(`/api/picnic/deliveries/${encodeURIComponent(id)}/invoice`, {}),
   picnicDeliveries: () => j<PicnicDeliverySummary[]>('/api/picnic/deliveries'),
   picnicDelivery: (id: string) => j<PicnicDelivery>(`/api/picnic/deliveries/${encodeURIComponent(id)}`),
   picnicStatus: () => j<PicnicStatus>('/api/picnic/status'),
