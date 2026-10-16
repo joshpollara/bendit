@@ -258,6 +258,13 @@ export function createAssistant({ db, picnic, model, dailyLimit = 300 }) {
           targets: context?.targets ?? null,
           picnicConnected: picnic.status().connected,
         });
+        // A question the model never answered — it timed out, say — is replaced
+        // rather than followed by a second one in a row.
+        const last = chat.contents.at(-1);
+        if (last?.role === 'user' && last.parts?.every((p) => typeof p.text === 'string')) {
+          chat.contents.pop();
+          if (chat.log.at(-1)?.role === 'user') chat.log.pop();
+        }
         chat.contents.push({ role: 'user', parts: [{ text: message }] });
         chat.log.push({ role: 'user', text: message });
         try {
