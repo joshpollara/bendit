@@ -36,6 +36,8 @@ import {
   createRecipeRoutes,
 } from './lib/recipeRoute.mjs';
 import { createRecipeTables } from './lib/recipeStore.mjs';
+import { createPicnic, PicnicError } from './lib/picnic.mjs';
+import { picnicFood } from './lib/picnicNutrition.mjs';
 import { createVisionExtractHandler } from './lib/visionRoute.mjs';
 import { createVisionUsageHandler } from './lib/visionUsage.mjs';
 import webpush from 'web-push';
@@ -958,9 +960,11 @@ app.get('/api/foods/browse', (req, res) => {
     where.push('(f.name LIKE ? OR f.brand LIKE ?)');
     params.push(`%${q}%`, `%${q}%`);
   }
-  if (source) {
-    where.push('f.source = ?');
-    params.push(source);
+  // One source, or several separated by commas: "Packaged" is two of them.
+  const sources = String(source ?? '').split(',').filter(Boolean);
+  if (sources.length) {
+    where.push(`f.source IN (${sources.map(() => '?').join(', ')})`);
+    params.push(...sources);
   }
   const outer = [];
   if (grades.length) {
@@ -1037,7 +1041,7 @@ app.get('/api/nutri-score', (req, res) => {
 });
 
 app.get('/api/foods/counts', (req, res) => {
-  const counts = { custom: 0, openfoodfacts: 0, usda: 0, seed: 0 };
+  const counts = { custom: 0, openfoodfacts: 0, usda: 0, seed: 0, picnic: 0 };
   // The counts on the Foods screen should add up to what that screen lists,
   // which is the shared data plus this user's own.
   for (const row of db
@@ -1805,6 +1809,96 @@ app.post('/api/recipes/price', createRecipePriceHandler({ db }));
 app.post('/api/recipes/from-url', createRecipeFromUrlHandler({ db, visionHandler }));
 app.post('/api/recipes/from-photo', bigJson, createRecipeFromPhotoHandler({ db, visionHandler }));
 
+// ——— Picnic ———
+//
+// Groceries from Picnic, on the one account this installation is configured
+// with. See lib/picnic.mjs for how the session is kept.
+
+const picnic = createPicnic({ db });
+
+/** An async handler whose PicnicErrors become a status and a code the client can act on. */
+const picnicRoute = (fn) => async (req, res) => {
+  try {
+    res.json(await fn(req));
+  } catch (error) {
+    if (error instanceof PicnicError) {
+      return res.status(error.status).json({ error: { message: error.message, code: error.code } });
+    }
+    console.error('picnic route failed:', error);
+    res.status(500).json({ error: 'Something went wrong talking to Picnic.' });
+  }
+};
+
+/** A product count from a request: a whole number from 1 to 50, or 1. */
+const countOf = (value) => {
+  const n = Number(value ?? 1);
+  return Number.isInteger(n) && n >= 1 && n <= 50 ? n : 1;
+};
+
+app.get('/api/picnic/status', (req, res) => res.json(picnic.status()));
+app.post('/api/picnic/connect', picnicRoute(() => picnic.connect()));
+app.post('/api/picnic/verify', picnicRoute((req) => picnic.verify(req.body?.code ?? '')));
+app.post('/api/picnic/disconnect', picnicRoute(() => picnic.disconnect()));
+
+app.get(
+  '/api/picnic/search',
+  picnicRoute((req) => {
+    const q = String(req.query.q ?? '').trim();
+    return q ? picnic.search(q) : [];
+  }),
+);
+// The details, plus the food they'd make: null when the page has no nutrition
+// to read, which is most fresh produce.
+app.get(
+  '/api/picnic/products/:id',
+  picnicRoute(async (req) => {
+    const details = await picnic.product(req.params.id);
+    return { ...details, food: picnicFood(details, { name: String(req.query.name ?? '') }) };
+  }),
+);
+
+// Into the food database, shared like any packaged product. Picnic's details
+// page comes back without the product's name, so the caller sends the one
+// search showed.
+app.post(
+  '/api/picnic/products/:id/food',
+  picnicRoute(async (req) => {
+    const details = await picnic.product(req.params.id);
+    const food = picnicFood(details, { name: String(req.body?.name ?? '').trim() });
+    if (!food) {
+      throw new PicnicError('no_nutrition', 'Picnic lists no nutrition for this product.', { status: 422 });
+    }
+    saveFood({ ...food, ownerId: null });
+    return db.prepare('SELECT * FROM foods WHERE id = ?').get(food.id);
+  }),
+);
+
+const IMAGE_SIZES = new Set(['tiny', 'small', 'medium', 'large', 'extra-large']);
+app.get('/api/picnic/images/:id/:size', async (req, res) => {
+  const { id, size } = req.params;
+  if (!/^[A-Za-z0-9_-]+$/.test(id) || !IMAGE_SIZES.has(size)) return res.status(400).end();
+  try {
+    const image = await picnic.image(id, size);
+    // Product images don't change under an id, so the browser can keep them.
+    res.set('Content-Type', 'image/png');
+    res.set('Cache-Control', 'private, max-age=604800, immutable');
+    res.send(Buffer.from(new Uint8Array(image)));
+  } catch (error) {
+    res.status(error instanceof PicnicError ? error.status : 502).end();
+  }
+});
+
+app.get('/api/picnic/cart', picnicRoute(() => picnic.cart()));
+app.post(
+  '/api/picnic/cart',
+  picnicRoute((req) => picnic.addToCart(String(req.body?.productId ?? ''), countOf(req.body?.count))),
+);
+app.delete(
+  '/api/picnic/cart/:productId',
+  picnicRoute((req) => picnic.removeFromCart(req.params.productId, countOf(req.query.count))),
+);
+app.delete('/api/picnic/cart', picnicRoute(() => picnic.clearCart()));
+
 // ——— progress photos ———
 
 const photoPath = (id) => path.join(PHOTOS_DIR, `${id}.jpg`);
@@ -2117,6 +2211,10 @@ app.get('/api/backup', async (req, res) => {
   const tmp = path.join(os.tmpdir(), `bendit-backup-${Date.now()}.db`);
   try {
     await db.backup(tmp);
+    // The Picnic session is a sign-in to a shop, not data; it stays on the server.
+    const copy = new Database(tmp);
+    copy.exec('DELETE FROM picnic_session');
+    copy.close();
   } catch (err) {
     console.error('backup failed:', err?.message ?? err);
     return res.status(500).json({ error: 'Could not copy the database.' });

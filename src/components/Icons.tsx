@@ -150,6 +150,14 @@ export const GradeIcon = (p: IconProps) => (
   </Svg>
 );
 
+export const BasketIcon = (p: IconProps) => (
+  <Svg {...p}>
+    <path d="M4 9h16l-1.5 10.5a1.5 1.5 0 0 1-1.5 1.5H7a1.5 1.5 0 0 1-1.5-1.5L4 9z" />
+    <path d="M8.5 9l3.5-5 3.5 5" />
+    <path d="M9.5 13v4M14.5 13v4" />
+  </Svg>
+);
+
 export const ListIcon = (p: IconProps) => (
   <Svg {...p}>
     <path d="M4 7h16M4 12h16M4 17h16" />

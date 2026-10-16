@@ -6,6 +6,7 @@ import { useTheme, type ThemeMode } from '../store/theme';
 import NumberInput from '../components/NumberInput';
 import PasswordChange from '../components/PasswordChange';
 import ReminderSetting from '../components/ReminderSetting';
+import PicnicSetting from '../components/PicnicSetting';
 import { computeBudget, suggestedMacros } from '../lib/budget';
 import { todayStr } from '../lib/dates';
 import { cmToFtIn, ftInToCm, formatCalories, kgToLb, lbToKg } from '../lib/units';
@@ -293,6 +294,10 @@ export default function Settings({ profile }: { profile: Profile }) {
 
       <section className={card}>
         <ReminderSetting profile={profile} />
+      </section>
+
+      <section className={card}>
+        <PicnicSetting />
       </section>
 
       <section className={card}>
