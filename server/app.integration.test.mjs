@@ -547,6 +547,13 @@ describe('the Nutri-Score guide', () => {
     }
   });
 
+  it('grades the built-in bacon from bacon, not from meatless bacon bits', async () => {
+    const { body } = await get('/api/nutri-score?grade=E&q=bacon');
+    const bacon = body.foods.find((f) => f.name === 'Bacon');
+    expect(bacon.fiber100).toBe(0);
+    expect(bacon.grade).toBe('E');
+  });
+
   it('narrows by name, counts included', async () => {
     const all = (await get('/api/nutri-score?grade=A')).body;
     const { body } = await get('/api/nutri-score?grade=A&q=chicken');

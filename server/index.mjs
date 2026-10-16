@@ -414,6 +414,41 @@ if (seedCount > 0) {
     }
   })();
   if (filled > 0) console.log(`Filled nutrients on ${filled} curated foods`);
+
+  // The fill above never overwrites, which is right for a gap and wrong for a
+  // figure that was itself a mistake: it would stay in every existing database
+  // however often the shipped file was corrected. Built-in foods can't be
+  // edited, so the shipped file is their only authority — when this version
+  // moves, their grading nutrients are taken from it again.
+  //
+  // 2: bacon had been matched to USDA's meatless bacon bits, and carried 10 g
+  //    of fibre per 100 g.
+  const SEED_NUTRIENTS_VERSION = '2';
+  const applied = db.prepare("SELECT value FROM schema_meta WHERE key = 'seed_nutrients'").get()?.value;
+  if (applied !== SEED_NUTRIENTS_VERSION) {
+    const correct = db.prepare(
+      `UPDATE foods SET sugar100 = @sugar100, satFat100 = @satFat100, sodiumMg100 = @sodiumMg100,
+         fiber100 = @fiber100, fruitVeg = @fruitVeg
+       WHERE id = @id AND source = 'seed'`,
+    );
+    db.transaction(() => {
+      for (const seed of shipped) {
+        const per100 = per100FromServing(seed) ?? {};
+        correct.run({
+          id: seed.id,
+          sugar100: per100.sugar100 ?? null,
+          satFat100: per100.satFat100 ?? null,
+          sodiumMg100: per100.sodiumMg100 ?? null,
+          fiber100: per100.fiber100 ?? null,
+          fruitVeg: seed.fruitVeg ?? null,
+        });
+      }
+      db.prepare("INSERT OR REPLACE INTO schema_meta (key, value) VALUES ('seed_nutrients', ?)").run(
+        SEED_NUTRIENTS_VERSION,
+      );
+    })();
+    console.log('Corrected nutrients on curated foods');
+  }
 }
 
 if (seedCount === 0) {
