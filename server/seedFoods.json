@@ -743,10 +743,10 @@
     "id": "seed-046",
     "source": "seed",
     "sugar": 0,
-    "satFat": 0.6,
-    "sodiumMg": 283.2,
-    "fiber": 1.6,
-    "nutrientSource": "usda:169893"
+    "satFat": 2.3,
+    "sodiumMg": 350.4,
+    "fiber": 0,
+    "nutrientSource": "usda:167914"
   },
   {
     "name": "Pork chop, boneless, cooked",

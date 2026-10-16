@@ -16,6 +16,17 @@ const food = (kcal100, sugar100, satFat100, sodiumMg100, fiber100 = 0, protein10
 });
 
 describe('nutriScore', () => {
+  it('explains its score: the points against, less the points for', () => {
+    // Cheddar: energy, saturated fat and salt against it; protein is not
+    // counted once that much is against it.
+    const { score, breakdown } = nutriScore(food(403, 0.5, 21, 620, 0, 25));
+    const against = breakdown.energy + breakdown.sugars + breakdown.satFat + breakdown.sodium;
+    const forIt = breakdown.fibre + breakdown.fruitVeg + (breakdown.proteinCounted ? breakdown.protein : 0);
+    expect(against).toBeGreaterThanOrEqual(11);
+    expect(breakdown.proteinCounted).toBe(false);
+    expect(score).toBe(against - forIt);
+  });
+
   it('grades a plain vegetable well', () => {
     // Broccoli, raw: 34 kcal, 1.7 sugar, 0.04 sat fat, 33 mg sodium.
     expect(nutriScore(food(34, 1.7, 0.04, 33, 2.6, 2.8)).grade).toBe('A');

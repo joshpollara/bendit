@@ -54,6 +54,47 @@ export interface BrowsedFood extends Food {
 
 export type NutriGrade = 'A' | 'B' | 'C' | 'D' | 'E';
 
+/** Points for each part of the Nutri-Score, as the published algorithm counts them. */
+export interface NutriBreakdown {
+  /** Drinks are scored on stricter energy and sugar tables. */
+  beverage: boolean;
+  energy: number;
+  sugars: number;
+  satFat: number;
+  sodium: number;
+  fibre: number;
+  protein: number;
+  /** False once 11 or more points count against a food that isn't mostly fruit or veg. */
+  proteinCounted: boolean;
+  fruitVeg: number;
+}
+
+export interface GradedFood {
+  id: string;
+  name: string;
+  servingLabel: string;
+  basis: 'g' | 'ml';
+  kcal100: number | null;
+  protein100: number | null;
+  fiber100: number | null;
+  sugar100: number | null;
+  satFat100: number | null;
+  sodiumMg100: number | null;
+  fruitVeg: number | null;
+  grade: NutriGrade;
+  /** The source states this grade, rather than it being computed here. */
+  published: boolean;
+  score: number | null;
+  breakdown: NutriBreakdown | null;
+}
+
+export interface NutriScoreGuide {
+  grade: NutriGrade;
+  counts: Record<NutriGrade, number>;
+  total: number;
+  foods: GradedFood[];
+}
+
 export type FoodSort = 'default' | 'grade' | 'grade-desc';
 
 export type FoodCounts = Record<Food['source'], number>;
@@ -431,6 +472,8 @@ export const api = {
     if (sort !== 'default') params.set('sort', sort);
     return j<BrowsedFood[]>(`/api/foods/browse?${params}`);
   },
+  nutriScoreGuide: (grade: NutriGrade, q: string) =>
+    j<NutriScoreGuide>(`/api/nutri-score?${new URLSearchParams({ grade, q })}`),
   foodCounts: () => j<FoodCounts>('/api/foods/counts'),
   deleteFood: (id: string) => j<unknown>(`/api/foods/${encodeURIComponent(id)}`, { method: 'DELETE' }),
 

@@ -414,6 +414,41 @@ if (seedCount > 0) {
     }
   })();
   if (filled > 0) console.log(`Filled nutrients on ${filled} curated foods`);
+
+  // The fill above never overwrites, which is right for a gap and wrong for a
+  // figure that was itself a mistake: it would stay in every existing database
+  // however often the shipped file was corrected. Built-in foods can't be
+  // edited, so the shipped file is their only authority — when this version
+  // moves, their grading nutrients are taken from it again.
+  //
+  // 2: bacon had been matched to USDA's meatless bacon bits, and carried 10 g
+  //    of fibre per 100 g.
+  const SEED_NUTRIENTS_VERSION = '2';
+  const applied = db.prepare("SELECT value FROM schema_meta WHERE key = 'seed_nutrients'").get()?.value;
+  if (applied !== SEED_NUTRIENTS_VERSION) {
+    const correct = db.prepare(
+      `UPDATE foods SET sugar100 = @sugar100, satFat100 = @satFat100, sodiumMg100 = @sodiumMg100,
+         fiber100 = @fiber100, fruitVeg = @fruitVeg
+       WHERE id = @id AND source = 'seed'`,
+    );
+    db.transaction(() => {
+      for (const seed of shipped) {
+        const per100 = per100FromServing(seed) ?? {};
+        correct.run({
+          id: seed.id,
+          sugar100: per100.sugar100 ?? null,
+          satFat100: per100.satFat100 ?? null,
+          sodiumMg100: per100.sodiumMg100 ?? null,
+          fiber100: per100.fiber100 ?? null,
+          fruitVeg: seed.fruitVeg ?? null,
+        });
+      }
+      db.prepare("INSERT OR REPLACE INTO schema_meta (key, value) VALUES ('seed_nutrients', ?)").run(
+        SEED_NUTRIENTS_VERSION,
+      );
+    })();
+    console.log('Corrected nutrients on curated foods');
+  }
 }
 
 if (seedCount === 0) {
@@ -962,6 +997,43 @@ app.get('/api/foods/browse', (req, res) => {
       )
       .all(...params),
   );
+});
+
+// The reference foods by Nutri-Score: the curated and USDA rows, which describe
+// a food rather than a product. Graded here rather than in SQL because each one
+// comes back with its breakdown — the points for and against it.
+app.get('/api/nutri-score', (req, res) => {
+  const q = String(req.query.q ?? '').trim();
+  const wanted = String(req.query.grade ?? 'A').toUpperCase();
+  const grade = /^[A-E]$/.test(wanted) ? wanted : 'A';
+  const rows = db
+    .prepare(
+      `SELECT id, name, servingLabel, basis, kcal100, protein100, fiber100, sugar100, satFat100,
+              sodiumMg100, fruitVeg, nutriGrade
+       FROM foods
+       WHERE source IN ('seed', 'usda') AND ownerId IS NULL ${q ? 'AND name LIKE ?' : ''}
+       ORDER BY name COLLATE NOCASE`,
+    )
+    .all(...(q ? [`%${q}%`] : []));
+
+  const counts = { A: 0, B: 0, C: 0, D: 0, E: 0 };
+  const foods = [];
+  for (const row of rows) {
+    const scored = nutriScore(row);
+    const rowGrade = row.nutriGrade ?? scored?.grade;
+    if (!rowGrade) continue;
+    counts[rowGrade]++;
+    if (rowGrade !== grade) continue;
+    const { nutriGrade, ...food } = row;
+    foods.push({
+      ...food,
+      grade: rowGrade,
+      published: nutriGrade != null,
+      score: scored?.score ?? null,
+      breakdown: scored?.breakdown ?? null,
+    });
+  }
+  res.json({ grade, counts, total: foods.length, foods: foods.slice(0, 500) });
 });
 
 app.get('/api/foods/counts', (req, res) => {
