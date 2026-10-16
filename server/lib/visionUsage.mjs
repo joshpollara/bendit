@@ -123,6 +123,9 @@ export function summarizeVisionUsage(rows, { today, dailyLimit, model, provider,
     windows[key] = { label, from: from || null, ...tally(rows.filter((r) => r.createdAt >= from)) };
   }
 
+  // The daily limit is for photo reads; the assistant's calls have a ceiling of their own.
+  const photoReadsToday = tally(rows.filter((r) => r.createdAt >= today && r.task !== 'assistant')).calls;
+
   const recentFrom = shiftDate(today, -(BREAKDOWN_DAYS - 1));
   const recent = rows.filter((row) => row.createdAt >= recentFrom);
   const newestFirst = [...rows].sort((a, b) => (a.createdAt < b.createdAt ? 1 : -1));
@@ -132,8 +135,8 @@ export function summarizeVisionUsage(rows, { today, dailyLimit, model, provider,
     model,
     configured,
     dailyLimit,
-    usedToday: windows.today.calls,
-    remainingToday: Math.max(0, dailyLimit - windows.today.calls),
+    usedToday: photoReadsToday,
+    remainingToday: Math.max(0, dailyLimit - photoReadsToday),
     prices: MODEL_PRICES,
     windows,
     breakdownDays: BREAKDOWN_DAYS,

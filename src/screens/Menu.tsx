@@ -1,5 +1,5 @@
 import { Link } from 'react-router-dom';
-import { BasketIcon, BookIcon, CalendarIcon, ChevronRightIcon, ChipIcon, ClockIcon, GradeIcon, ListIcon, MoreIcon } from '../components/Icons';
+import { BasketIcon, BookIcon, CalendarIcon, ChatIcon, ChevronRightIcon, ChipIcon, ClockIcon, GradeIcon, ListIcon, MoreIcon } from '../components/Icons';
 
 // The rest of the app, for phones. On a wide screen these sit in the sidebar;
 // on a narrow one there is no room for them in a five-tab bar, so they live
@@ -8,6 +8,7 @@ import { BasketIcon, BookIcon, CalendarIcon, ChevronRightIcon, ChipIcon, ClockIc
 const ITEMS = [
   { to: '/fasting', label: 'Fasting', hint: 'The clock, your goal, and past fasts', icon: ClockIcon },
   { to: '/foods', label: 'Foods', hint: 'The food database, and the ones you added', icon: ListIcon },
+  { to: '/assistant', label: 'Assistant', hint: 'Ask about meals, plans and groceries', icon: ChatIcon },
   { to: '/plan', label: 'Plan', hint: 'The week’s meals, and the shopping list', icon: CalendarIcon },
   { to: '/picnic', label: 'Picnic', hint: 'Search groceries, and your cart', icon: BasketIcon },
   { to: '/nutri-score', label: 'Nutri-Score', hint: 'Common foods by grade, and what decides it', icon: GradeIcon },

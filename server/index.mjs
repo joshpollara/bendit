@@ -37,6 +37,9 @@ import {
   createRecipeRoutes,
 } from './lib/recipeRoute.mjs';
 import { createRecipeTables } from './lib/recipeStore.mjs';
+import { createAssistant, createAssistantTables } from './lib/assistant.mjs';
+import { createChatModel } from './lib/geminiChat.mjs';
+import { ToolError } from './lib/assistantTools.mjs';
 import { createPicnic, PicnicError } from './lib/picnic.mjs';
 import { picnicFood } from './lib/picnicNutrition.mjs';
 import {
@@ -354,6 +357,7 @@ function widenKey(table, hasOldKey, create, columns) {
 // owner and are visible to nobody — there is no sensible person to give them
 // to, and guessing would hand one user another's history.
 createMealPlanTables(db);
+createAssistantTables(db);
 for (const table of USER_TABLES) ensureColumns(table, { userId: 'TEXT' });
 
 widenKey(
@@ -2137,6 +2141,46 @@ app.get(
     };
   }),
 );
+
+// ——— assistant ———
+//
+// A conversation with the model about the household's food, planning and
+// Picnic. Changes it proposes wait for the person to approve them. See
+// lib/assistant.mjs.
+
+const assistant = createAssistant({
+  db,
+  picnic,
+  model: createChatModel(),
+  dailyLimit: Number(process.env.ASSISTANT_DAILY_LIMIT ?? 300),
+});
+
+const ASSISTANT_STATUS = { unconfigured: 503, quota_exceeded: 429, rate_limited: 429, timeout: 504 };
+
+const assistantRoute = (fn) => async (req, res) => {
+  try {
+    res.json(await fn(req));
+  } catch (error) {
+    if (error instanceof ToolError) return res.status(409).json({ error: { message: error.message } });
+    if (error?.name === 'VisionError') {
+      return res
+        .status(ASSISTANT_STATUS[error.code] ?? 502)
+        .json({ error: { code: error.code, message: error.code === 'quota_exceeded' ? error.message : 'The assistant could not answer just now.' } });
+    }
+    console.error('assistant failed:', error);
+    res.status(500).json({ error: { message: 'Something went wrong.' } });
+  }
+};
+
+app.get('/api/assistant', (req, res) =>
+  res.json({ ...assistant.state(req.userId), configured: assistant.model.configured }),
+);
+app.post(
+  '/api/assistant/messages',
+  assistantRoute((req) => assistant.send(req.userId, req.body?.text, req.body?.context)),
+);
+app.post('/api/assistant/decisions', assistantRoute((req) => assistant.decide(req.userId, req.body?.decisions)));
+app.delete('/api/assistant', (req, res) => res.json(assistant.reset(req.userId)));
 
 // ——— progress photos ———
 
