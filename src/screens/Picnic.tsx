@@ -15,6 +15,7 @@ import { useData } from '../lib/useData';
 import { ChevronLeftIcon, PlusIcon, SearchIcon } from '../components/Icons';
 import Sheet from '../components/Sheet';
 import { euros, Thumb, useSettled } from '../components/PicnicBits';
+import CheckoutSheet from '../components/PicnicCheckout';
 
 const quantityOf = (article: PicnicCartArticle) =>
   article.decorators?.find((d) => d.type === 'QUANTITY')?.quantity ?? 1;
@@ -292,9 +293,22 @@ const STATUS_LABEL: Record<string, string> = {
 function DeliverySheet({ id, onClose }: { id: string; onClose: () => void }) {
   const [delivery, setDelivery] = useState<PicnicDelivery>();
   const [error, setError] = useState<string | null>(null);
+  const [notice, setNotice] = useState<string | null>(null);
+  const [rating, setRating] = useState<number | null>(null);
   useEffect(() => {
     api.picnicDelivery(id).then(setDelivery, (err) => setError(err.message));
   }, [id]);
+
+  async function act(action: () => Promise<unknown>, done: string) {
+    setError(null);
+    setNotice(null);
+    try {
+      await action();
+      setNotice(done);
+    } catch (err) {
+      setError(err instanceof Error ? err.message : 'Something went wrong.');
+    }
+  }
 
   return (
     <Sheet onClose={onClose}>
@@ -322,7 +336,55 @@ function DeliverySheet({ id, onClose }: { id: string; onClose: () => void }) {
               )
             )}
           </div>
-          <ul className="max-h-[55vh] divide-y divide-line overflow-y-auto">
+          {delivery.status === 'COMPLETED' && (
+            <div>
+              <p className="mb-1 text-xs font-medium text-ink-muted">Rate this delivery</p>
+              <div className="grid grid-cols-11 gap-0.5">
+                {Array.from({ length: 11 }, (_, n) => (
+                  <button
+                    key={n}
+                    type="button"
+                    onClick={() => {
+                      setRating(n);
+                      void act(() => api.picnicRate(delivery.id, n), `Rated ${n} out of 10.`);
+                    }}
+                    className={`rounded-md py-1.5 text-xs tabular-nums ${
+                      rating === n ? 'bg-accent text-white' : 'bg-surface text-ink-secondary'
+                    }`}
+                  >
+                    {n}
+                  </button>
+                ))}
+              </div>
+            </div>
+          )}
+          <div className="flex gap-2">
+            {delivery.status === 'COMPLETED' && (
+              <button
+                type="button"
+                onClick={() => act(() => api.picnicEmailInvoice(delivery.id), 'Picnic is emailing the invoice.')}
+                className="flex-1 rounded-xl border border-line py-2 text-sm font-semibold text-ink-secondary"
+              >
+                Email invoice
+              </button>
+            )}
+            {delivery.status === 'CURRENT' && (
+              <button
+                type="button"
+                onClick={() => {
+                  if (window.confirm('Cancel this delivery?')) {
+                    void act(() => api.picnicCancelDelivery(delivery.id), 'Delivery cancelled.');
+                  }
+                }}
+                className="flex-1 rounded-xl border border-line py-2 text-sm font-semibold text-over"
+              >
+                Cancel delivery
+              </button>
+            )}
+          </div>
+          {notice && <p className="text-sm text-good">{notice}</p>}
+          {error && <p className="text-sm text-over">{error}</p>}
+          <ul className="max-h-[45vh] divide-y divide-line overflow-y-auto">
             {delivery.items.map((item) => (
               <li key={item.id} className="flex items-center gap-3 py-2">
                 <Thumb id={item.imageId} size="h-10 w-10" />
@@ -340,7 +402,96 @@ function DeliverySheet({ id, onClose }: { id: string; onClose: () => void }) {
   );
 }
 
+function PaymentsView() {
+  const [page, setPage] = useState(1);
+  const payments = useData(() => api.picnicWallet(page), [page]);
+  const [open, setOpen] = useState<string | null>(null);
+  const detail = useData(() => (open ? api.picnicWalletDetail(open) : Promise.resolve(null)), [open]);
+  if (!payments) return <p className="px-4 py-6 text-center text-sm text-ink-muted">Loading…</p>;
+  return (
+    <>
+      <ul>
+        {payments.map((p) => (
+          <li key={p.id} className="border-b border-line last:border-b-0">
+            <button
+              type="button"
+              onClick={() => setOpen(p.id)}
+              className="flex w-full items-center gap-3 px-4 py-2.5 text-left hover:bg-surface"
+            >
+              <span className="min-w-0 flex-1">
+                <span className="block truncate text-sm font-medium">
+                  {format(new Date(p.timestamp), 'EEE d MMM yyyy')}
+                </span>
+                <span className="block truncate text-xs text-ink-muted">
+                  {p.display_name}
+                  {p.account ? ` ${p.account}` : ''} · {p.status === 'PAID' ? 'Paid' : p.status.toLowerCase()}
+                </span>
+              </span>
+              <span className={`text-sm tabular-nums ${p.transaction_type === 'REFUND' ? 'text-good' : ''}`}>
+                {p.transaction_type === 'REFUND' ? '+' : ''}
+                {euros(p.amount_in_cents)}
+              </span>
+            </button>
+          </li>
+        ))}
+      </ul>
+      <div className="flex justify-between px-4 py-2.5 text-sm">
+        <button type="button" disabled={page === 1} onClick={() => setPage(page - 1)} className="text-accent disabled:opacity-30">
+          Newer
+        </button>
+        <button
+          type="button"
+          disabled={payments.length === 0}
+          onClick={() => setPage(page + 1)}
+          className="text-accent disabled:opacity-30"
+        >
+          Older
+        </button>
+      </div>
+      {open && (
+        <Sheet onClose={() => setOpen(null)}>
+          <h2 className="mb-3 text-lg font-semibold">Payment</h2>
+          {!detail ? (
+            <p className="text-sm text-ink-muted">Loading…</p>
+          ) : (
+            <ul className="max-h-[60vh] divide-y divide-line overflow-y-auto">
+              {detail.lines.map((line, i) => (
+                <li key={i} className="flex items-center gap-3 py-2 text-sm">
+                  <span className="min-w-0 flex-1 truncate">{line.name}</span>
+                  <span className="text-ink-muted">× {line.quantity}</span>
+                  <span className="w-16 text-right tabular-nums">{line.price != null ? euros(line.price) : ''}</span>
+                </li>
+              ))}
+            </ul>
+          )}
+        </Sheet>
+      )}
+    </>
+  );
+}
+
 function OrdersView() {
+  const [view, setView] = useState<'deliveries' | 'payments'>('deliveries');
+  return (
+    <>
+      <div className="grid grid-cols-2 border-b border-line text-center text-xs font-semibold">
+        {(['deliveries', 'payments'] as const).map((v) => (
+          <button
+            key={v}
+            type="button"
+            onClick={() => setView(v)}
+            className={`py-2.5 ${view === v ? 'text-accent' : 'text-ink-muted'}`}
+          >
+            {v === 'deliveries' ? 'Deliveries' : 'Payments'}
+          </button>
+        ))}
+      </div>
+      {view === 'deliveries' ? <DeliveriesView /> : <PaymentsView />}
+    </>
+  );
+}
+
+function DeliveriesView() {
   const deliveries = useData(() => api.picnicDeliveries(), []);
   const [open, setOpen] = useState<string | null>(null);
   if (!deliveries) return <p className="px-4 py-6 text-center text-sm text-ink-muted">Loading…</p>;
@@ -373,6 +524,7 @@ export default function Picnic() {
   const navigate = useNavigate();
   const status = useData(() => api.picnicStatus(), []);
   const [tab, setTab] = useState<'search' | 'cart' | 'orders'>('search');
+  const [checkingOut, setCheckingOut] = useState(false);
   const [query, setQuery] = useState('');
   const [open, setOpen] = useState<{ id: string; name: string } | null>(null);
   const [cart, setCart] = useState<PicnicCart>();
@@ -516,6 +668,17 @@ export default function Picnic() {
             <div className="mx-4 mt-3 overflow-hidden rounded-2xl border border-line bg-card shadow-sm lg:mx-0">
               <SlotSection onChanged={() => api.picnicCart().then(setCart)} />
               <CartView cart={cart} onChange={changeCart} />
+              {cart && cart.total_count > 0 && (
+                <div className="border-t border-line p-3">
+                  <button
+                    type="button"
+                    onClick={() => setCheckingOut(true)}
+                    className="w-full rounded-xl bg-accent py-2.5 text-sm font-semibold text-white"
+                  >
+                    Check out · {euros(cart.checkout_total_price)}
+                  </button>
+                </div>
+              )}
             </div>
           ) : (
             <div className="mx-4 mt-3 overflow-hidden rounded-2xl border border-line bg-card shadow-sm lg:mx-0">
@@ -525,6 +688,7 @@ export default function Picnic() {
         </>
       )}
 
+      {checkingOut && <CheckoutSheet onClose={() => setCheckingOut(false)} />}
       {open && (
         <ProductSheet
           id={open.id}

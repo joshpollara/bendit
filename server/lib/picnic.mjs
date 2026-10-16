@@ -18,11 +18,12 @@ import crypto from 'node:crypto';
 import PicnicClient from 'picnic-api';
 
 export class PicnicError extends Error {
-  constructor(code, message, { status = 502 } = {}) {
+  constructor(code, message, { status = 502, details = null } = {}) {
     super(message);
     this.name = 'PicnicError';
     this.code = code;
     this.status = status;
+    this.details = details;
   }
 }
 
@@ -101,6 +102,19 @@ export function createPicnic({ db, env = process.env, Client = PicnicClient }) {
       return await fn(client());
     } catch (error) {
       if (error instanceof PicnicError) throw error;
+      // Something in the cart stops checkout: the minimum order, an age check.
+      // Some can be accepted and retried with the key Picnic sends.
+      if (Client.isCheckoutIssueError?.(error)) {
+        throw new PicnicError('checkout_issue', error.issueMessage || error.title || 'Picnic cannot check out this cart.', {
+          status: 409,
+          details: {
+            title: error.title,
+            message: error.issueMessage,
+            blocking: error.blocking,
+            resolveKey: error.resolveKey || null,
+          },
+        });
+      }
       if (isAuthFailure(error)) {
         store({});
         throw new PicnicError('session_expired', 'The Picnic session has expired. Connect again.', {
@@ -177,7 +191,20 @@ export function createPicnic({ db, env = process.env, Client = PicnicClient }) {
     slots: () => call((p) => p.cart.getDeliverySlotOverview()),
     setSlot: (slotId) => call((p) => p.cart.setDeliverySlot(slotId)),
 
+    minimumOrder: () => call((p) => p.cart.getMinimumOrderValue()).catch(() => null),
+    startCheckout: (input) => call((p) => p.cart.startCheckout(input)),
+    initiatePayment: (orderId, returnUrl) => call((p) => p.cart.initiatePayment(orderId, returnUrl)),
+    checkoutStatus: (transactionId) => call((p) => p.cart.getCheckoutStatus(transactionId)),
+    cancelCheckout: (transactionId) => call((p) => p.cart.cancelCheckout(transactionId)),
+    confirmOrder: (orderId) => call((p) => p.cart.confirmOrder(orderId)),
+
+    wallet: (page) => call((p) => p.payment.getWalletTransactions(page)),
+    walletTransaction: (id) => call((p) => p.payment.getWalletTransactionDetails(id)),
+
     deliveries: () => call((p) => p.delivery.getDeliverySummaries()),
+    rateDelivery: (id, rating) => call((p) => p.delivery.setDeliveryRating(id, rating)),
+    cancelDelivery: (id) => call((p) => p.delivery.cancelDelivery(id)),
+    emailInvoice: (id) => call((p) => p.delivery.sendDeliveryInvoiceEmail(id)),
     delivery: (id) => call((p) => p.delivery.getDelivery(id)),
     /** Live position, or null: Picnic only answers while a delivery is on its way. */
     position: (id) => call((p) => p.delivery.getDeliveryPosition(id)).catch(() => null),

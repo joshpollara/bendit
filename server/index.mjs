@@ -49,6 +49,15 @@ import {
   withProducts,
 } from './lib/picnicShopping.mjs';
 import {
+  cancelPayment,
+  checkoutState,
+  confirm as confirmCheckout,
+  createCheckoutTables,
+  pay as payCheckout,
+  returnUrlFor,
+  startCheckout,
+} from './lib/picnicCheckout.mjs';
+import {
   addItem as addPlanItem,
   createMealPlanTables,
   listPlan,
@@ -1886,6 +1895,7 @@ app.put(
 
 const picnic = createPicnic({ db });
 createPicnicShoppingTables(db);
+createCheckoutTables(db);
 const suggestProduct = createSuggester((term) => picnic.search(term));
 
 /** An async handler whose PicnicErrors become a status and a code the client can act on. */
@@ -1894,7 +1904,9 @@ const picnicRoute = (fn) => async (req, res) => {
     res.json(await fn(req));
   } catch (error) {
     if (error instanceof PicnicError) {
-      return res.status(error.status).json({ error: { message: error.message, code: error.code } });
+      return res
+        .status(error.status)
+        .json({ error: { message: error.message, code: error.code, details: error.details ?? null } });
     }
     if (error instanceof PlanError) return res.status(error.status).json({ error: error.message });
     console.error('picnic route failed:', error);
@@ -2023,6 +2035,75 @@ app.put(
     const slotId = String(req.body?.slotId ?? '');
     if (!slotId) throw new PlanError('slotId is required');
     return picnic.setSlot(slotId);
+  }),
+);
+
+// ——— Picnic checkout ———
+//
+// Each step is a request someone makes; see lib/picnicCheckout.mjs.
+
+app.post(
+  '/api/picnic/checkout',
+  picnicRoute(async (req) => ({
+    ...(await startCheckout(db, picnic, { resolveKey: req.body?.resolveKey, userId: req.userId })),
+    minimumOrder: (await picnic.minimumOrder())?.minimum_order_value ?? null,
+  })),
+);
+app.post(
+  '/api/picnic/checkout/:orderId/pay',
+  picnicRoute((req) =>
+    payCheckout(db, picnic, {
+      orderId: req.params.orderId,
+      returnUrl: returnUrlFor(String(req.body?.origin ?? ''), req.get('host'), req.params.orderId),
+    }),
+  ),
+);
+app.get('/api/picnic/checkout/:orderId', picnicRoute((req) => checkoutState(db, picnic, req.params.orderId)));
+app.post('/api/picnic/checkout/:orderId/cancel', picnicRoute((req) => cancelPayment(db, picnic, req.params.orderId)));
+app.post('/api/picnic/checkout/:orderId/confirm', picnicRoute((req) => confirmCheckout(db, picnic, req.params.orderId)));
+
+// Payments from the Picnic wallet, a page of them at a time.
+app.get(
+  '/api/picnic/wallet',
+  picnicRoute((req) => picnic.wallet(Math.max(1, Math.min(50, Number(req.query.page) || 1)))),
+);
+app.get(
+  '/api/picnic/wallet/:id',
+  picnicRoute(async (req) => {
+    const detail = await picnic.walletTransaction(req.params.id);
+    // Order lines carry their price in cents; the articles inside them don't.
+    return {
+      deliveryId: detail.delivery_id ?? null,
+      lines: (detail.shop_items ?? []).map((line) => ({
+        name: line.items?.map((a) => a.name).join(', ') ?? '',
+        quantity: line.items?.[0]?.decorators?.find((d) => d.type === 'QUANTITY')?.quantity ?? 1,
+        price: line.display_price ?? line.price ?? null,
+      })),
+    };
+  }),
+);
+
+app.put(
+  '/api/picnic/deliveries/:id/rating',
+  picnicRoute(async (req) => {
+    const rating = Number(req.body?.rating);
+    if (!Number.isInteger(rating) || rating < 0 || rating > 10) throw new PlanError('rating must be 0 to 10');
+    await picnic.rateDelivery(req.params.id, rating);
+    return { ok: true };
+  }),
+);
+app.post(
+  '/api/picnic/deliveries/:id/cancel',
+  picnicRoute(async (req) => {
+    await picnic.cancelDelivery(req.params.id);
+    return { ok: true };
+  }),
+);
+app.post(
+  '/api/picnic/deliveries/:id/invoice',
+  picnicRoute(async (req) => {
+    await picnic.emailInvoice(req.params.id);
+    return { ok: true };
   }),
 );
 

@@ -115,6 +115,35 @@ describe('picnic', () => {
     expect(picnic.status()).toMatchObject({ connected: true });
   });
 
+  it('passes on a checkout issue with what is needed to accept it', async () => {
+    const db = new Database(':memory:');
+    const { Client } = fakeClient();
+    class WithCheckout extends Client {
+      static isCheckoutIssueError = (e) => e?.kind === 'issue';
+      constructor(options) {
+        super(options);
+        this.cart = {
+          startCheckout: async () => {
+            throw Object.assign(new Error('CART_HAS_ISSUES'), {
+              kind: 'issue',
+              title: 'Leeftijdscontrole',
+              issueMessage: 'Dit product bevat alcohol.',
+              blocking: false,
+              resolveKey: 'AGE_OK',
+            });
+          },
+        };
+      }
+    }
+    const picnic = createPicnic({ db, env: ENV, Client: WithCheckout });
+    await picnic.connect();
+    await expect(picnic.startCheckout({ mts: 1 })).rejects.toMatchObject({
+      code: 'checkout_issue',
+      status: 409,
+      details: { title: 'Leeftijdscontrole', blocking: false, resolveKey: 'AGE_OK' },
+    });
+  });
+
   it('signs out', async () => {
     const { picnic, calls } = setup();
     await picnic.connect();
