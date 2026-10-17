@@ -12,6 +12,7 @@ import { addItem, listPlan, MEALS, plannedFor, removeItem, shoppingList } from '
 import { cartAdditions, withProducts } from './picnicShopping.mjs';
 import { listRecipes } from './recipeStore.mjs';
 import { listUsers } from './users.mjs';
+import { ratingsOf } from './ratings.mjs';
 
 const date = { type: 'string', description: 'A date as YYYY-MM-DD.' };
 const meal = { type: 'string', enum: MEALS };
@@ -34,6 +35,15 @@ export function createAssistantTools({ db, picnic, userId, finder = null }) {
     return found.id;
   };
   const food = (id) => db.prepare('SELECT * FROM foods WHERE id = ?').get(id);
+  // How the household rated a recipe, where the table exists and anyone has.
+  const ratingFor = (recipeId) => {
+    try {
+      const { likes, dislikes } = ratingsOf(db, recipeId, userId);
+      return likes || dislikes ? { likedBy: likes, dislikedBy: dislikes } : {};
+    } catch {
+      return {};
+    }
+  };
   const needPicnic = () => {
     if (!picnic.status().connected) throw new ToolError('Picnic is not connected.');
   };
@@ -104,6 +114,7 @@ export function createAssistantTools({ db, picnic, userId, finder = null }) {
             name: r.name,
             makes: r.servings,
             nutriScore: r.grade?.grade ?? null,
+            ...ratingFor(r.id),
             perServing: r.food
               ? { calories: r.food.caloriesPerServing, protein: r.food.protein, carbs: r.food.carbs, fat: r.food.fat }
               : null,

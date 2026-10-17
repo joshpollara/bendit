@@ -171,14 +171,18 @@ export function createRecipePriceHandler({ db }) {
   };
 }
 
-export function createRecipeRoutes({ db, saveFood }) {
+/**
+ * `decorate(recipe, req)` adds what depends on who's asking — their rating —
+ * to each recipe read.
+ */
+export function createRecipeRoutes({ db, saveFood, decorate = (recipe) => recipe }) {
   return {
-    list: (req, res) => res.json(listRecipes(db)),
+    list: (req, res) => res.json(listRecipes(db).map((recipe) => decorate(recipe, req))),
 
     read: (req, res) => {
       const recipe = readRecipe(db, req.params.id);
       if (!recipe) return res.status(404).json({ error: 'not found' });
-      res.json(recipe);
+      res.json(decorate(recipe, req));
     },
 
     save: (req, res) => {

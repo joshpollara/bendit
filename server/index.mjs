@@ -10,6 +10,7 @@ import { per100FromServing } from './lib/foodSchema.mjs';
 import { matchFood, searchFoods, searchFoodsTiered } from './lib/foodSearch.mjs';
 import { gradeMeal, nutriScore, processingForMeal } from './lib/nutriScore.mjs';
 import { abMonth, AbError, clearGoal, createAbTables, goalFor, setGoal } from './lib/abMonth.mjs';
+import { createRatingTables, rate, RatingError, ratingsOf, toRate } from './lib/ratings.mjs';
 import {
   authenticate,
   countUsers,
@@ -177,6 +178,7 @@ CREATE INDEX IF NOT EXISTS idx_fasts_started ON fasts(startedAt);
 createUsersTable(db);
 createRecipeTables(db);
 createAbTables(db);
+createRatingTables(db);
 createRecipeSiteTables(db);
 
 // Columns added after the first release. SQLite only supports ADD COLUMN, which
@@ -1891,8 +1893,27 @@ app.put('/api/meals/estimate/:id/feedback', createMealFeedbackHandler({ db }));
 // writes the food for a single serving, which is what gets logged. Recipes are
 // visible to everyone here; editing stays with whoever added it.
 
-const recipes = createRecipeRoutes({ db, saveFood });
+const recipes = createRecipeRoutes({
+  db,
+  saveFood,
+  decorate: (recipe, req) => ({ ...recipe, ratings: ratingsOf(db, recipe.id, req.userId) }),
+});
 
+// Liked it, or not again: one rating per person per recipe. See lib/ratings.mjs.
+app.put('/api/recipes/:id/rating', (req, res) => {
+  try {
+    rate(db, req.userId, req.params.id, req.body?.rating);
+    res.json(ratingsOf(db, req.params.id, req.userId));
+  } catch (error) {
+    if (error instanceof RatingError) return res.status(error.status).json({ error: error.message });
+    throw error;
+  }
+});
+// Recipes eaten from the plan lately that this person hasn't rated.
+app.get('/api/ratings/to-rate', (req, res) => {
+  const today = /^\d{4}-\d{2}-\d{2}$/.test(String(req.query.today)) ? String(req.query.today) : new Date().toISOString().slice(0, 10);
+  res.json(toRate(db, req.userId, today));
+});
 app.get('/api/recipes', recipes.list);
 app.get('/api/recipes/:id', recipes.read);
 app.post('/api/recipes', recipes.save);

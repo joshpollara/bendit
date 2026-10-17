@@ -19,6 +19,9 @@ const CameraCapture = lazy(() => import('../components/CameraCapture'));
 
 const card = 'rounded-2xl border border-line bg-card p-4 shadow-sm';
 
+/** Liked more than not: the ones to make again. */
+const liked = (r: Recipe) => (r.ratings?.likes ?? 0) > (r.ratings?.dislikes ?? 0);
+
 const retryablePhotoCodes = new Set(['timeout', 'network_error', 'provider_error']);
 
 export function canRetryRecipePhoto(error: unknown) {
@@ -46,6 +49,7 @@ export function recipePhotoErrorMessage(error: unknown) {
 
 export default function Recipes() {
   const navigate = useNavigate();
+  const [show, setShow] = useState<'all' | 'liked'>('all');
   const [reload, setReload] = useState(0);
   const recipes = useData(() => api.recipes(), [reload]);
   const [draft, setDraft] = useState<{ draft: RecipeDraft; id?: string } | null>(null);
@@ -317,8 +321,23 @@ export default function Recipes() {
         <p className="px-1 py-6 text-center text-sm text-ink-muted">No recipes yet.</p>
       )}
 
+      {recipes?.some(liked) && (
+        <div className="flex gap-2 text-xs font-semibold">
+          {(['all', 'liked'] as const).map((f) => (
+            <button
+              key={f}
+              type="button"
+              onClick={() => setShow(f)}
+              className={`rounded-full px-3 py-1.5 ${show === f ? 'bg-accent text-white' : 'bg-card text-ink-secondary'}`}
+            >
+              {f === 'all' ? 'All' : 'Liked'}
+            </button>
+          ))}
+        </div>
+      )}
+
       <ul className="flex flex-col gap-2">
-        {recipes?.map((recipe) => (
+        {recipes?.filter((r) => show === 'all' || liked(r)).map((recipe) => (
           <li key={recipe.id} className={card}>
             <div className="flex items-start gap-3">
               <button
@@ -334,6 +353,7 @@ export default function Recipes() {
                 <p className="truncate text-xs text-ink-muted">
                   {recipe.servings} servings · {recipe.ingredients.length} ingredients
                   {recipe.author ? ` · ${recipe.author}` : ''}
+                  {recipe.ratings?.likes ? ` · liked by ${recipe.ratings.likes}` : ''}
                 </p>
               </button>
               <div className="text-right">
