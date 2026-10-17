@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { assertFetchable, pageText, readYield, recipeFromJsonLd } from './recipeImport.mjs';
+import { assertFetchable, fetchPage, pageText, readYield, recipeFromJsonLd } from './recipeImport.mjs';
 
 // The JSON-LD fixtures are the shapes real recipe sites publish: a bare object,
 // one wrapped in @graph, a @type that is an array, instructions as objects.
@@ -22,6 +22,10 @@ const BOLOGNESE = {
     proteinContent: '24 g',
     carbohydrateContent: '42.5 g',
     fatContent: '12 g',
+    saturatedFatContent: '4.5 g',
+    sugarContent: '9 g',
+    fiberContent: '5 g',
+    sodiumContent: '0.6 g',
   },
 };
 
@@ -33,7 +37,18 @@ describe('recipeFromJsonLd', () => {
     expect(recipe.servings).toBe(4);
     expect(recipe.servingsStated).toBe(true);
     expect(recipe.instructions).toBe('Fry the onion.\nAdd the mince.');
-    expect(recipe.sourceNutrition).toEqual({ calories: 376, protein: 24, carbs: 42.5, fat: 12 });
+    // Per serving of the 4 it makes; sodium in mg, though the page wrote grams.
+    expect(recipe.sourceNutrition).toEqual({
+      servings: 4,
+      calories: 376,
+      protein: 24,
+      carbs: 42.5,
+      fat: 12,
+      satFat: 4.5,
+      sugar: 9,
+      fiber: 5,
+      sodiumMg: 600,
+    });
   });
 
   it('finds the recipe inside a @graph, where most sites put it', () => {
@@ -136,5 +151,47 @@ describe('assertFetchable', () => {
 
   it('refuses something that is not an address at all', async () => {
     await expect(assertFetchable('not a url')).rejects.toThrow(/not a web address/);
+  });
+});
+
+describe('fetching a page', () => {
+  // public.test is on the internet; private.test is inside the server's network.
+  const resolver = {
+    lookup: async (host) => [{ address: host === 'private.test' ? '10.0.0.5' : '93.184.216.34' }],
+  };
+  const respond = (status, { location, body = '' } = {}) => ({
+    status,
+    ok: status >= 200 && status < 300,
+    headers: { get: (name) => (name === 'location' ? (location ?? null) : null) },
+    text: async () => body,
+  });
+
+  it('follows a page that has moved, as recipe sites do when they rename one', async () => {
+    const asked = [];
+    const fetchImpl = async (url) => {
+      asked.push(url);
+      return url.endsWith('/old/')
+        ? respond(301, { location: '/new/' })
+        : respond(200, { body: 'the recipe' });
+    };
+    expect(await fetchPage('https://public.test/old/', { fetchImpl, resolver })).toBe('the recipe');
+    expect(asked).toEqual(['https://public.test/old/', 'https://public.test/new/']);
+  });
+
+  it('checks where a redirect leads before going there', async () => {
+    const fetchImpl = async () => respond(302, { location: 'http://private.test/admin' });
+    await expect(fetchPage('https://public.test/', { fetchImpl, resolver })).rejects.toThrow(/own network/);
+  });
+
+  it('gives up on a page that redirects forever', async () => {
+    const fetchImpl = async (url) => respond(302, { location: `${url}x` });
+    await expect(fetchPage('https://public.test/a', { fetchImpl, resolver })).rejects.toThrow(/too many/);
+  });
+
+  it('says plainly when a page cannot be reached', async () => {
+    const fetchImpl = async () => {
+      throw new TypeError('fetch failed');
+    };
+    await expect(fetchPage('https://public.test/', { fetchImpl, resolver })).rejects.toThrow("Couldn't reach that page.");
   });
 });

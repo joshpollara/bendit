@@ -43,6 +43,43 @@ export function createRecipeTables(db) {
     CREATE INDEX IF NOT EXISTS idx_recipe_ingredients ON recipe_ingredients(recipeId);
     CREATE INDEX IF NOT EXISTS idx_recipes_created ON recipes(createdBy);
   `);
+  const columns = new Set(db.prepare('PRAGMA table_info(recipes)').all().map((c) => c.name));
+  // What the recipe's page says one serving comes to, as JSON, and whether the
+  // recipe's food takes its nutrition from that ('page') or its ingredients.
+  if (!columns.has('sourceNutrition')) db.exec('ALTER TABLE recipes ADD COLUMN sourceNutrition TEXT');
+  if (!columns.has('nutritionFrom')) db.exec('ALTER TABLE recipes ADD COLUMN nutritionFrom TEXT');
+}
+
+const num = (value) => (typeof value === 'number' && Number.isFinite(value) && value >= 0 ? value : null);
+
+/** A page's stated nutrition as sent back by the client, kept only if it has calories. */
+function cleanSourceNutrition(input) {
+  if (!input || typeof input !== 'object') return null;
+  const out = {};
+  for (const key of ['servings', 'calories', 'protein', 'carbs', 'fat', 'satFat', 'sugar', 'fiber', 'sodiumMg']) {
+    out[key] = num(input[key]);
+  }
+  return out.calories ? out : null;
+}
+
+/**
+ * One serving's nutrition by the page's figures, for a recipe that makes
+ * `makes`: the page's serving is of its own yield, so making more per batch
+ * means smaller servings.
+ */
+export function pageServing(source, makes) {
+  const scale = source.servings > 0 && makes > 0 ? source.servings / makes : 1;
+  const per = (value) => (value == null ? null : Math.round(value * scale * 10) / 10);
+  return {
+    calories: Math.round(source.calories * scale),
+    protein: per(source.protein),
+    carbs: per(source.carbs),
+    fat: per(source.fat),
+    satFat: per(source.satFat),
+    sugar: per(source.sugar),
+    fiber: per(source.fiber),
+    sodiumMg: source.sodiumMg == null ? null : Math.round(source.sodiumMg * scale),
+  };
 }
 
 const newId = () => crypto.randomUUID();
@@ -67,8 +104,16 @@ export function readRecipe(db, id) {
     { grams: 0, calories: 0 },
   );
 
+  let sourceNutrition = null;
+  try {
+    sourceNutrition = recipe.sourceNutrition ? JSON.parse(recipe.sourceNutrition) : null;
+  } catch {
+    // An unreadable value is as good as none.
+  }
   return {
     ...recipe,
+    sourceNutrition,
+    nutritionFrom: recipe.nutritionFrom ?? 'ingredients',
     servingsStated: recipe.servingsStated === 1,
     author: author?.username ?? null,
     ingredients,
@@ -104,15 +149,22 @@ export function saveRecipe(db, input, { saveFood, ownerId, id = newId() }) {
   // The food keeps its id across an edit, so entries already logged against it
   // still point at something, and the Recent list doesn't sprout duplicates.
   const foodId = existing?.foodId ?? `recipe-${id}`;
-  const food = recipeFood(built, { id: foodId, name: input.name, ownerId: null });
+  const sourceNutrition = cleanSourceNutrition(input.sourceNutrition);
+  const nutritionFrom = input.nutritionFrom === 'page' && sourceNutrition ? 'page' : 'ingredients';
+  const food = recipeFood(built, {
+    id: foodId,
+    name: input.name,
+    ownerId: null,
+    declared: nutritionFrom === 'page' ? pageServing(sourceNutrition, built.servings) : null,
+  });
 
   db.transaction(() => {
     db.prepare(
       `INSERT OR REPLACE INTO recipes
          (id, name, servings, servingsStated, sourceType, sourceUrl, instructions, notes,
-          foodId, createdBy, createdAt, updatedAt)
+          foodId, createdBy, createdAt, updatedAt, sourceNutrition, nutritionFrom)
        VALUES (@id, @name, @servings, @servingsStated, @sourceType, @sourceUrl, @instructions,
-               @notes, @foodId, @createdBy, @createdAt, @updatedAt)`,
+               @notes, @foodId, @createdBy, @createdAt, @updatedAt, @sourceNutrition, @nutritionFrom)`,
     ).run({
       id,
       name: input.name,
@@ -127,6 +179,8 @@ export function saveRecipe(db, input, { saveFood, ownerId, id = newId() }) {
       createdBy: existing?.createdBy ?? ownerId,
       createdAt: existing?.createdAt ?? new Date().toISOString(),
       updatedAt: new Date().toISOString(),
+      sourceNutrition: sourceNutrition ? JSON.stringify(sourceNutrition) : null,
+      nutritionFrom,
     });
 
     db.prepare('DELETE FROM recipe_ingredients WHERE recipeId = ?').run(id);

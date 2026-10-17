@@ -7,8 +7,8 @@
 // model is the fallback for pages that have none.
 //
 // Fetching a URL a user supplies means the server will connect wherever it is
-// pointed, so where it may point is limited: public HTTP(S) only, no redirects
-// into private space, and a size and time cap on what comes back.
+// pointed, so where it may point is limited: public HTTP(S) only, redirects
+// checked the same way, and a size and time cap on what comes back.
 
 import dns from 'node:dns/promises';
 import net from 'node:net';
@@ -66,22 +66,42 @@ export async function assertFetchable(url, { resolver = dns } = {}) {
   return parsed;
 }
 
-/** Fetches a page, capped in time and size. */
-export async function fetchPage(url, { fetchImpl = fetch, resolver = dns } = {}) {
-  await assertFetchable(url, { resolver });
-  const response = await fetchImpl(url, {
-    redirect: 'error', // a redirect could land somewhere the check didn't see
-    signal: AbortSignal.timeout(TIMEOUT_MS),
-    headers: {
-      // Sites serve a different page to something that looks like a crawler.
-      'user-agent': 'Mozilla/5.0 (compatible; BenditRecipeReader/1.0)',
-      accept: 'text/html,application/xhtml+xml',
-    },
-  });
-  if (!response.ok) throw new Error(`That page returned ${response.status}.`);
+const MAX_REDIRECTS = 5;
 
-  const text = await response.text();
-  return text.length > MAX_BYTES ? text.slice(0, MAX_BYTES) : text;
+/**
+ * Fetches a page, capped in time and size. Redirects are followed by hand, so
+ * each address they lead to passes the same check as the first: recipe sites
+ * rename pages and redirect the old address, but a redirect could equally
+ * point into the server's own network.
+ */
+export async function fetchPage(url, { fetchImpl = fetch, resolver = dns } = {}) {
+  let current = url;
+  for (let hop = 0; hop <= MAX_REDIRECTS; hop++) {
+    await assertFetchable(current, { resolver });
+    let response;
+    try {
+      response = await fetchImpl(current, {
+        redirect: 'manual',
+        signal: AbortSignal.timeout(TIMEOUT_MS),
+        headers: {
+          // Sites serve a different page to something that looks like a crawler.
+          'user-agent': 'Mozilla/5.0 (compatible; BenditRecipeReader/1.0)',
+          accept: 'text/html,application/xhtml+xml',
+        },
+      });
+    } catch (error) {
+      throw new Error(error?.name === 'TimeoutError' ? 'That page took too long.' : "Couldn't reach that page.");
+    }
+    const location = response.headers.get('location');
+    if (response.status >= 300 && response.status < 400 && location) {
+      current = new URL(location, current).href;
+      continue;
+    }
+    if (!response.ok) throw new Error(`That page returned ${response.status}.`);
+    const text = await response.text();
+    return text.length > MAX_BYTES ? text.slice(0, MAX_BYTES) : text;
+  }
+  throw new Error('That page redirects too many times.');
 }
 
 const decodeEntities = (text) =>
@@ -145,6 +165,31 @@ const asLines = (value) =>
     .map((line) => decodeEntities(String(line)).replace(/\s+/g, ' ').trim())
     .filter(Boolean);
 
+/** "849 mg" → 849, "1.2 g" → 1200: sodium in milligrams, whichever the page wrote. */
+function milligrams(value) {
+  const amount = readYield(value);
+  if (amount == null) return null;
+  return /\bmg\b/i.test(String(value)) ? amount : Math.round(amount * 1000);
+}
+
+/**
+ * Per-serving nutrition as the page states it, and how many servings that is
+ * a serving of, so it can be rescaled if the recipe is saved making more.
+ */
+function declaredNutrition(n, servings) {
+  return {
+    servings,
+    calories: readYield(n.calories),
+    protein: readYield(n.proteinContent),
+    carbs: readYield(n.carbohydrateContent),
+    fat: readYield(n.fatContent),
+    satFat: readYield(n.saturatedFatContent),
+    sugar: readYield(n.sugarContent),
+    fiber: readYield(n.fiberContent),
+    sodiumMg: milligrams(n.sodiumContent),
+  };
+}
+
 /**
  * The recipe a page declares about itself, or null when it declares none.
  * Nothing here is inferred: every field is one the page stated.
@@ -157,14 +202,7 @@ export function recipeFromJsonLd(html) {
   if (ingredients.length === 0) return null;
 
   const servings = readYield(node.recipeYield);
-  const nutrition = node.nutrition && typeof node.nutrition === 'object'
-    ? {
-        calories: readYield(node.nutrition.calories),
-        protein: readYield(node.nutrition.proteinContent),
-        carbs: readYield(node.nutrition.carbohydrateContent),
-        fat: readYield(node.nutrition.fatContent),
-      }
-    : null;
+  const nutrition = node.nutrition && typeof node.nutrition === 'object' ? declaredNutrition(node.nutrition, servings) : null;
   return {
     name: decodeEntities(node.name ?? '').trim() || 'Recipe',
     ingredients,
