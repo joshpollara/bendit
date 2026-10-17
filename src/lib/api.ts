@@ -347,6 +347,33 @@ export interface AssistantContext {
   targets: { protein: number | null; carbs: number | null; fat: number | null };
 }
 
+/** A product as it was in a past Picnic order. */
+export interface PicnicOrderItem {
+  productId: string;
+  name: string;
+  unitQuantity: string | null;
+  imageId: string | null;
+  quantity: number;
+}
+
+export interface PicnicPastOrder {
+  id: string;
+  status: string;
+  windowStart: string;
+  totalPrice: number;
+  items: PicnicOrderItem[];
+}
+
+export interface PicnicUsual extends PicnicOrderItem {
+  /** How many of the recent orders it was in, out of how many. */
+  orders: number;
+  ofOrders: number;
+  lastOrdered: string;
+  /** Typical days between orders of it; null when bought only once. */
+  everyDays: number | null;
+  due: boolean;
+}
+
 export interface DayData {
   entries: JoinedEntry[];
   /** Your portions from the household plan for this day, not yet logged. */
@@ -737,6 +764,10 @@ export const api = {
     post('/api/shopping-list/picnic/cart', { from, to }) as Promise<{ added: number; cart: PicnicCart }>,
   picnicSlots: () => j<PicnicSlots>('/api/picnic/slots'),
   picnicSetSlot: (slotId: string) => post('/api/picnic/slot', { slotId }, 'PUT') as Promise<PicnicCart>,
+  picnicNewOrder: (refresh = false) =>
+    j<{ orders: PicnicPastOrder[]; usuals: PicnicUsual[] }>(`/api/picnic/new-order${refresh ? '?refresh=1' : ''}`),
+  picnicAddBulk: (items: { productId: string; quantity: number }[]) =>
+    post('/api/picnic/cart/bulk', { items }) as Promise<PicnicCart>,
   picnicStartCheckout: (resolveKey?: string) =>
     post('/api/picnic/checkout', resolveKey ? { resolveKey } : {}) as Promise<PicnicCheckoutSummary>,
   picnicPay: (orderId: string) =>
