@@ -19,6 +19,7 @@ import CheckoutSheet from '../components/PicnicCheckout';
 import GradeBadge from '../components/GradeBadge';
 import PicnicReminder from '../components/PicnicReminder';
 import PicnicHome from '../components/PicnicHome';
+import PicnicSetting, { endsSoon } from '../components/PicnicSetting';
 import PicnicTrackingView from '../components/PicnicTracking';
 import { unavailableOf } from '../lib/picnicUnavailable';
 
@@ -656,24 +657,23 @@ export default function Picnic() {
       </header>
 
       {status && !ready ? (
-        <p className="mx-4 rounded-2xl border border-line bg-card p-4 text-sm text-ink-secondary lg:mx-0">
+        <div className="mx-4 rounded-2xl border border-line bg-card p-4 text-sm text-ink-secondary lg:mx-0">
           {status.configured ? (
-            <>
-              Picnic isn't connected.{' '}
-              <Link to="/settings" className="font-medium text-accent underline">
-                Connect it in Settings
-              </Link>
-              .
-            </>
+            <PicnicSetting heading={false} />
           ) : (
             <>
               Picnic isn't set up on this server. Set <code className="text-xs">PICNIC_USERNAME</code> and{' '}
               <code className="text-xs">PICNIC_PASSWORD</code> to use it.
             </>
           )}
-        </p>
+        </div>
       ) : (
         <>
+          {(status?.awaitingCode || endsSoon(status)) && (
+            <div className="mx-4 mb-3 rounded-2xl border border-accent bg-card p-4 lg:mx-0">
+              <PicnicSetting heading={false} />
+            </div>
+          )}
           <div className="mx-4 mb-3 flex items-center gap-2 rounded-xl border border-line bg-card px-3 lg:mx-0">
             <SearchIcon className="h-4 w-4 shrink-0 text-ink-muted" />
             <input

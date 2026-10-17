@@ -70,7 +70,9 @@ self.addEventListener('push', (event) => {
       // has to be a glyph on transparency. The app icon is an opaque square,
       // which arrives as a solid white block.
       badge: '/badge-96.png',
-      tag: 'bendit-reminder',
+      tag: payload.tag || 'bendit-reminder',
+      // Where tapping it goes, when that isn't just the app.
+      data: { url: payload.url || '/' },
     }),
   );
 });
@@ -79,9 +81,10 @@ self.addEventListener('notificationclick', (event) => {
   event.notification.close();
   event.waitUntil(
     self.clients.matchAll({ type: 'window', includeUncontrolled: true }).then((clients) => {
+      const url = event.notification.data?.url || '/';
       const open = clients.find((c) => c.url.includes(self.location.origin));
-      if (open) return open.focus();
-      return self.clients.openWindow('/');
+      if (open) return url === '/' ? open.focus() : open.focus().then((c) => c.navigate(url));
+      return self.clients.openWindow(url);
     }),
   );
 });
