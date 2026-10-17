@@ -22,6 +22,7 @@ import LoggingCalendar from "../components/LoggingCalendar";
 import { measureExpenditure } from "../lib/expenditure";
 import { findPatterns } from "../lib/patterns";
 import BodyFigure from "../components/BodyFigure";
+import { AbMonthCard } from "../components/AbMonth";
 
 // recharts is heavy; keep it out of the main bundle.
 const TrendChart = lazy(() =>
@@ -215,6 +216,8 @@ export default function Reports({ profile }: { profile: Profile }) {
           ))}
         </div>
       </header>
+
+      <AbMonthCard className="mx-4 mt-3 lg:mx-0" />
 
       {!hasData ? (
         <p className={`${card} text-center text-sm text-ink-muted`}>

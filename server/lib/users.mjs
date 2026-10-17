@@ -114,6 +114,7 @@ export const USER_TABLES = [
   // Your servings in the household meal plan; the planned meals are shared.
   'meal_plan_portions',
   'assistant_chats',
+  'ab_goals',
 ];
 
 /** Deletes a user and everything of theirs. Returns what was removed. */

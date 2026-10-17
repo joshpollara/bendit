@@ -398,6 +398,14 @@ export interface PicnicUsual extends PicnicOrderItem {
   due: boolean;
 }
 
+/** A month's A/B goal and how it's going: shares are of graded calories, 0–1. */
+export interface AbMonth {
+  month: string;
+  goal: { target: number } | null;
+  days: { date: string; share: number | null; covered: number; calories: number }[];
+  total: { share: number | null; covered: number; daysOnTarget: number | null; daysLogged: number };
+}
+
 /** A Picnic deal on a product: "2 voor €5", "25% korting", "nu €1.89". */
 export interface PicnicDeal {
   label: string;
@@ -900,6 +908,9 @@ export const api = {
     j<{ orders: PicnicPastOrder[]; usuals: PicnicUsual[] }>(`/api/picnic/new-order${refresh ? '?refresh=1' : ''}`),
   picnicAddBulk: (items: { productId: string; quantity: number }[]) =>
     post('/api/picnic/cart/bulk', { items }) as Promise<PicnicCart>,
+  abMonth: (month: string) => j<AbMonth>(`/api/ab-month?${new URLSearchParams({ month })}`),
+  setAbGoal: (month: string, target: number) => post('/api/ab-month', { month, target }, 'PUT') as Promise<AbMonth>,
+  clearAbGoal: (month: string) => j<AbMonth>(`/api/ab-month?${new URLSearchParams({ month })}`, { method: 'DELETE' }),
   picnicLazyOrder: (input: { dinners: number; servings: number; wish: string }) =>
     post('/api/picnic/lazy-order', input) as Promise<LazyOrder>,
   picnicKeepRecipes: (recipes: LazyOrderRecipe[], plan: boolean) =>

@@ -5,6 +5,7 @@ import { useData } from '../lib/useData';
 import { ChevronLeftIcon, SearchIcon } from '../components/Icons';
 import Sheet from '../components/Sheet';
 import { GRADE_STYLE } from '../components/MealGrade';
+import { AbMonthCard } from '../components/AbMonth';
 
 const GRADES: NutriGrade[] = ['A', 'B', 'C', 'D', 'E'];
 
@@ -146,6 +147,8 @@ export default function NutriScore() {
           Nutri-Score
         </h1>
       </header>
+
+      <AbMonthCard className="mx-4 mb-3 lg:mx-0" />
 
       <div className="mx-4 flex items-center gap-2 rounded-xl border border-line bg-card px-3 lg:mx-0">
         <SearchIcon className="h-4 w-4 shrink-0 text-ink-muted" />
