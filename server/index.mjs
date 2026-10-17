@@ -9,7 +9,7 @@ import { barcodeVariants } from './lib/barcode.mjs';
 import { per100FromServing } from './lib/foodSchema.mjs';
 import { matchFood, searchFoods, searchFoodsTiered } from './lib/foodSearch.mjs';
 import { gradeMeal, nutriScore, processingForMeal } from './lib/nutriScore.mjs';
-import { abMonth, AbError, clearGoal, createAbTables, setGoal } from './lib/abMonth.mjs';
+import { abMonth, AbError, clearGoal, createAbTables, goalFor, setGoal } from './lib/abMonth.mjs';
 import {
   authenticate,
   countUsers,
@@ -50,6 +50,7 @@ import {
   clearChoice,
   createPicnicShoppingTables,
   createSuggester,
+  mapLimited,
   productFrom,
   setChoice,
   withProducts,
@@ -2246,7 +2247,7 @@ app.post(
       historySyncedAt = Date.now();
     }
     const { dinners, servings, wish } = req.body ?? {};
-    return lazyOrder.build({ dinners, servings, wish, userId: req.userId });
+    return lazyOrder.build({ dinners, servings, wish, userId: req.userId, abTarget: goalFor(db, req.userId) });
   }),
 );
 app.post(
@@ -2276,7 +2277,21 @@ app.post(
       .map((p) => ({ productId: String(p?.productId ?? ''), name: String(p?.name ?? '').slice(0, 200) }))
       .filter((p) => /^s?\d+$/.test(p.productId))
       .slice(0, 100);
-    return { results: await checkSwaps(products) };
+    // During an A/B month, C items are worth swapping too.
+    return { results: await checkSwaps(products, { alsoC: goalFor(db, req.userId) != null }) };
+  }),
+);
+
+// What's in the cart, graded: each product's Nutri-Score, kept for a month.
+app.get(
+  '/api/picnic/cart/grades',
+  picnicRoute(async () => {
+    picnic.status().connected || picnicNotConnected();
+    const cart = await picnic.cart();
+    const products = (cart.items ?? []).flatMap((line) => (line.items ?? []).map((a) => ({ productId: a.id, name: a.name })));
+    const unique = [...new Map(products.map((p) => [p.productId, p])).values()].filter((p) => /^s?\d+$/.test(p.productId));
+    const grades = await mapLimited(unique, 3, async (p) => ({ productId: p.productId, grade: await checkSwaps.gradeOf(p) }));
+    return { grades };
   }),
 );
 
@@ -2426,7 +2441,13 @@ app.get('/api/assistant', (req, res) =>
 );
 app.post(
   '/api/assistant/messages',
-  assistantRoute((req) => assistant.send(req.userId, req.body?.text, req.body?.context)),
+  // The person's A/B month comes from here, not from what the page says.
+  assistantRoute((req) =>
+    assistant.send(req.userId, req.body?.text, {
+      ...(req.body?.context ?? {}),
+      abTarget: goalFor(db, req.userId, req.body?.context?.today),
+    }),
+  ),
 );
 app.post('/api/assistant/decisions', assistantRoute((req) => assistant.decide(req.userId, req.body?.decisions)));
 app.delete('/api/assistant', (req, res) => res.json(assistant.reset(req.userId)));

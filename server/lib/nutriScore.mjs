@@ -119,6 +119,15 @@ export function nutriScore(per100, { beverage = per100?.basis === 'ml' } = {}) {
   return { score, grade: gradeFor(score, beverage), computed: true, breakdown };
 }
 
+/**
+ * A food row's grade: the one its source publishes, else computed from its
+ * per-100 figures, else null.
+ */
+export function foodGrade(food) {
+  if (!food) return null;
+  return food.nutriGrade ?? nutriScore(food)?.grade ?? null;
+}
+
 /** The order of the grades, worst last, for averaging and comparing. */
 const GRADE_VALUE = { A: 1, B: 2, C: 3, D: 4, E: 5 };
 const VALUE_GRADE = ['A', 'B', 'C', 'D', 'E'];

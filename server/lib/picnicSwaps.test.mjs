@@ -6,6 +6,8 @@ import { createSwapChecker, createSwapTables, foodWords, pickSwaps, sharedWords 
 const NUTRITION = {
   // Lean chicken: A.
   A: 'Per 100 g\nEnergie\n110 kcal\nVet\n1,5 g\nwaarvan verzadigd\n0,4 g\nKoolhydraten\n0 g\nwaarvan suikers\n0 g\nEiwit\n24 g\nZout\n0,2 g',
+  // Smoked chicken: C.
+  C: 'Per 100 g\nEnergie\n180 kcal\nVet\n9 g\nwaarvan verzadigd\n3 g\nKoolhydraten\n3 g\nwaarvan suikers\n3 g\nEiwit\n20 g\nZout\n1,5 g',
   // Cured, salty chicken: D.
   D: 'Per 100 g\nEnergie\n150 kcal\nVet\n6 g\nwaarvan verzadigd\n4 g\nKoolhydraten\n2 g\nwaarvan suikers\n9 g\nEiwit\n20 g\nZout\n2,6 g',
 };
@@ -129,5 +131,28 @@ describe('checking an order', () => {
     now += 31 * 24 * 60 * 60 * 1000;
     await check([{ productId: 's2', name: PRODUCTS.s2.name }]);
     expect(picnic.calls.product).toBe(2);
+  });
+});
+
+describe('during an A/B month', () => {
+  it('swaps a C only for an A or B', () => {
+    const original = { productId: 'x', name: 'Picnic Griekse feta', brand: 'Picnic', grade: 'C' };
+    const swaps = pickSwaps(original, [
+      { productId: 'c', name: 'Griekse feta blokjes', grade: 'C' },
+      { productId: 'b', name: 'Feta light', grade: 'B' },
+    ]);
+    expect(swaps.map((s) => s.productId)).toEqual(['b']);
+  });
+
+  it('looks for swaps for C items only when asked to', async () => {
+    PRODUCTS.s6 = { name: "'t Slagershuys kipfilet gerookt", brand: "'t Slagershuys", grade: 'C', similar: ['s2'] };
+    const check = createSwapChecker(db, fakePicnic());
+    const [usual] = await check([{ productId: 's6', name: PRODUCTS.s6.name }]);
+    expect(usual).toMatchObject({ grade: 'C', swaps: [] });
+    const [abMonth] = await check([{ productId: 's6', name: PRODUCTS.s6.name }], { alsoC: true });
+    expect(abMonth.swaps.map((s) => [s.productId, s.grade])).toEqual([
+      ['s4', 'A'],
+      ['s2', 'A'],
+    ]);
   });
 });

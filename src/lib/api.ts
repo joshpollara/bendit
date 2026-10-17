@@ -204,6 +204,7 @@ export interface PlanItem {
   servingLabel: string;
   perServing: { calories: number; protein: number | null; carbs: number | null; fat: number | null };
   portions: { userId: string; username: string; servings: number; logged: boolean }[];
+  grade: NutriGrade | null;
 }
 
 export interface PlanItemInput {
@@ -605,6 +606,8 @@ export interface Recipe {
   sourceUrl: string | null;
   sourceNutrition: SourceNutrition | null;
   nutritionFrom: NutritionFrom;
+  /** Its Nutri-Score: from the page's figures, or its ingredients by weight. */
+  grade: { grade: NutriGrade; covered: number; from: 'page' | 'ingredients' } | null;
   instructions: string | null;
   notes: string | null;
   author: string | null;
@@ -915,6 +918,7 @@ export const api = {
     post('/api/picnic/lazy-order', input) as Promise<LazyOrder>,
   picnicKeepRecipes: (recipes: LazyOrderRecipe[], plan: boolean) =>
     post('/api/picnic/lazy-order/recipes', { recipes, plan }) as Promise<{ recipeId: string; name: string; date: string | null }[]>,
+  picnicCartGrades: () => j<{ grades: { productId: string; grade: NutriGrade | null }[] }>('/api/picnic/cart/grades'),
   picnicDeals: () => j<{ usuals: (PicnicUsual & { price: number | null; deal: PicnicDeal })[] }>('/api/picnic/deals'),
   picnicPriceCheck: (items: PicnicOrderItem[]) =>
     post('/api/picnic/price-check', { items }) as Promise<{ results: PicnicPriceCheck[] }>,

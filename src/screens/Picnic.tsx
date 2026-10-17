@@ -16,6 +16,7 @@ import { ChevronLeftIcon, PlusIcon, SearchIcon } from '../components/Icons';
 import Sheet from '../components/Sheet';
 import { euros, Thumb, useSettled } from '../components/PicnicBits';
 import CheckoutSheet from '../components/PicnicCheckout';
+import GradeBadge from '../components/GradeBadge';
 
 const quantityOf = (article: PicnicCartArticle) =>
   article.decorators?.find((d) => d.type === 'QUANTITY')?.quantity ?? 1;
@@ -132,8 +133,13 @@ function CartView({
   cart: PicnicCart | undefined;
   onChange: (action: () => Promise<PicnicCart>) => Promise<void>;
 }) {
+  // Grades take a request per new product, so they arrive after the cart.
+  const graded = useData(() => api.picnicCartGrades().catch(() => undefined), [cart?.total_count]);
   if (!cart) return <p className="px-4 py-6 text-center text-sm text-ink-muted">Loading…</p>;
   const articles = cart.items.flatMap((line) => line.items);
+  const gradeOf = new Map((graded?.grades ?? []).map((g) => [g.productId, g.grade]));
+  const ab = articles.filter((a) => ['A', 'B'].includes(gradeOf.get(a.id) ?? '')).length;
+  const ungraded = articles.filter((a) => graded && !gradeOf.get(a.id)).length;
   if (articles.length === 0) {
     return <p className="px-4 py-6 text-center text-sm text-ink-muted">The cart is empty.</p>;
   }
@@ -146,7 +152,10 @@ function CartView({
             <li key={article.id} className="flex items-center gap-3 border-b border-line px-4 py-2.5">
               <Thumb id={article.image_ids[0]} />
               <span className="min-w-0 flex-1">
-                <span className="block truncate text-sm font-medium">{article.name}</span>
+                <span className="block truncate text-sm font-medium">
+                  <GradeBadge grade={gradeOf.get(article.id)} className="mr-1.5" />
+                  {article.name}
+                </span>
                 <span className="block truncate text-xs text-ink-muted">
                   {article.unit_quantity} · {euros(article.price)}
                 </span>
@@ -175,6 +184,12 @@ function CartView({
           );
         })}
       </ul>
+      {graded && (
+        <p className="border-b border-line px-4 py-2 text-xs text-ink-secondary">
+          Nutri-Score A or B: {ab} of {articles.length} products
+          {ungraded > 0 ? ` · ${ungraded} without a grade` : ''}
+        </p>
+      )}
       <div className="flex items-center justify-between px-4 py-3">
         <button
           type="button"

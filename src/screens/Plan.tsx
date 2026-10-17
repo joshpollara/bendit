@@ -22,6 +22,7 @@ import { MEALS, MEAL_LABELS, type Food, type Meal, type Profile } from '../types
 import { ChevronLeftIcon, ChevronRightIcon, PlusIcon, SearchIcon } from '../components/Icons';
 import Sheet from '../components/Sheet';
 import { euros, ProductPicker, Thumb } from '../components/PicnicBits';
+import GradeBadge from '../components/GradeBadge';
 
 const mondayOf = (date: string) => format(startOfWeek(parseISO(date), { weekStartsOn: 1 }), DAY);
 const round2 = (n: number) => Math.round(n * 100) / 100;
@@ -442,7 +443,10 @@ function DayCard({
                 >
                   <span className="w-16 shrink-0 text-xs text-ink-muted">{MEAL_LABELS[meal]}</span>
                   <span className="min-w-0 flex-1">
-                    <span className="block truncate text-sm font-medium">{item.name}</span>
+                    <span className="block truncate text-sm font-medium">
+                      <GradeBadge grade={item.grade} className="mr-1.5" />
+                      {item.name}
+                    </span>
                     <span className="block truncate text-xs text-ink-muted">
                       {item.portions
                         .map((p) => `${p.username} ${round2(p.servings)}${p.logged ? ' ✓' : ''}`)
@@ -463,6 +467,34 @@ function DayCard({
 
 type ListItem = ShoppingList['items'][number] & Partial<PicnicShoppingList['items'][number]>;
 type ListData = Omit<ShoppingList, 'items'> & { items: ListItem[] };
+
+/**
+ * The week's planned calories graded A or B, out of those that could be
+ * graded — the same measure as an A/B month — against the goal, if any.
+ */
+function WeekGrade({ items, month }: { items: PlanItem[]; month: string }) {
+  const goal = useData(() => api.abMonth(month), [month])?.goal;
+  let graded = 0;
+  let ab = 0;
+  let all = 0;
+  for (const item of items) {
+    const calories = item.perServing.calories * item.portions.reduce((sum, p) => sum + p.servings, 0);
+    all += calories;
+    if (!item.grade) continue;
+    graded += calories;
+    if (item.grade === 'A' || item.grade === 'B') ab += calories;
+  }
+  if (graded === 0) return null;
+  const share = Math.round((ab / graded) * 100);
+  const covered = Math.round((graded / all) * 100);
+  return (
+    <p className="mx-4 mt-3 text-sm text-ink-secondary lg:mx-0">
+      Planned this week: <span className={`font-semibold ${goal && share < goal.target * 100 ? 'text-warn-deep' : 'text-good'}`}>{share}% A/B</span>
+      {goal ? ` · goal ${Math.round(goal.target * 100)}%` : ''}
+      {covered < 80 ? ` · ${covered}% graded` : ''}
+    </p>
+  );
+}
 
 const grams = (n: number) => (n >= 1000 ? `${round2(n / 1000)} kg` : `${n} g`);
 
@@ -774,6 +806,7 @@ export default function Plan({ profile }: { profile: Profile }) {
         ))}
       </div>
 
+      {tab === 'week' && items && <WeekGrade items={items} month={monday.slice(0, 7)} />}
       {tab === 'week' ? (
         <div className="lg:mt-3 lg:grid lg:grid-cols-2 lg:gap-3">
           {week.map((date) => (

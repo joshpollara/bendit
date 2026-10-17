@@ -10,6 +10,8 @@
 // log it, and the log entry remembers which planned meal it came from.
 
 import crypto from 'node:crypto';
+import { foodGrade } from './nutriScore.mjs';
+import { recipeGrade } from './recipeStore.mjs';
 
 export function createMealPlanTables(db) {
   db.exec(`
@@ -79,6 +81,16 @@ const ITEM_SELECT = `
   JOIN foods f ON f.id = i.foodId
   LEFT JOIN recipes r ON r.id = i.recipeId`;
 
+/** A planned meal's Nutri-Score: its recipe's, or its food's. */
+function gradeOfItem(db, row) {
+  if (row.recipeId) {
+    const recipe = db.prepare('SELECT * FROM recipes WHERE id = ?').get(row.recipeId);
+    const ingredients = db.prepare('SELECT * FROM recipe_ingredients WHERE recipeId = ?').all(row.recipeId);
+    return recipe ? (recipeGrade(db, recipe, ingredients)?.grade ?? null) : null;
+  }
+  return foodGrade(db.prepare('SELECT * FROM foods WHERE id = ?').get(row.foodId));
+}
+
 function shapeItem(db, row) {
   const portions = db
     .prepare(
@@ -97,6 +109,7 @@ function shapeItem(db, row) {
     recipeId: row.recipeId,
     name: row.recipeName ?? row.name,
     servingLabel: row.servingLabel,
+    grade: gradeOfItem(db, row),
     perServing: {
       calories: row.caloriesPerServing,
       protein: row.protein,

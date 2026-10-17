@@ -36,7 +36,7 @@ export function createAssistantTables(db) {
   )`);
 }
 
-function systemPrompt({ today, username, members, budget, targets, picnicConnected }) {
+function systemPrompt({ today, username, members, budget, targets, picnicConnected, abTarget }) {
   const goal = [
     budget ? `${Math.round(budget)} calories a day` : null,
     ...['protein', 'carbs', 'fat'].map((m) => (targets?.[m] ? `${targets[m]} g ${m}` : null)),
@@ -47,6 +47,9 @@ function systemPrompt({ today, username, members, budget, targets, picnicConnect
     'You are the assistant in Bend It!, a calorie tracker and meal planner shared by a household.',
     `Today is ${today}. You are talking to ${username}. The household: ${members.join(', ')}.`,
     goal ? `${username}'s daily targets: ${goal}. Other people's targets are their own and not known here.` : '',
+    abTarget
+      ? `This month ${username} is aiming for ${Math.round(abTarget * 100)}% of what they eat to be Nutri-Score A or B: prefer recipes and foods graded A or B, and say a grade when you know it.`
+      : '',
     picnicConnected
       ? 'The household shops at Picnic, a grocery delivery service; its cart is shared by everyone.'
       : 'Picnic is not connected, so its tools will fail.',
@@ -258,6 +261,7 @@ export function createAssistant({ db, picnic, model, dailyLimit = 300, finder = 
           budget: Number(context?.budget) || null,
           targets: context?.targets ?? null,
           picnicConnected: picnic.status().connected,
+          abTarget: Number(context?.abTarget) || null,
         });
         // A question the model never answered — it timed out, say — is replaced
         // rather than followed by a second one in a row.

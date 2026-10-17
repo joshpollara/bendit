@@ -98,6 +98,10 @@ const CHOOSE_SCHEMA = {
 };
 
 /** Posts that aren't one recipe: meal plans, round-ups, guides. */
+/** For a household member's A/B month: the kind of dinner that grades well. */
+const AB_HINT =
+  'They are aiming for food graded Nutri-Score A or B this month: prefer vegetable-rich, wholegrain, lean dinners, and avoid fried, creamy, very cheesy or sugary ones.';
+
 const NOT_A_RECIPE = /\b(meal plan|recipes for|\d+\s+(easy|best|healthy|quick)\b|ideas|guide|round-?up|gift|review)\b/i;
 
 export function createLazyOrder({ db, model, sites, search, fetch = fetchPage, dailyLimit = 20, now = () => Date.now() }) {
@@ -163,7 +167,7 @@ export function createLazyOrder({ db, model, sites, search, fetch = fetchPage, d
   }
 
   /** New recipes to choose from: the sites' latest, and searches the model suggests. */
-  async function candidates(build, taste, wish) {
+  async function candidates(build, taste, wish, abTarget) {
     const followed = sites.list();
     if (followed.length === 0) return [];
     const { searches } = await ask(
@@ -174,6 +178,7 @@ export function createLazyOrder({ db, model, sites, search, fetch = fetchPage, d
         wish
           ? `They asked for: ${wish}. Every search must be for that; vary within it (for fish: salmon, cod, tuna…).`
           : '',
+        abTarget ? AB_HINT : '',
       ]
         .filter(Boolean)
         .join('\n'),
@@ -258,7 +263,7 @@ export function createLazyOrder({ db, model, sites, search, fetch = fetchPage, d
      * A draft order: the due usuals, and `dinners` new recipes for `servings`
      * each, with their ingredients as Picnic products.
      */
-    async build({ dinners = 3, servings = 2, wish = '', userId }) {
+    async build({ dinners = 3, servings = 2, wish = '', userId, abTarget = null }) {
       if (!model.configured) throw new OrderError('AI is not switched on for this server.', 503);
       if (builtToday.get(TASK, PROMPT_VERSION).n >= dailyLimit) {
         throw new OrderError("That's today's limit for AI orders. Try again tomorrow.", 429);
@@ -272,7 +277,7 @@ export function createLazyOrder({ db, model, sites, search, fetch = fetchPage, d
 
       let recipes = [];
       if (count > 0) {
-        const pool = await candidates(build, taste, wish);
+        const pool = await candidates(build, taste, wish, abTarget);
         if (pool.length > 0) {
           const { picks } = await ask(
             build,
@@ -283,6 +288,7 @@ export function createLazyOrder({ db, model, sites, search, fetch = fetchPage, d
                 : 'Vary the main ingredient.',
               'Use what they buy and the recipes they have saved to judge their tastes.',
               'Prefer healthy, everyday dinners. Skip anything that is not a single recipe.',
+              abTarget ? AB_HINT : '',
             ]
               .filter(Boolean)
               .join('\n'),
