@@ -48,9 +48,9 @@ const PENDING_KEY = 'bendit.picnicDraftRecipes';
 
 function loadPending(): Pending {
   try {
-    return JSON.parse(localStorage.getItem(PENDING_KEY) ?? 'null') ?? { recipes: [], plan: true };
+    return JSON.parse(localStorage.getItem(PENDING_KEY) ?? 'null') ?? { recipes: [], plan: false };
   } catch {
-    return { recipes: [], plan: true };
+    return { recipes: [], plan: false };
   }
 }
 
@@ -304,7 +304,7 @@ export default function PicnicNewOrder() {
 
   function clearDraft() {
     setDraft({});
-    setPending({ recipes: [], plan: true });
+    setPending({ recipes: [], plan: false });
   }
 
   async function addToCart() {

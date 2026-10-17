@@ -20,6 +20,8 @@ const recipePage = (name, ingredients) =>
   })}</script>`;
 
 const PAGES = {
+  'https://site.test/cod/': recipePage('Baked Cod', ['400 g cod fillet', '1 lemon']),
+  'https://site.test/salmon/': recipePage('Salmon Bowl', ['300 g salmon', '200 g rice']),
   'https://site.test/tacos/': recipePage('Chicken Tacos', ['500 g chicken breast', '8 tortillas', '1 tsp salt']),
   'https://site.test/soup/': recipePage('Lentil Soup', ['300 g red lentils', '1 onion']),
   'https://site.test/no-recipe/': '<html>just a story</html>',
@@ -43,14 +45,19 @@ function fakeModel() {
     async extract({ prompt, schema, text }) {
       asked.push({ prompt, text });
       const keys = Object.keys(schema.properties);
-      if (keys[0] === 'searches') return { data: { searches: ['chicken tacos'] } };
+      if (keys[0] === 'searches') return { data: { searches: [prompt.includes('fish') ? 'salmon' : 'chicken tacos'] } };
       if (keys[0] === 'picks') {
         // The list as numbered for it: pick tacos, the story, then soup.
         const numbered = text.split('\n').filter((l) => /^\d+\. /.test(l));
         const indexOf = (title) => numbered.findIndex((l) => l.includes(title));
         return {
           data: {
-            picks: ['Chicken Tacos', 'A Story', 'Lentil Soup'].map((t) => ({ index: indexOf(t), reason: `likes ${t}` })),
+            picks: (prompt.includes('asked for: fish')
+              ? ['Baked Cod', 'Chicken Tacos', 'Salmon Bowl']
+              : ['Chicken Tacos', 'A Story', 'Lentil Soup']
+            )
+              .filter((t) => indexOf(t) >= 0)
+              .map((t) => ({ index: indexOf(t), reason: `likes ${t}`, fitsRequest: !t.includes('Chicken') })),
           },
         };
       }
@@ -70,7 +77,12 @@ function fakeModel() {
   };
 }
 
-const sites = { list: () => [{ id: 'site' }], posts: async () => POSTS };
+const FISH = [
+  { title: 'Baked Cod', url: 'https://site.test/cod/', site: 'Site', imported: false },
+  { title: 'Chicken Tacos', url: 'https://site.test/tacos/', site: 'Site', imported: false },
+  { title: 'Salmon Bowl', url: 'https://site.test/salmon/', site: 'Site', imported: false },
+];
+const sites = { list: () => [{ id: 'site' }], posts: async (q) => (/fish|salmon|cod/.test(q) ? FISH : POSTS) };
 // One product per search: the search term, as a product.
 const search = async (term) => [
   { id: `s${term.length}${term.charCodeAt(0)}`, name: `Picnic ${term}`, unit_quantity: '500 gram', display_price: 250, image_id: null },
@@ -150,6 +162,15 @@ describe('making an order', () => {
     const logged = db.prepare('SELECT task, imageHash, status FROM vision_requests').all();
     expect(logged).toHaveLength(4);
     expect(new Set(logged.map((r) => r.imageHash)).size).toBe(1);
+  });
+
+  it('sticks to what was asked for', async () => {
+    const model = fakeModel();
+    const order = createLazyOrder({ db, model, sites, search, fetch, now: () => NOW });
+    const result = await order.build({ dinners: 3, wish: '  fish ', userId: ann });
+    // Only what searching for fish found is offered, and a pick that isn't fish is dropped.
+    expect(model.asked[1].text).not.toContain('Lentil Soup');
+    expect(result.recipes.map((r) => r.title)).toEqual(['Baked Cod', 'Salmon Bowl']);
   });
 
   it('just reorders the usuals when asked for no dinners', async () => {

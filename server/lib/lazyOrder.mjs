@@ -18,7 +18,7 @@ import { addItem, keyFor } from './mealPlan.mjs';
 import { saveRecipe } from './recipeStore.mjs';
 
 export const TASK = 'order';
-const PROMPT_VERSION = 'order-2';
+const PROMPT_VERSION = 'order-3';
 
 export class OrderError extends Error {
   constructor(message, status = 400) {
@@ -50,8 +50,9 @@ const PICK_SCHEMA = {
         properties: {
           index: { type: 'integer', description: 'The number of the recipe in the list.' },
           reason: { type: 'string', description: 'Why this household would like it, in under 15 words.' },
+          fitsRequest: { type: 'boolean', description: 'Whether it is what they asked for. True when they asked for nothing.' },
         },
-        required: ['index', 'reason'],
+        required: ['index', 'reason', 'fitsRequest'],
       },
     },
   },
@@ -170,14 +171,19 @@ export function createLazyOrder({ db, model, sites, search, fetch = fetchPage, d
       [
         'You suggest recipe searches for a household, based on what they buy and cook.',
         'Return up to 5 short English searches for dinners they would enjoy, with some variety.',
-        wish ? `They asked for: ${wish}` : '',
+        wish
+          ? `They asked for: ${wish}. Every search must be for that; vary within it (for fish: salmon, cod, tuna…).`
+          : '',
       ]
         .filter(Boolean)
         .join('\n'),
       IDEAS_SCHEMA,
       `They often buy: ${taste.bought.join(', ') || 'unknown'}\nRecipes they have saved: ${taste.cooked.join(', ') || 'none'}`,
     );
-    const found = await Promise.all([sites.posts(''), ...searches.slice(0, 5).map((q) => sites.posts(q))]);
+    // With a request, only what searching for it finds; the sites' latest
+    // posts would mostly be something else.
+    const queries = [...(wish ? [wish] : ['']), ...searches.slice(0, 5)];
+    const found = await Promise.all(queries.map((q) => sites.posts(q)));
     const seen = new Set();
     return found
       .flat()
@@ -258,6 +264,7 @@ export function createLazyOrder({ db, model, sites, search, fetch = fetchPage, d
         throw new OrderError("That's today's limit for AI orders. Try again tomorrow.", 429);
       }
       const build = { id: crypto.randomUUID(), userId };
+      wish = String(wish ?? '').trim().slice(0, 200);
       const count = Math.min(7, Math.max(0, Number(dinners) || 0));
       const people = Math.min(12, Math.max(1, Number(servings) || 2));
       const taste = tastes();
@@ -265,15 +272,17 @@ export function createLazyOrder({ db, model, sites, search, fetch = fetchPage, d
 
       let recipes = [];
       if (count > 0) {
-        const pool = await candidates(build, taste, String(wish ?? '').slice(0, 200));
+        const pool = await candidates(build, taste, wish);
         if (pool.length > 0) {
           const { picks } = await ask(
             build,
             [
               `Pick ${count + 2} dinners this household would enjoy, best first, from the numbered list of recipes.`,
-              'Use what they buy and the recipes they have saved to judge their tastes. Vary the main ingredient.',
+              wish
+                ? `They asked for: ${wish}. Every dinner must be that; pick nothing that isn't, even if fewer. Vary within it.`
+                : 'Vary the main ingredient.',
+              'Use what they buy and the recipes they have saved to judge their tastes.',
               'Prefer healthy, everyday dinners. Skip anything that is not a single recipe.',
-              wish ? `They asked for: ${wish}` : '',
             ]
               .filter(Boolean)
               .join('\n'),
@@ -286,7 +295,9 @@ export function createLazyOrder({ db, model, sites, search, fetch = fetchPage, d
             ].join('\n'),
           );
           // A couple spare, since some pages don't publish their recipe.
-          const chosen = picks.filter((p) => pool[p.index]).map((p) => ({ ...pool[p.index], reason: p.reason }));
+          const chosen = picks
+            .filter((p) => pool[p.index] && (!wish || p.fitsRequest !== false))
+            .map((p) => ({ ...pool[p.index], reason: p.reason }));
           for (const post of chosen) {
             if (recipes.length === count) break;
             const read = await readRecipe(post);

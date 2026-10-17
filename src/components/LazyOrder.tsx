@@ -63,7 +63,7 @@ export default function LazyOrder({
   const [order, setOrder] = useState<Order | null>(null);
   const [dropped, setDropped] = useState<Set<string>>(new Set());
   const [droppedItems, setDroppedItems] = useState<Set<string>>(new Set());
-  const [plan, setPlan] = useState(true);
+  const [plan, setPlan] = useState(false);
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
