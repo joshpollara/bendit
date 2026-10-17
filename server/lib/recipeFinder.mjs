@@ -84,6 +84,7 @@ export function createRecipeFinder({ db, sites, fetch = fetchPage, saveFood }) {
           sourceUrl: String(url),
           sourceNutrition: read.sourceNutrition,
           nutritionFrom: read.sourceNutrition ? 'page' : 'ingredients',
+          imageUrl: read.imageUrl,
         },
         { saveFood, ownerId: userId },
       );

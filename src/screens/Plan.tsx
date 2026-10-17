@@ -109,7 +109,7 @@ const toList = (portions: Portions) =>
     .filter(([, servings]) => servings > 0)
     .map(([userId, servings]) => ({ userId, servings }));
 
-type Choice =
+export type Choice =
   | { kind: 'recipe'; id: string; name: string; servingLabel: string; calories: number | null }
   | { kind: 'food'; id: string; name: string; servingLabel: string; calories: number };
 
@@ -122,7 +122,7 @@ const everyone = (members: HouseholdMember[], servings?: number): Portions =>
     members.map((m) => [m.id, servings ? Math.max(0.5, Math.round((servings / members.length) * 2) / 2) : 1]),
   );
 
-function AddSheet({
+export function AddSheet({
   date,
   members,
   me,

@@ -1,4 +1,5 @@
 import { lazy, Suspense, useRef, useState } from 'react';
+import { useNavigate } from 'react-router-dom';
 import { ApiError, api, type Recipe, type RecipeDraft } from '../lib/api';
 import { useData } from '../lib/useData';
 import { resizeForModel } from '../lib/vision';
@@ -44,6 +45,7 @@ export function recipePhotoErrorMessage(error: unknown) {
 }
 
 export default function Recipes() {
+  const navigate = useNavigate();
   const [reload, setReload] = useState(0);
   const recipes = useData(() => api.recipes(), [reload]);
   const [draft, setDraft] = useState<{ draft: RecipeDraft; id?: string } | null>(null);
@@ -122,35 +124,6 @@ export default function Recipes() {
         unresolved: [],
         approximate: [],
         sourceType: 'manual',
-      },
-    });
-  }
-
-  async function edit(recipe: Recipe) {
-    if (busy !== null) return;
-    setDraft({
-      id: recipe.id,
-      draft: {
-        name: recipe.name,
-        servings: recipe.servings,
-        servingsStated: recipe.servingsStated,
-        ingredients: recipe.ingredients,
-        instructions: recipe.instructions,
-        notes: recipe.notes,
-        sourceType: (recipe.sourceType as 'url' | 'photo' | 'manual') ?? 'manual',
-        sourceUrl: recipe.sourceUrl,
-        sourceNutrition: recipe.sourceNutrition,
-        nutritionFrom: recipe.nutritionFrom,
-        total: { grams: recipe.total.grams, calories: recipe.total.calories },
-        perServing: {
-          grams: recipe.perServing.grams,
-          calories: recipe.perServing.calories,
-          protein: null,
-          carbs: null,
-          fat: null,
-        },
-        unresolved: [],
-        approximate: [],
       },
     });
   }
@@ -351,7 +324,7 @@ export default function Recipes() {
               <button
                 type="button"
                 disabled={busy !== null}
-                onClick={() => void edit(recipe)}
+                onClick={() => navigate(`/recipes/${recipe.id}`)}
                 className="min-w-0 flex-1 text-left disabled:opacity-50"
               >
                 <p className="truncate font-medium">

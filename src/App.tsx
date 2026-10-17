@@ -15,6 +15,7 @@ import Weight from './screens/Weight';
 import Fasting from './screens/Fasting';
 import Foods from './screens/Foods';
 import Recipes from './screens/Recipes';
+import RecipePage from './screens/RecipePage';
 import NutriScore from './screens/NutriScore';
 import Picnic from './screens/Picnic';
 import PicnicCheckout from './screens/PicnicCheckout';
@@ -52,6 +53,7 @@ function Shell({ profile }: { profile: Profile }) {
             <Route path="/reports" element={<Reports profile={profile} />} />
             <Route path="/foods" element={<Foods />} />
             <Route path="/recipes" element={<Recipes />} />
+            <Route path="/recipes/:id" element={<RecipePage />} />
             <Route path="/nutri-score" element={<NutriScore />} />
             <Route path="/picnic" element={<Picnic />} />
             <Route path="/picnic/checkout" element={<PicnicCheckout />} />

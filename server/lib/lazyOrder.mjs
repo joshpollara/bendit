@@ -400,6 +400,7 @@ export function createLazyOrder({ db, model, sites, search, fetch = fetchPage, d
               sourceUrl: url,
               sourceNutrition: read.sourceNutrition,
               nutritionFrom: read.sourceNutrition ? 'page' : 'ingredients',
+              imageUrl: read.imageUrl ?? input.image ?? null,
             },
             { saveFood, ownerId: userId },
           );

@@ -190,6 +190,13 @@ function declaredNutrition(n, servings) {
   };
 }
 
+/** A recipe's photo: schema.org allows a string, an ImageObject, or a list of either. */
+export function imageOf(image) {
+  const first = Array.isArray(image) ? image[0] : image;
+  const url = typeof first === 'string' ? first : first?.url;
+  return typeof url === 'string' && /^https?:\/\//.test(url) ? url : null;
+}
+
 /** "PT1H30M" → 90; null for anything else. */
 export function isoMinutes(value) {
   const match = /^P(?:\d+D)?T?(?:(\d+)H)?(?:(\d+)M)?/i.exec(String(value ?? ''));
@@ -218,6 +225,7 @@ export function recipeFromJsonLd(html) {
     servingsStated: servings != null,
     sourceNutrition: nutrition?.calories != null ? nutrition : null,
     source: 'json-ld',
+    imageUrl: imageOf(node.image),
     // What the page says about itself, for choosing between recipes.
     minutes: isoMinutes(node.totalTime ?? node.cookTime),
     tags: [node.keywords, node.recipeCategory, node.recipeCuisine]

@@ -146,3 +146,13 @@ describe('parseIngredients', () => {
     expect(parseIngredients('2 tbsp olive oil\n1 onion')).toHaveLength(2);
   });
 });
+
+describe('amounts as some sites write them', () => {
+  it('reads "1-1/2" as one and a half, not a range', () => {
+    expect(parseIngredient('1-1/2 cups tomato sauce')).toMatchObject({ quantity: 1.5, unit: 'cup', name: 'tomato sauce' });
+  });
+
+  it('reads "1 or 2" as a range, like "1-2"', () => {
+    expect(parseIngredient('1 or 2 tbsp chipotle in adobo')).toMatchObject({ quantity: 1.5, unit: 'tbsp' });
+  });
+});
