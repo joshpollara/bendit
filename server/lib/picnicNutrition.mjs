@@ -6,6 +6,8 @@
 // format ("4,6g", "1.145 kJ"). Fresh produce usually has no such section at
 // all, and then there is nothing to read.
 
+import { fruitVegShare } from './fruitVeg.mjs';
+
 /** The nutrition section's title, in each language Picnic delivers in. */
 const SECTION = /^(voedingswaarde|nährwert|valeurs? nutritionnelles?)/i;
 
@@ -83,6 +85,20 @@ export function packGrams(unitQuantity) {
   return Math.round(count * amount * scale);
 }
 
+/** Foods that are sold by volume all the same. */
+const VOLUME_FOODS =
+  /melk|choco|yoghurt|yogurt|kwark|vla\b|room|custard|\bpap\b|toetje|soep|bouillon|saus|olie|azijn|ketjap|dressing|mayonaise|stroop|siroop|honing|\bijs\b|roomijs|sorbet|wijn|bier|schuim|spray/;
+
+/**
+ * A drink: sold by volume, and not one of the foods that are too. Brand names
+ * are endless, so it goes by what isn't a drink rather than what is.
+ */
+export function isDrink(details, name) {
+  const volume = /\b\d+(?:[.,]\d+)?\s*(?:ml|cl|l|liter)\b/i.test(String(details?.unitQuantity ?? ''));
+  const title = `${details?.name ?? ''} ${name ?? ''}`.toLowerCase();
+  return volume && !VOLUME_FOODS.test(title);
+}
+
 const round1 = (value) => (value == null ? null : Math.round(value * 10) / 10);
 
 /**
@@ -94,8 +110,14 @@ export function picnicFood(details, { name } = {}) {
   const section = details?.infoSections?.find((s) => SECTION.test(s.title));
   const per100 = section && parsePicnicNutrition(section.content);
   if (!per100) return null;
+  // The fruit and vegetable share, where the ingredient list states one.
+  const ingredients = details.infoSections.find((s) => /^ingredi[eë]nt|^zutaten|^ingrédients/i.test(s.title));
+  const fruitVeg = ingredients ? fruitVegShare(ingredients.content) : null;
 
-  const unit = per100.basis;
+  // Picnic's labels say "per 100 g" even for juice. Something sold by volume
+  // and called a drink is one, and is graded on the far stricter drink scales.
+  // Milk, yoghurt and vla stay foods, as Nutri-Score has them.
+  const unit = per100.basis === 'ml' || isDrink(details, name) ? 'ml' : per100.basis;
   const pack = packGrams(details.unitQuantity);
   const per = (value) => round1(value);
   return {
@@ -119,6 +141,7 @@ export function picnicFood(details, { name } = {}) {
     sugar100: per100.sugar100 ?? null,
     satFat100: per100.satFat100 ?? null,
     sodiumMg100: per100.sodiumMg100 ?? null,
+    ...(fruitVeg != null ? { fruitVeg } : {}),
     servings: [
       { label: `100 ${unit}`, grams: 100 },
       ...(pack && pack !== 100 ? [{ label: `Pack (${details.unitQuantity})`, grams: pack }] : []),

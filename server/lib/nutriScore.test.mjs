@@ -187,3 +187,16 @@ describe('processingForMeal', () => {
     expect(processingForMeal([])).toBeNull();
   });
 });
+
+describe('fruit in drinks', () => {
+  it('scores 2, 4 and 10 for a drink, against 1, 2 and 5 for a food', () => {
+    const juice = { kcal100: 46, sugar100: 10.2, satFat100: 0, sodiumMg100: 0, basis: 'ml' };
+    expect(nutriScore({ ...juice, fruitVeg: 100 }).breakdown.fruitVeg).toBe(10);
+    expect(nutriScore({ ...juice, fruitVeg: 70 }).breakdown.fruitVeg).toBe(4);
+    expect(nutriScore({ ...juice, fruitVeg: 50 }).breakdown.fruitVeg).toBe(2);
+    expect(nutriScore({ ...juice, basis: 'g', fruitVeg: 100 }).breakdown.fruitVeg).toBe(5);
+    // Pure apple juice is a C; the same with no fruit, a sugary drink, an E.
+    expect(nutriScore({ ...juice, fruitVeg: 100 }).grade).toBe('C');
+    expect(nutriScore(juice).grade).toBe('E');
+  });
+});
