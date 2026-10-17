@@ -10,6 +10,11 @@
 // key derived from the password, so a copy of the database alone doesn't carry
 // a usable session.
 //
+// A session lasts about six months. In its last week it's renewed by signing
+// in again where Picnic allows that without a code; where it doesn't,
+// checkSession() says so, a week and a day before and once it has ended, for
+// everyone to be told.
+//
 // The API is not supported by Picnic and can change without notice. Every
 // failure comes back as a PicnicError with a code the client can act on,
 // rather than as whatever the library happened to throw.
@@ -32,6 +37,34 @@ export function createPicnicTables(db) {
     id INTEGER PRIMARY KEY CHECK (id = 1),
     authKey TEXT, pendingAuthKey TEXT, updatedAt TEXT NOT NULL
   )`);
+  // The last warning given about this session ending: week, day or ended.
+  try {
+    db.exec('ALTER TABLE picnic_session ADD COLUMN warned TEXT');
+  } catch {
+    // Already there.
+  }
+}
+
+/** When a session ends, from the expiry in Picnic's key (a JWT); null if it can't be read. */
+export function expiryOf(key) {
+  try {
+    const claims = JSON.parse(Buffer.from(String(key).split('.')[1], 'base64url').toString('utf8'));
+    return Number.isFinite(claims?.exp) ? claims.exp * 1000 : null;
+  } catch {
+    return null;
+  }
+}
+
+const DAY_MS = 24 * 60 * 60 * 1000;
+const WARNINGS = ['week', 'day', 'ended'];
+
+/** Which warning a session ending at `expiresAt` is due at `now`, if any. */
+export function warningAt(expiresAt, now) {
+  const left = expiresAt - now;
+  if (left <= 0) return 'ended';
+  if (left <= DAY_MS) return 'day';
+  if (left <= 7 * DAY_MS) return 'week';
+  return null;
 }
 
 /** AES-256-GCM, keyed from the account password: iv.tag.ciphertext, base64url. */
@@ -61,7 +94,7 @@ function cipher(password) {
 /** The library throws plain Errors; an expired session is recognisable only by its text. */
 const isAuthFailure = (error) => /\b40[13]\b|unauthori[sz]ed|AUTH_|invalid.*(token|key)/i.test(String(error?.message));
 
-export function createPicnic({ db, env = process.env, Client = PicnicClient }) {
+export function createPicnic({ db, env = process.env, Client = PicnicClient, now = () => Date.now() }) {
   createPicnicTables(db);
   const username = env.PICNIC_USERNAME;
   const password = env.PICNIC_PASSWORD;
@@ -70,14 +103,19 @@ export function createPicnic({ db, env = process.env, Client = PicnicClient }) {
   const box = configured ? cipher(password) : null;
 
   const row = () => db.prepare('SELECT * FROM picnic_session WHERE id = 1').get();
-  const store = ({ authKey = null, pendingAuthKey = null }) =>
+  // A new session starts with no warnings given.
+  const store = ({ authKey = null, pendingAuthKey = null, warned = null }) =>
     db
       .prepare(
-        `INSERT INTO picnic_session (id, authKey, pendingAuthKey, updatedAt) VALUES (1, ?, ?, ?)
+        `INSERT INTO picnic_session (id, authKey, pendingAuthKey, updatedAt, warned) VALUES (1, ?, ?, ?, ?)
          ON CONFLICT(id) DO UPDATE SET authKey = excluded.authKey,
-           pendingAuthKey = excluded.pendingAuthKey, updatedAt = excluded.updatedAt`,
+           pendingAuthKey = excluded.pendingAuthKey, updatedAt = excluded.updatedAt, warned = excluded.warned`,
       )
-      .run(authKey && box.seal(authKey), pendingAuthKey && box.seal(pendingAuthKey), new Date().toISOString());
+      .run(authKey && box.seal(authKey), pendingAuthKey && box.seal(pendingAuthKey), new Date().toISOString(), warned);
+
+  // Told when a request finds the session has ended. Set with onSessionEnded().
+  let onEnded = null;
+  let lastRenewal = 0;
 
   const authKey = () => (configured && row()?.authKey ? box.open(row().authKey) : null);
   const pendingAuthKey = () => (configured && row()?.pendingAuthKey ? box.open(row().pendingAuthKey) : null);
@@ -96,8 +134,38 @@ export function createPicnic({ db, env = process.env, Client = PicnicClient }) {
     return new Client({ countryCode, authKey: key });
   }
 
+  /**
+   * Signs in again without a code, where Picnic allows it. Never sends one:
+   * nobody may be there to type it in. True when there's a new session.
+   */
+  async function renew() {
+    if (!configured) return false;
+    try {
+      const login = await new Client({ countryCode }).auth.login(username, password);
+      if (login.second_factor_authentication_required || !login.authKey) return false;
+      store({ authKey: login.authKey, pendingAuthKey: pendingAuthKey() });
+      return true;
+    } catch {
+      return false;
+    }
+  }
+
+  /** The session has ended: drop it, remembering that's been said. */
+  const ended = () => store({ pendingAuthKey: pendingAuthKey(), warned: 'ended' });
+
+  /** Whether the session behind a refused call is really gone: one more, simple, request. */
+  async function sessionGone(key) {
+    try {
+      await new Client({ countryCode, authKey: key }).user.getUserDetails();
+      return false;
+    } catch (error) {
+      return isAuthFailure(error);
+    }
+  }
+
   /** Runs a call against Picnic, turning its failures into PicnicErrors. */
-  async function call(fn) {
+  async function call(fn, { retried = false } = {}) {
+    const key = configured ? authKey() : null;
     try {
       return await fn(client());
     } catch (error) {
@@ -115,8 +183,15 @@ export function createPicnic({ db, env = process.env, Client = PicnicClient }) {
           },
         });
       }
-      if (isAuthFailure(error)) {
-        store({});
+      // A refusal can be about the request rather than the session (a 403
+      // for one thing): it's only dropped once that's checked.
+      if (isAuthFailure(error) && key && (await sessionGone(key))) {
+        // Renewed meanwhile, or renewable now: try once more with that.
+        if (!retried && (authKey() !== key || (await renew()))) return call(fn, { retried: true });
+        if (authKey() === key) {
+          ended();
+          onEnded?.();
+        }
         throw new PicnicError('session_expired', 'The Picnic session has expired. Connect again.', {
           status: 409,
         });
@@ -128,12 +203,19 @@ export function createPicnic({ db, env = process.env, Client = PicnicClient }) {
   return {
     countryCode,
 
+    onSessionEnded(fn) {
+      onEnded = fn;
+    },
+
     status() {
+      const key = authKey();
+      const expires = key ? expiryOf(key) : null;
       return {
         configured,
-        connected: Boolean(authKey()),
-        awaitingCode: !authKey() && Boolean(pendingAuthKey()),
+        connected: Boolean(key),
+        awaitingCode: Boolean(pendingAuthKey()),
         countryCode,
+        expiresAt: expires ? new Date(expires).toISOString() : null,
       };
     },
 
@@ -149,7 +231,8 @@ export function createPicnic({ db, env = process.env, Client = PicnicClient }) {
       }
       if (login.second_factor_authentication_required) {
         await picnic.auth.generate2FACode('SMS');
-        store({ pendingAuthKey: login.authKey });
+        // Signing in again before the session ends keeps it working meanwhile.
+        store({ authKey: authKey(), pendingAuthKey: login.authKey, warned: row()?.warned ?? null });
         return this.status();
       }
       store({ authKey: login.authKey });
@@ -173,8 +256,34 @@ export function createPicnic({ db, env = process.env, Client = PicnicClient }) {
       return this.status();
     },
 
+    /**
+     * Run every so often. Renews a session in its last week where that needs
+     * no code, drops one that has ended, and returns the warning now due —
+     * 'week', 'day' or 'ended' — once each, or null.
+     */
+    async checkSession() {
+      const key = configured ? authKey() : null;
+      if (!key) return null;
+      const expires = expiryOf(key);
+      if (!expires) return null;
+      const due = warningAt(expires, now());
+      if (!due) return null;
+      if (now() - lastRenewal > 12 * 60 * 60 * 1000) {
+        lastRenewal = now();
+        if (await renew()) return null;
+      }
+      const warned = row()?.warned;
+      if (due === 'ended') ended();
+      if (WARNINGS.indexOf(due) <= WARNINGS.indexOf(warned)) return null;
+      if (due !== 'ended') db.prepare('UPDATE picnic_session SET warned = ? WHERE id = 1').run(due);
+      return { warning: due, expiresAt: new Date(expires).toISOString() };
+    },
+
     async disconnect() {
-      if (authKey()) await client().auth.logout().catch(() => {});
+      if (authKey())
+        await client()
+          .auth.logout()
+          .catch(() => {});
       if (configured) store({});
       return this.status();
     },
@@ -210,5 +319,7 @@ export function createPicnic({ db, env = process.env, Client = PicnicClient }) {
     delivery: (id) => call((p) => p.delivery.getDelivery(id)),
     /** Live position, or null: Picnic only answers while a delivery is on its way. */
     position: (id) => call((p) => p.delivery.getDeliveryPosition(id)).catch(() => null),
+    /** The planned route and the driver, or null, likewise only while it's on its way. */
+    scenario: (id) => call((p) => p.delivery.getDeliveryScenario(id)).catch(() => null),
   };
 }

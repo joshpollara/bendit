@@ -110,6 +110,8 @@ export interface PicnicStatus {
   /** Picnic sent an SMS code and is waiting for it. */
   awaitingCode: boolean;
   countryCode: string;
+  /** When the sign-in ends, if Picnic's key says. */
+  expiresAt: string | null;
 }
 
 /** A product as Picnic's search returns it. Prices are in cents. */
@@ -311,11 +313,31 @@ export interface PicnicDeliverySummary {
 
 export interface PicnicHome {
   next: { cutOffTime: string; windowStart: string; windowEnd: string | null; ordered: boolean } | null;
-  arriving: { id: string; status: string; windowStart: string; windowEnd: string | null; totalPrice: number | null } | null;
+  arriving: {
+    id: string;
+    status: string;
+    windowStart: string;
+    windowEnd: string | null;
+    totalPrice: number | null;
+    /** Picnic's live estimate, once the van could be out. */
+    eta: string | null;
+    minutes: number | null;
+  } | null;
   usualsDue: number;
   /** Usuals on a deal; null when the deals weren't ready in time. */
   deals: number | null;
   plan: number;
+}
+
+/** A delivery on its way. */
+export interface PicnicTracking {
+  eta: string;
+  minutes: number;
+  moving: boolean;
+  pollMs: number;
+  driver: { name: string; photoUrl: string | null } | null;
+  /** The planned route as [lat, lng], and the index the van is at. */
+  route: { points: [number, number][]; at: number } | null;
 }
 
 export interface PicnicDelivery {
@@ -325,7 +347,7 @@ export interface PicnicDelivery {
   window: { start: string | null; end: string | null };
   eta: { start: string; end: string } | null;
   delivered: { start: string; end: string } | null;
-  position: { eta: number; eta_window: { start: string; end: string } } | null;
+  tracking: PicnicTracking | null;
   items: { id: string; name: string; unitQuantity: string; imageId: string | null; quantity: number }[];
 }
 
@@ -1005,6 +1027,8 @@ export const api = {
   picnicCancelDelivery: (id: string) => post(`/api/picnic/deliveries/${encodeURIComponent(id)}/cancel`, {}),
   picnicEmailInvoice: (id: string) => post(`/api/picnic/deliveries/${encodeURIComponent(id)}/invoice`, {}),
   picnicDeliveries: () => j<PicnicDeliverySummary[]>('/api/picnic/deliveries'),
+  picnicTracking: (id: string) =>
+    j<PicnicTracking | null>(`/api/picnic/deliveries/${encodeURIComponent(id)}/tracking`),
   picnicDelivery: (id: string) => j<PicnicDelivery>(`/api/picnic/deliveries/${encodeURIComponent(id)}`),
   picnicStatus: () => j<PicnicStatus>('/api/picnic/status'),
   picnicConnect: () => post('/api/picnic/connect', {}) as Promise<PicnicStatus>,

@@ -19,6 +19,8 @@ import CheckoutSheet from '../components/PicnicCheckout';
 import GradeBadge from '../components/GradeBadge';
 import PicnicReminder from '../components/PicnicReminder';
 import PicnicHome from '../components/PicnicHome';
+import PicnicSetting, { endsSoon } from '../components/PicnicSetting';
+import PicnicTrackingView from '../components/PicnicTracking';
 import { unavailableOf } from '../lib/picnicUnavailable';
 
 const quantityOf = (article: PicnicCartArticle) =>
@@ -393,10 +395,10 @@ function DeliverySheet({ id, onClose }: { id: string; onClose: () => void }) {
                 ? `Delivered ${when(delivery.delivered.start)}`
                 : `Slot ${windowText(delivery.window.start, delivery.window.end)}`}
             </p>
-            {delivery.position ? (
-              <p className="text-sm font-medium text-accent">
-                Expected {when(new Date(delivery.position.eta).toISOString(), 'HH:mm')}
-              </p>
+            {delivery.tracking ? (
+              <div className="mt-2">
+                <PicnicTrackingView id={delivery.id} initial={delivery.tracking} />
+              </div>
             ) : (
               delivery.status !== 'COMPLETED' &&
               delivery.eta && (
@@ -596,6 +598,7 @@ export default function Picnic() {
     params.get('tab') === 'cart' ? 'cart' : params.get('tab') === 'orders' ? 'orders' : 'home',
   );
   const [checkingOut, setCheckingOut] = useState(false);
+  const [delivery, setDelivery] = useState<string | null>(null);
   const [query, setQuery] = useState('');
   const [open, setOpen] = useState<{ id: string; name: string } | null>(null);
   const [cart, setCart] = useState<PicnicCart>();
@@ -654,24 +657,23 @@ export default function Picnic() {
       </header>
 
       {status && !ready ? (
-        <p className="mx-4 rounded-2xl border border-line bg-card p-4 text-sm text-ink-secondary lg:mx-0">
+        <div className="mx-4 rounded-2xl border border-line bg-card p-4 text-sm text-ink-secondary lg:mx-0">
           {status.configured ? (
-            <>
-              Picnic isn't connected.{' '}
-              <Link to="/settings" className="font-medium text-accent underline">
-                Connect it in Settings
-              </Link>
-              .
-            </>
+            <PicnicSetting heading={false} />
           ) : (
             <>
               Picnic isn't set up on this server. Set <code className="text-xs">PICNIC_USERNAME</code> and{' '}
               <code className="text-xs">PICNIC_PASSWORD</code> to use it.
             </>
           )}
-        </p>
+        </div>
       ) : (
         <>
+          {(status?.awaitingCode || endsSoon(status)) && (
+            <div className="mx-4 mb-3 rounded-2xl border border-accent bg-card p-4 lg:mx-0">
+              <PicnicSetting heading={false} />
+            </div>
+          )}
           <div className="mx-4 mb-3 flex items-center gap-2 rounded-xl border border-line bg-card px-3 lg:mx-0">
             <SearchIcon className="h-4 w-4 shrink-0 text-ink-muted" />
             <input
@@ -738,7 +740,7 @@ export default function Picnic() {
               )}
             </div>
           ) : tab === 'home' ? (
-            <PicnicHome cart={cart} onCart={() => setTab('cart')} />
+            <PicnicHome cart={cart} onCart={() => setTab('cart')} onDelivery={setDelivery} />
           ) : tab === 'cart' ? (
             <div className="mx-4 mt-3 overflow-hidden rounded-2xl border border-line bg-card shadow-sm lg:mx-0">
               <SlotSection onChanged={() => api.picnicCart().then(setCart)} />
@@ -765,6 +767,7 @@ export default function Picnic() {
       )}
 
       {checkingOut && <CheckoutSheet onClose={() => setCheckingOut(false)} />}
+      {delivery && <DeliverySheet id={delivery} onClose={() => setDelivery(null)} />}
       {open && (
         <ProductSheet
           id={open.id}

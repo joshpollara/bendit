@@ -12,6 +12,7 @@ import { gradeMeal, nutriScore, processingForMeal } from './lib/nutriScore.mjs';
 import { abMonth, AbError, clearGoal, createAbTables, goalFor, setGoal } from './lib/abMonth.mjs';
 import { createRatingTables, rate, RatingError, ratingsOf, toRate } from './lib/ratings.mjs';
 import { picnicHome } from './lib/picnicHome.mjs';
+import { trackingOf } from './lib/picnicTracking.mjs';
 import { createPicnicReminders, createPicnicReminderTables, reminderFor, setReminder } from './lib/picnicReminder.mjs';
 import { cachedCost, costRecipe, createRecipeCostTables } from './lib/recipeCost.mjs';
 import {
@@ -2408,6 +2409,26 @@ app.post(
 
 // Most recent first. There can be hundreds; nobody scrolls past the last few.
 app.get('/api/picnic/deliveries', picnicRoute(async () => (await picnic.deliveries()).slice(0, 30)));
+// A delivery on its way. See lib/picnicTracking.mjs. The planned route
+// barely changes while it's out, so it's asked for every few minutes, and
+// only once Picnic gives a position.
+const routes = new Map();
+async function tracking(id) {
+  const position = await picnic.position(id);
+  if (!position) return null;
+  let route = routes.get(id);
+  if (!route || Date.now() - route.at > 5 * 60 * 1000) {
+    const scenario = await picnic.scenario(id);
+    route = { at: Date.now(), scenario: scenario ?? route?.scenario ?? null };
+    routes.set(id, route);
+    for (const [key, value] of routes) if (Date.now() - value.at > 6 * 60 * 60 * 1000) routes.delete(key);
+  }
+  return trackingOf({ position, scenario: route.scenario });
+}
+app.get(
+  '/api/picnic/deliveries/:id/tracking',
+  picnicRoute((req) => tracking(req.params.id)),
+);
 app.get(
   '/api/picnic/deliveries/:id',
   picnicRoute(async (req) => {
@@ -2420,7 +2441,7 @@ app.get(
       window: { start: delivery.slot?.window_start ?? null, end: delivery.slot?.window_end ?? null },
       eta: delivery.eta2 ?? null,
       delivered: delivery.delivery_time ?? null,
-      position: live ? await picnic.position(delivery.id ?? delivery.delivery_id) : null,
+      tracking: live ? await tracking(delivery.id ?? delivery.delivery_id) : null,
       // Per-item prices on a past delivery aren't in cents, so only names and counts are passed on.
       items: delivery.orders.flatMap((order) =>
         order.items.flatMap((line) =>
@@ -2638,7 +2659,7 @@ app.post('/api/push/test', async (req, res) => {
 });
 
 /** Sends to one person's devices — never to everyone's. */
-async function sendReminder(userId, title, body) {
+async function sendReminder(userId, title, body, { url, tag } = {}) {
   if (!pushReady) return 0;
   const subs = db.prepare('SELECT * FROM push_subscriptions WHERE userId = ?').all(userId);
   let sent = 0;
@@ -2646,7 +2667,7 @@ async function sendReminder(userId, title, body) {
     try {
       await webpush.sendNotification(
         { endpoint: sub.endpoint, keys: { p256dh: sub.p256dh, auth: sub.auth } },
-        JSON.stringify({ title, body }),
+        JSON.stringify({ title, body, url, tag }),
       );
       sent++;
     } catch (err) {
@@ -2736,6 +2757,7 @@ app.get(
     return picnicHome({
       next: () => picnicReminders.next(),
       deliveries: () => picnic.deliveries(),
+      track: (id) => tracking(id),
       usualsDue: usuals(db).filter((u) => u.due).length,
       dealCount: async () => (await dealFinder.usualDeals(dealUsuals())).length,
       planCount: plan,
@@ -2744,6 +2766,34 @@ app.get(
 );
 
 // Every five minutes: cheap, and fine-grained enough for an hourly trigger.
+// The household's Picnic sign-in: renewed where it can be, and everyone told
+// when it's about to end or has, as it's shared. See lib/picnic.mjs.
+function sessionMessage(warning, expiresAt) {
+  if (warning === 'ended') return { title: 'Picnic is signed out', body: 'Tap to sign in again.' };
+  const when = new Date(expiresAt).toLocaleString('en-GB', {
+    weekday: 'short',
+    day: 'numeric',
+    month: 'short',
+    ...(warning === 'day' && { hour: '2-digit', minute: '2-digit' }),
+    timeZone: 'Europe/Amsterdam',
+  });
+  return { title: `Picnic sign-in ends ${when.replaceAll(',', '')}`, body: 'Tap to sign in again.' };
+}
+async function tellEveryone({ title, body }) {
+  for (const { userId } of db.prepare('SELECT DISTINCT userId FROM push_subscriptions').all()) {
+    await sendReminder(userId, title, body, { url: '/picnic', tag: 'bendit-picnic-session' });
+  }
+}
+picnic.onSessionEnded(() => void tellEveryone(sessionMessage('ended')).catch(() => {}));
+async function picnicSessionTick() {
+  const due = await picnic.checkSession();
+  if (due) await tellEveryone(sessionMessage(due.warning, due.expiresAt));
+}
+setInterval(() => {
+  picnicSessionTick().catch((error) => console.error('picnic session check failed:', error?.message ?? error));
+}, 30 * 60_000).unref();
+setTimeout(() => void picnicSessionTick().catch(() => {}), 60_000).unref();
+
 if (pushReady) {
   setInterval(() => {
     void reminderTick();
