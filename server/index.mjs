@@ -2659,7 +2659,7 @@ app.post('/api/push/test', async (req, res) => {
 });
 
 /** Sends to one person's devices — never to everyone's. */
-async function sendReminder(userId, title, body) {
+async function sendReminder(userId, title, body, { url, tag } = {}) {
   if (!pushReady) return 0;
   const subs = db.prepare('SELECT * FROM push_subscriptions WHERE userId = ?').all(userId);
   let sent = 0;
@@ -2667,7 +2667,7 @@ async function sendReminder(userId, title, body) {
     try {
       await webpush.sendNotification(
         { endpoint: sub.endpoint, keys: { p256dh: sub.p256dh, auth: sub.auth } },
-        JSON.stringify({ title, body }),
+        JSON.stringify({ title, body, url, tag }),
       );
       sent++;
     } catch (err) {
@@ -2766,6 +2766,34 @@ app.get(
 );
 
 // Every five minutes: cheap, and fine-grained enough for an hourly trigger.
+// The household's Picnic sign-in: renewed where it can be, and everyone told
+// when it's about to end or has, as it's shared. See lib/picnic.mjs.
+function sessionMessage(warning, expiresAt) {
+  if (warning === 'ended') return { title: 'Picnic is signed out', body: 'Tap to sign in again.' };
+  const when = new Date(expiresAt).toLocaleString('en-GB', {
+    weekday: 'short',
+    day: 'numeric',
+    month: 'short',
+    ...(warning === 'day' && { hour: '2-digit', minute: '2-digit' }),
+    timeZone: 'Europe/Amsterdam',
+  });
+  return { title: `Picnic sign-in ends ${when.replaceAll(',', '')}`, body: 'Tap to sign in again.' };
+}
+async function tellEveryone({ title, body }) {
+  for (const { userId } of db.prepare('SELECT DISTINCT userId FROM push_subscriptions').all()) {
+    await sendReminder(userId, title, body, { url: '/picnic', tag: 'bendit-picnic-session' });
+  }
+}
+picnic.onSessionEnded(() => void tellEveryone(sessionMessage('ended')).catch(() => {}));
+async function picnicSessionTick() {
+  const due = await picnic.checkSession();
+  if (due) await tellEveryone(sessionMessage(due.warning, due.expiresAt));
+}
+setInterval(() => {
+  picnicSessionTick().catch((error) => console.error('picnic session check failed:', error?.message ?? error));
+}, 30 * 60_000).unref();
+setTimeout(() => void picnicSessionTick().catch(() => {}), 60_000).unref();
+
 if (pushReady) {
   setInterval(() => {
     void reminderTick();

@@ -91,7 +91,7 @@ export default function PicnicHome({
                 : 'Cart is empty'
               : 'Cart'}
           </span>
-          <span>{next ? 'Cart →' : 'Pick a slot →'}</span>
+          <span>{next || !home ? 'Cart →' : 'Pick a slot →'}</span>
         </button>
         {soldOut > 0 && (
           <p className="mt-2 text-sm font-medium text-over">

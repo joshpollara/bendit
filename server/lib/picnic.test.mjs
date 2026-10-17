@@ -14,6 +14,8 @@ function fakeClient(behaviour = {}) {
       this.auth = {
         login: async (user, pass) => {
           calls.push(['login', user, pass]);
+          const logins = calls.filter((c) => c[0] === 'login').length;
+          if (logins > 1 && behaviour.relogin) return behaviour.relogin;
           return behaviour.login ?? { authKey: 'full-key', second_factor_authentication_required: false };
         },
         generate2FACode: async (channel) => calls.push(['generate2FACode', channel]),
@@ -27,11 +29,20 @@ function fakeClient(behaviour = {}) {
       this.catalog = {
         search: async (q) => {
           calls.push(['search', q, this.options.authKey]);
-          if (behaviour.searchError) throw new Error(behaviour.searchError);
+          if (behaviour.searchError && (!behaviour.failingKey || behaviour.failingKey === this.options.authKey)) {
+            throw new Error(behaviour.searchError);
+          }
           return [{ id: 's1', name: q }];
         },
       };
       this.cart = { getCart: async () => ({ items: [] }) };
+      this.user = {
+        getUserDetails: async () => {
+          calls.push(['getUserDetails', this.options.authKey]);
+          if (behaviour.userError) throw new Error(behaviour.userError);
+          return { user_id: 'u1' };
+        },
+      };
     }
   }
   return { Client, calls };
@@ -101,11 +112,38 @@ describe('picnic', () => {
     expect(changed.status()).toMatchObject({ connected: false });
   });
 
-  it('drops an expired session and says so', async () => {
-    const { picnic } = setup({ searchError: '401 Unauthorized' });
+  it("drops an expired session and says so, when it can't be renewed without a code", async () => {
+    const { picnic } = setup({
+      searchError: '401 Unauthorized',
+      userError: '401 Unauthorized',
+      relogin: { authKey: 'pending', second_factor_authentication_required: true },
+    });
+    let told = 0;
+    picnic.onSessionEnded(() => told++);
     await picnic.connect();
     await expect(picnic.search('melk')).rejects.toMatchObject({ code: 'session_expired' });
-    expect(picnic.status()).toMatchObject({ connected: false });
+    expect(picnic.status()).toMatchObject({ connected: false, awaitingCode: false });
+    expect(told).toBe(1);
+  });
+
+  it('keeps the session when only the request was refused', async () => {
+    const { picnic } = setup({ searchError: '403 Forbidden' });
+    await picnic.connect();
+    await expect(picnic.search('melk')).rejects.toMatchObject({ code: 'picnic_failed' });
+    expect(picnic.status()).toMatchObject({ connected: true });
+  });
+
+  it('signs in again without a code where Picnic allows, and carries on', async () => {
+    const { picnic, calls } = setup({
+      searchError: '401 Unauthorized',
+      failingKey: 'full-key',
+      userError: '401 Unauthorized',
+      relogin: { authKey: 'renewed-key', second_factor_authentication_required: false },
+    });
+    await picnic.connect();
+    expect(await picnic.search('melk')).toEqual([{ id: 's1', name: 'melk' }]);
+    expect(calls).toContainEqual(['search', 'melk', 'renewed-key']);
+    expect(calls.filter((c) => c[0] === 'generate2FACode')).toHaveLength(0);
   });
 
   it('reports any other failure without dropping the session', async () => {
@@ -149,5 +187,73 @@ describe('picnic', () => {
     await picnic.connect();
     expect(await picnic.disconnect()).toMatchObject({ connected: false });
     expect(calls).toContainEqual(['logout']);
+  });
+});
+
+const jwt = (expMs) =>
+  ['h', Buffer.from(JSON.stringify({ exp: Math.floor(expMs / 1000) })).toString('base64url'), 's'].join('.');
+const DAY = 24 * 60 * 60 * 1000;
+
+describe('picnic session ending', () => {
+  const START = Date.parse('2026-10-17T12:00:00Z');
+  const make = (behaviour) => {
+    const db = new Database(':memory:');
+    const fake = fakeClient(behaviour);
+    let clock = START;
+    const picnic = createPicnic({ db, env: ENV, Client: fake.Client, now: () => clock });
+    return { picnic, calls: fake.calls, at: (t) => (clock = t) };
+  };
+  const needsCode = { authKey: 'pending', second_factor_authentication_required: true };
+
+  it('says when the session ends', async () => {
+    const { picnic } = make({
+      login: { authKey: jwt(START + 180 * DAY), second_factor_authentication_required: false },
+    });
+    await picnic.connect();
+    expect(picnic.status().expiresAt).toBe(new Date(Math.floor((START + 180 * DAY) / 1000) * 1000).toISOString());
+  });
+
+  it('warns a week before, a day before and once it has ended, once each', async () => {
+    const exp = START + 30 * DAY;
+    const { picnic, at } = make({
+      login: { authKey: jwt(exp), second_factor_authentication_required: false },
+      relogin: needsCode,
+    });
+    await picnic.connect();
+    expect(await picnic.checkSession()).toBeNull();
+    at(exp - 6 * DAY);
+    expect(await picnic.checkSession()).toMatchObject({ warning: 'week' });
+    expect(await picnic.checkSession()).toBeNull();
+    at(exp - 12 * 60 * 60 * 1000);
+    expect(await picnic.checkSession()).toMatchObject({ warning: 'day' });
+    expect(await picnic.checkSession()).toBeNull();
+    at(exp + 60_000);
+    expect(await picnic.checkSession()).toMatchObject({ warning: 'ended' });
+    expect(picnic.status().connected).toBe(false);
+    expect(await picnic.checkSession()).toBeNull();
+  });
+
+  it('renews in the last week where no code is needed, without warning', async () => {
+    const exp = START + 30 * DAY;
+    const { picnic, at, calls } = make({
+      login: { authKey: jwt(exp), second_factor_authentication_required: false },
+      relogin: { authKey: jwt(exp + 180 * DAY), second_factor_authentication_required: false },
+    });
+    await picnic.connect();
+    at(exp - 5 * DAY);
+    expect(await picnic.checkSession()).toBeNull();
+    expect(Date.parse(picnic.status().expiresAt)).toBeGreaterThan(exp + 100 * DAY);
+    expect(calls.filter((c) => c[0] === 'generate2FACode')).toHaveLength(0);
+  });
+
+  it('keeps the old session working while a new code is awaited', async () => {
+    const { picnic } = make({
+      login: { authKey: jwt(START + 3 * DAY), second_factor_authentication_required: false },
+      relogin: needsCode,
+    });
+    await picnic.connect();
+    expect(await picnic.connect()).toMatchObject({ connected: true, awaitingCode: true });
+    await picnic.search('melk');
+    expect(await picnic.verify('123456')).toMatchObject({ connected: true, awaitingCode: false });
   });
 });

@@ -110,6 +110,8 @@ export interface PicnicStatus {
   /** Picnic sent an SMS code and is waiting for it. */
   awaitingCode: boolean;
   countryCode: string;
+  /** When the sign-in ends, if Picnic's key says. */
+  expiresAt: string | null;
 }
 
 /** A product as Picnic's search returns it. Prices are in cents. */
