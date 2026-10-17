@@ -62,6 +62,7 @@ import {
 } from './lib/picnicCheckout.mjs';
 import { createHistoryTables, pastOrders, syncHistory, usuals } from './lib/picnicHistory.mjs';
 import { createSwapChecker, createSwapTables } from './lib/picnicSwaps.mjs';
+import { lessWaste } from './lib/lessWaste.mjs';
 import {
   addItem as addPlanItem,
   createMealPlanTables,
@@ -2003,6 +2004,29 @@ app.get(
   picnicRoute((req) => {
     picnic.status().connected || picnicNotConnected();
     return withProducts(db, shoppingList(db, req.query.from, req.query.to), suggestProduct);
+  }),
+);
+
+// What the week's packs leave over, smaller or larger packs that leave less,
+// and recipes that would use up the rest.
+app.get(
+  '/api/shopping-list/picnic/less-waste',
+  picnicRoute(async (req) => {
+    picnic.status().connected || picnicNotConnected();
+    const { from, to } = req.query;
+    const list = await withProducts(db, shoppingList(db, from, to), suggestProduct);
+    const planned = new Set(
+      db
+        .prepare('SELECT recipeId FROM meal_plan_items WHERE date BETWEEN ? AND ? AND recipeId IS NOT NULL')
+        .all(from, to)
+        .map((r) => r.recipeId),
+    );
+    const lines = await lessWaste(db, list, {
+      similar: checkSwaps.similar,
+      search: async (term) => (await suggestProduct.results(term)).map(productFrom),
+      planned,
+    });
+    return { lines };
   }),
 );
 

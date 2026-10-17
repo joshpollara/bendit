@@ -237,9 +237,9 @@ const round = (n) => Math.round(n);
 /** Units that are already a weight (or a volume, counted like one): grams per unit. */
 const METRIC = { g: 1, gr: 1, gram: 1, grams: 1, kg: 1000, ml: 1, l: 1000, liter: 1000, litre: 1000 };
 /** An ingredient's weight: resolved grams, or a quantity written in a metric unit. */
-const gramsOf = (ing) =>
+export const gramsOf = (ing) =>
   ing.grams ?? (ing.quantity != null && METRIC[String(ing.unit ?? '').toLowerCase()] ? ing.quantity * METRIC[ing.unit.toLowerCase()] : null);
-const keyFor = (foodId, name) => (foodId ? `food:${foodId}` : `name:${String(name).trim().toLowerCase()}`);
+export const keyFor = (foodId, name) => (foodId ? `food:${foodId}` : `name:${String(name).trim().toLowerCase()}`);
 
 /**
  * Everything the plan needs bought between two dates, for everyone eating.

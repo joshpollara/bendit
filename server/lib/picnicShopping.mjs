@@ -66,15 +66,21 @@ export function clearChoice(db, itemKey) {
  */
 export function createSuggester(search, { ttlMs = 60 * 60 * 1000, now = () => Date.now() } = {}) {
   const cache = new Map();
-  return async function suggest(term) {
+  /** All the results for a term, from the cache while it's fresh. */
+  async function results(term) {
     const key = term.trim().toLowerCase();
     const hit = cache.get(key);
-    if (hit && now() - hit.at < ttlMs) return hit.product;
-    const results = await search(term);
-    const product = results?.[0] ? productFrom(results[0]) : null;
-    cache.set(key, { at: now(), product });
-    return product;
-  };
+    if (hit && now() - hit.at < ttlMs) return hit.results;
+    const found = (await search(term)) ?? [];
+    cache.set(key, { at: now(), results: found });
+    return found;
+  }
+  async function suggest(term) {
+    const [first] = await results(term);
+    return first ? productFrom(first) : null;
+  }
+  suggest.results = results;
+  return suggest;
 }
 
 /** Runs `fn` over `items` with at most `limit` in flight: Picnic is one account, not a CDN. */

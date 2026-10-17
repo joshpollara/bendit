@@ -5,6 +5,8 @@ import { Link } from 'react-router-dom';
 import {
   api,
   type HouseholdMember,
+  type LessWasteLine,
+  type PicnicListProduct,
   type PicnicShoppingList,
   type PlanItem,
   type Recipe,
@@ -110,23 +112,35 @@ type Choice =
   | { kind: 'recipe'; id: string; name: string; servingLabel: string; calories: number | null }
   | { kind: 'food'; id: string; name: string; servingLabel: string; calories: number };
 
+/**
+ * A recipe's portions to start from: everyone, since a recipe is usually
+ * cooked for everyone; one each, or the servings shared out to the half.
+ */
+const everyone = (members: HouseholdMember[], servings?: number): Portions =>
+  Object.fromEntries(
+    members.map((m) => [m.id, servings ? Math.max(0.5, Math.round((servings / members.length) * 2) / 2) : 1]),
+  );
+
 function AddSheet({
   date,
   members,
   me,
+  initial,
   onClose,
   onAdded,
 }: {
   date: string;
   members: HouseholdMember[];
   me: string | undefined;
+  /** A recipe already picked, and how many servings, as when planning one to use up a leftover. */
+  initial?: { choice: Choice; servings?: number };
   onClose: () => void;
   onAdded: () => void;
 }) {
   const [meal, setMeal] = useState<Meal>('dinner');
   const [query, setQuery] = useState('');
-  const [choice, setChoice] = useState<Choice | null>(null);
-  const [portions, setPortions] = useState<Portions>({});
+  const [choice, setChoice] = useState<Choice | null>(initial?.choice ?? null);
+  const [portions, setPortions] = useState<Portions>(() => (initial ? everyone(members, initial.servings) : {}));
   const [foods, setFoods] = useState<Food[]>([]);
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
@@ -146,13 +160,7 @@ function AddSheet({
   function pick(next: Choice) {
     setChoice(next);
     // A recipe is usually cooked for everyone; a single food is usually one person's.
-    setPortions(
-      next.kind === 'recipe'
-        ? Object.fromEntries(members.map((m) => [m.id, 1]))
-        : me
-          ? { [me]: 1 }
-          : {},
-    );
+    setPortions(next.kind === 'recipe' ? everyone(members) : me ? { [me]: 1 } : {});
   }
 
   async function save() {
@@ -456,25 +464,32 @@ function DayCard({
 type ListItem = ShoppingList['items'][number] & Partial<PicnicShoppingList['items'][number]>;
 type ListData = Omit<ShoppingList, 'items'> & { items: ListItem[] };
 
+const grams = (n: number) => (n >= 1000 ? `${round2(n / 1000)} kg` : `${n} g`);
+
 const amountOf = (item: ListItem) =>
-  [item.grams != null ? (item.grams >= 1000 ? `${round2(item.grams / 1000)} kg` : `${item.grams} g`) : null, ...item.written]
-    .filter(Boolean)
-    .join(' + ');
+  [item.grams != null ? grams(item.grams) : null, ...item.written].filter(Boolean).join(' + ');
 
 function ShoppingView({
   list,
   picnic,
+  waste,
   onToggle,
   onChoose,
   onAccept,
+  onUse,
+  onPlanRecipe,
   onAddToCart,
 }: {
   list: ListData | undefined;
   /** Picnic is connected, so lines carry products. */
   picnic: boolean;
+  /** What the packs leave over, when "Less waste" is on. */
+  waste: LessWasteLine[] | undefined;
   onToggle: (key: string, checked: boolean) => void;
   onChoose: (item: ListItem) => void;
   onAccept: (item: ListItem) => void;
+  onUse: (item: ListItem, product: PicnicListProduct) => void;
+  onPlanRecipe: (recipe: LessWasteLine['recipes'][number]) => void;
   onAddToCart: () => void;
 }) {
   if (!list) return <p className="px-4 py-6 text-center text-sm text-ink-muted">Loading…</p>;
@@ -484,11 +499,14 @@ function ShoppingView({
   // Only what someone chose is bought; a suggestion needs accepting first.
   const buying = list.items.filter((i) => !i.checked && i.choice);
   const total = buying.reduce((sum, i) => sum + (i.choice?.price ?? 0) * (i.packs ?? 1), 0);
+  const wasteOf = new Map((waste ?? []).map((w) => [w.key, w]));
+  const usable = (waste ?? []).filter((w) => w.recipes.length > 0);
   return (
     <>
       <ul>
         {list.items.map((item) => {
           const product = item.choice ?? item.suggestion;
+          const left = wasteOf.get(item.key);
           return (
             <li key={item.key} className="border-b border-line last:border-b-0">
               <label className="flex cursor-pointer items-center gap-3 px-4 pt-2.5 pb-2">
@@ -517,6 +535,7 @@ function ShoppingView({
                           {product.unitQuantity}
                           {product.price != null ? ` · ${euros(product.price * (item.packs ?? 1))}` : ''}
                           {!item.choice ? ' · suggested' : ''}
+                          {left ? ` · ${grams(left.left)} left over` : ''}
                         </span>
                       </span>
                     </>
@@ -537,10 +556,60 @@ function ShoppingView({
                   </button>
                 </div>
               )}
+              {picnic && !item.checked && left?.better && (
+                <div className="mr-4 mb-2.5 ml-11 flex items-center gap-2 rounded-xl border border-line px-2 py-1.5">
+                  <Thumb id={left.better.product.imageId} size="h-7 w-7" />
+                  <span className="min-w-0 flex-1 text-xs">
+                    <span className="block truncate text-ink-secondary">
+                      {left.better.packs} × {left.better.product.name}
+                    </span>
+                    <span className="block truncate text-ink-muted">
+                      {left.better.product.unitQuantity}
+                      {left.better.product.price != null
+                        ? ` · ${euros(left.better.product.price * left.better.packs)}`
+                        : ''}
+                      {` · ${left.better.left ? `${grams(left.better.left)} left over` : 'nothing left over'}`}
+                    </span>
+                  </span>
+                  <button
+                    type="button"
+                    onClick={() => onUse(item, left.better!.product)}
+                    className="rounded-full bg-accent-soft px-2.5 py-1 text-xs font-semibold text-accent"
+                  >
+                    Use
+                  </button>
+                </div>
+              )}
             </li>
           );
         })}
       </ul>
+      {usable.length > 0 && (
+        <div className="border-t border-line px-4 py-3">
+          <h3 className="text-sm font-semibold">Use up what's left</h3>
+          <ul className="mt-1">
+            {usable.map((w) => (
+              <li key={w.key} className="py-1.5">
+                <p className="text-xs text-ink-secondary">
+                  {w.name} · {grams(w.left)} of {grams(w.bought)}
+                </p>
+                <div className="mt-1 flex flex-wrap gap-1.5">
+                  {w.recipes.map((r) => (
+                    <button
+                      key={r.recipeId}
+                      type="button"
+                      onClick={() => onPlanRecipe(r)}
+                      className="rounded-full border border-line px-2.5 py-1 text-xs"
+                    >
+                      {r.name} · {r.servings} {r.servings === 1 ? 'serving' : 'servings'}
+                    </button>
+                  ))}
+                </div>
+              </li>
+            ))}
+          </ul>
+        </div>
+      )}
       {picnic && buying.length > 0 && (
         <div className="border-t border-line p-3">
           <button
@@ -581,6 +650,21 @@ export default function Plan({ profile }: { profile: Profile }) {
           : api.shoppingList(monday, sunday),
     [monday, tab, viaPicnic, picnic === undefined],
   );
+  const [lessWaste, setLessWaste] = useState(() => {
+    try {
+      return localStorage.getItem('bendit.lessWaste') === '1';
+    } catch {
+      return false;
+    }
+  });
+  const waste = useData(
+    () =>
+      tab === 'shopping' && viaPicnic && lessWaste
+        ? api.picnicLessWaste(monday, sunday).then((r) => r.lines)
+        : Promise.resolve(undefined),
+    [monday, tab, viaPicnic, lessWaste],
+  );
+  const [planning, setPlanning] = useState<{ date: string; choice: Choice; servings: number } | null>(null);
   const [checks, setChecks] = useState<Record<string, boolean>>({});
   const [choosing, setChoosing] = useState<ListItem | null>(null);
   const [notice, setNotice] = useState<string | null>(null);
@@ -600,6 +684,35 @@ export default function Plan({ profile }: { profile: Profile }) {
     await api.setShoppingCheck(shopping.listKey, key, checked);
     // A ticked line is no longer bought, which changes the total and the suggestions.
     if (viaPicnic) bump();
+  }
+
+  function toggleLessWaste() {
+    const next = !lessWaste;
+    setLessWaste(next);
+    try {
+      localStorage.setItem('bendit.lessWaste', next ? '1' : '0');
+    } catch {
+      // Remembered for this visit only.
+    }
+  }
+
+  async function choose(itemKey: string, p: PicnicListProduct) {
+    await api.picnicChoose(itemKey, {
+      id: p.productId,
+      name: p.name,
+      image_id: p.imageId ?? '',
+      unit_quantity: p.unitQuantity ?? '',
+      display_price: p.price ?? 0,
+      max_count: 0,
+    });
+    bump();
+  }
+
+  /** The first day of the week, from today, with no dinner planned yet. */
+  function freeDay() {
+    const today = todayStr();
+    const days = week.filter((d) => d >= today);
+    return days.find((d) => !(items ?? []).some((i) => i.date === d && i.meal === 'dinner')) ?? days[0] ?? week[0];
   }
 
   async function addToCart() {
@@ -677,28 +790,41 @@ export default function Plan({ profile }: { profile: Profile }) {
           ))}
         </div>
       ) : (
-        <div className={`${card} overflow-hidden`}>
-          <ShoppingView
-            list={shown}
-            picnic={viaPicnic}
-            onToggle={toggle}
-            onChoose={setChoosing}
-            onAccept={async (item) => {
-              const p = item.suggestion;
-              if (!p) return;
-              await api.picnicChoose(item.key, {
-                id: p.productId,
-                name: p.name,
-                image_id: p.imageId ?? '',
-                unit_quantity: p.unitQuantity ?? '',
-                display_price: p.price ?? 0,
-                max_count: 0,
-              });
-              bump();
-            }}
-            onAddToCart={addToCart}
-          />
-        </div>
+        <>
+          {viaPicnic && (
+            <div className="mx-4 mt-3 flex justify-end lg:mx-0">
+              <button
+                type="button"
+                aria-pressed={lessWaste}
+                onClick={toggleLessWaste}
+                className={`rounded-full px-3 py-1.5 text-xs font-semibold ${
+                  lessWaste ? 'bg-accent text-white' : 'bg-card text-ink-secondary'
+                }`}
+              >
+                Less waste
+              </button>
+            </div>
+          )}
+          <div className={`${card} overflow-hidden`}>
+            <ShoppingView
+              list={shown}
+              picnic={viaPicnic}
+              waste={lessWaste ? waste : undefined}
+              onToggle={toggle}
+              onChoose={setChoosing}
+              onAccept={(item) => item.suggestion && choose(item.key, item.suggestion)}
+              onUse={(item, product) => choose(item.key, product)}
+              onPlanRecipe={(r) =>
+                setPlanning({
+                  date: freeDay(),
+                  choice: { kind: 'recipe', id: r.recipeId, name: r.name, servingLabel: '1 serving', calories: null },
+                  servings: r.servings,
+                })
+              }
+              onAddToCart={addToCart}
+            />
+          </div>
+        </>
       )}
       {tab === 'shopping' && notice && (
         <p className="mx-4 mt-2 text-sm text-ink-secondary lg:mx-0">
@@ -721,6 +847,19 @@ export default function Plan({ profile }: { profile: Profile }) {
         />
       )}
 
+      {planning && (
+        <AddSheet
+          date={planning.date}
+          members={members}
+          me={me}
+          initial={planning}
+          onClose={() => setPlanning(null)}
+          onAdded={() => {
+            setPlanning(null);
+            bump();
+          }}
+        />
+      )}
       {adding && (
         <AddSheet
           date={adding}
