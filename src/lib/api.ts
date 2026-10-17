@@ -398,6 +398,38 @@ export interface PicnicUsual extends PicnicOrderItem {
   due: boolean;
 }
 
+/** A Picnic deal on a product: "2 voor €5", "25% korting", "nu €1.89". */
+export interface PicnicDeal {
+  label: string;
+  /** The price with the deal for a reduction; the regular price for a multi-buy. */
+  price: number | null;
+  /** The price before a reduction. */
+  was: number | null;
+}
+
+export interface PicnicPriceCheck {
+  productId: string;
+  price: number | null;
+  deal: PicnicDeal | null;
+  /** What the quantity in the order costs, with its deal. */
+  cost: number | null;
+  /** What the deal saves on that quantity. */
+  saves: number;
+  /** One more completes a multi-buy: what it adds, and what it saves. */
+  oneMore: { extra: number; saves: number } | null;
+  /** The same food, about the same amount, for less. */
+  cheaper: {
+    productId: string;
+    name: string;
+    imageId: string | null;
+    unitQuantity: string | null;
+    price: number | null;
+    quantity: number;
+    cost: number;
+    saves: number;
+  }[];
+}
+
 /** A product's Nutri-Score from its Picnic page, and better ones for a D or E. */
 export interface PicnicNutriCheck {
   productId: string;
@@ -847,6 +879,9 @@ export const api = {
     j<{ orders: PicnicPastOrder[]; usuals: PicnicUsual[] }>(`/api/picnic/new-order${refresh ? '?refresh=1' : ''}`),
   picnicAddBulk: (items: { productId: string; quantity: number }[]) =>
     post('/api/picnic/cart/bulk', { items }) as Promise<PicnicCart>,
+  picnicDeals: () => j<{ usuals: (PicnicUsual & { price: number | null; deal: PicnicDeal })[] }>('/api/picnic/deals'),
+  picnicPriceCheck: (items: PicnicOrderItem[]) =>
+    post('/api/picnic/price-check', { items }) as Promise<{ results: PicnicPriceCheck[] }>,
   picnicNutriCheck: (products: { productId: string; name: string }[]) =>
     post('/api/picnic/nutri-check', { products }) as Promise<{ results: PicnicNutriCheck[] }>,
   picnicStartCheckout: (resolveKey?: string) =>

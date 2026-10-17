@@ -65,6 +65,7 @@ import {
 import { createHistoryTables, pastOrders, syncHistory, usuals } from './lib/picnicHistory.mjs';
 import { createSwapChecker, createSwapTables } from './lib/picnicSwaps.mjs';
 import { lessWaste } from './lib/lessWaste.mjs';
+import { createDealFinder } from './lib/picnicDeals.mjs';
 import {
   addItem as addPlanItem,
   createMealPlanTables,
@@ -1927,6 +1928,12 @@ createCheckoutTables(db);
 createHistoryTables(db);
 createSwapTables(db);
 const checkSwaps = createSwapChecker(db, picnic);
+const dealFinder = createDealFinder(picnic, { similarOf: checkSwaps.similar, grade: checkSwaps.gradeOf });
+/** The usuals worth checking for deals: everything due, and the most bought. */
+const dealUsuals = () => {
+  const list = usuals(db);
+  return [...list.filter((u) => u.due), ...list.filter((u) => !u.due).slice(0, 40)].slice(0, 60);
+};
 const suggestProduct = createSuggester((term) => picnic.search(term));
 
 /** An async handler whose PicnicErrors become a status and a code the client can act on. */
@@ -2121,7 +2128,38 @@ app.get(
       await historySync;
       historySyncedAt = Date.now();
     }
+    // This week's deals take a request per product the first time; starting
+    // them now means the Deals tab is usually ready when it's opened.
+    dealFinder.usualDeals(dealUsuals()).catch(() => {});
     return { orders: pastOrders(db), usuals: usuals(db) };
+  }),
+);
+
+// Usuals on a deal this week.
+app.get(
+  '/api/picnic/deals',
+  picnicRoute(async () => {
+    picnic.status().connected || picnicNotConnected();
+    return { usuals: await dealFinder.usualDeals(dealUsuals()) };
+  }),
+);
+
+// Prices, deals and cheaper ways to buy a draft order.
+app.post(
+  '/api/picnic/price-check',
+  picnicRoute(async (req) => {
+    picnic.status().connected || picnicNotConnected();
+    const items = (Array.isArray(req.body?.items) ? req.body.items : [])
+      .map((i) => ({
+        productId: String(i?.productId ?? ''),
+        name: String(i?.name ?? '').slice(0, 200),
+        unitQuantity: i?.unitQuantity ? String(i.unitQuantity).slice(0, 100) : null,
+        quantity: countOf(i?.quantity),
+      }))
+      .filter((i) => /^s?\d+$/.test(i.productId) && i.name)
+      .slice(0, 100);
+    const regulars = new Set(usuals(db).filter((u) => u.orders >= 2).map((u) => u.productId));
+    return { results: await dealFinder.check(items, { regulars }) };
   }),
 );
 

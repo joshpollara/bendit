@@ -180,6 +180,8 @@ export function createPicnic({ db, env = process.env, Client = PicnicClient }) {
     },
 
     search: (query) => call((p) => p.catalog.search(query)),
+    /** Picnic's search results page itself, which also carries each result's deal. */
+    searchPage: (query) => call((p) => p.app.getPage(`search-page-results?search_term=${encodeURIComponent(query)}`)),
     product: (id) => call((p) => p.catalog.getProductDetails(id)),
     image: (id, size) => call((p) => p.catalog.getImage(id, size)),
     cart: () => call((p) => p.cart.getCart()),
