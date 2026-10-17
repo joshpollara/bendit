@@ -123,8 +123,10 @@ export function summarizeVisionUsage(rows, { today, dailyLimit, model, provider,
     windows[key] = { label, from: from || null, ...tally(rows.filter((r) => r.createdAt >= from)) };
   }
 
-  // The daily limit is for photo reads; the assistant's calls have a ceiling of their own.
-  const photoReadsToday = tally(rows.filter((r) => r.createdAt >= today && r.task !== 'assistant')).calls;
+  // The daily limit is for photo reads; the assistant and AI orders have ceilings of their own.
+  const photoReadsToday = tally(
+    rows.filter((r) => r.createdAt >= today && r.task !== 'assistant' && r.task !== 'order'),
+  ).calls;
 
   const recentFrom = shiftDate(today, -(BREAKDOWN_DAYS - 1));
   const recent = rows.filter((row) => row.createdAt >= recentFrom);

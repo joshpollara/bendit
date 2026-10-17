@@ -12,7 +12,8 @@ import {
 } from '../lib/api';
 import { useData } from '../lib/useData';
 import { DAY, shiftDay, todayStr } from '../lib/dates';
-import { ChevronLeftIcon } from '../components/Icons';
+import { ChevronLeftIcon, SparkleIcon } from '../components/Icons';
+import LazyOrder from '../components/LazyOrder';
 import { euros, Thumb } from '../components/PicnicBits';
 import Sheet from '../components/Sheet';
 import { GRADE_STYLE } from '../components/MealGrade';
@@ -165,6 +166,7 @@ export default function PicnicNewOrder() {
   const data = useData(() => api.picnicNewOrder(refresh > 0), [refresh]);
   const [openOrder, setOpenOrder] = useState<string | null>(null);
   const [reviewing, setReviewing] = useState(false);
+  const [lazy, setLazy] = useState(false);
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
   // Nutri-Score of what's in the draft, once someone asks for it.
@@ -325,6 +327,15 @@ export default function PicnicNewOrder() {
         )}
       </header>
 
+      <button
+        type="button"
+        onClick={() => setLazy(true)}
+        className="mx-4 mb-3 flex w-[calc(100%-2rem)] items-center justify-center gap-2 rounded-2xl border border-accent bg-accent-soft py-3 text-sm font-semibold text-accent lg:mx-0 lg:w-full"
+      >
+        <SparkleIcon className="h-4 w-4" />
+        Make me an order
+      </button>
+
       <div className="mx-4 grid grid-cols-4 rounded-xl bg-card p-1 text-center text-xs font-semibold lg:mx-0">
         {(['usuals', 'deals', 'past', 'plan'] as const).map((t) => (
           <button
@@ -478,6 +489,17 @@ export default function PicnicNewOrder() {
             Review order · {count} {count === 1 ? 'item' : 'items'}
           </button>
         </div>
+      )}
+
+      {lazy && (
+        <LazyOrder
+          onClose={() => setLazy(false)}
+          onAdd={(list) => {
+            addAll(list);
+            setLazy(false);
+            setReviewing(true);
+          }}
+        />
       )}
 
       {reviewing && (
