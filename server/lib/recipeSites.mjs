@@ -9,6 +9,30 @@ import crypto from 'node:crypto';
 import { decodeEntities } from './recipeImport.mjs';
 
 const CACHE_MS = 60 * 60 * 1000;
+
+/**
+ * Well-known recipe sites that run WordPress, for looking beyond the
+ * household's own: each can be searched by relevance, for free, and publishes
+ * its recipes in a form the importer reads. Checked on 2026-10-17.
+ */
+export const MORE_SITES = [
+  ['Budget Bytes', 'https://www.budgetbytes.com'],
+  ['Skinnytaste', 'https://www.skinnytaste.com'],
+  ['Cookie and Kate', 'https://cookieandkate.com'],
+  ['Love and Lemons', 'https://www.loveandlemons.com'],
+  ['Pinch of Yum', 'https://pinchofyum.com'],
+  ['Minimalist Baker', 'https://minimalistbaker.com'],
+  ['RecipeTin Eats', 'https://www.recipetineats.com'],
+  ['Well Plated', 'https://www.wellplated.com'],
+  ['Eating Bird Food', 'https://www.eatingbirdfood.com'],
+  ['Two Peas & Their Pod', 'https://www.twopeasandtheirpod.com'],
+  ['Gimme Some Oven', 'https://www.gimmesomeoven.com'],
+  ['Feasting at Home', 'https://www.feastingathome.com'],
+  ['Live Eat Learn', 'https://www.liveeatlearn.com'],
+  ['Pressure Cook Recipes', 'https://www.pressurecookrecipes.com'],
+  ['Ambitious Kitchen', 'https://www.ambitiouskitchen.com'],
+  ['Jo Cooks', 'https://www.jocooks.com'],
+].map(([name, origin]) => ({ id: `more:${origin}`, name, origin, kind: 'wordpress' }));
 const PER_SITE = 12;
 
 export class SiteError extends Error {
@@ -142,6 +166,33 @@ export function createRecipeSites(db, { fetchPage, now = () => Date.now() }) {
     return cached(`${site.id}|`, async () => postsFromFeed(await fetchPage(site.feedUrl).catch(() => ''), site));
   }
 
+  /**
+   * Each site's newest posts, or best matches for a search, taken in turn:
+   * one site's tenth doesn't come before another's first, and a site that
+   * posts hourly doesn't bury one that posts weekly. Each says whether it's
+   * already a recipe here.
+   */
+  async function collectPosts(sites, query) {
+    const q = String(query ?? '').trim().slice(0, 100);
+    const perSite = await Promise.all(sites.map((site) => postsOf(site, q).catch(() => [])));
+    const posts = Array.from({ length: PER_SITE }, (_, i) =>
+      perSite
+        .map((list) => list[i])
+        .filter(Boolean)
+        // Within a round, newest first; a search keeps each site's own order.
+        .sort((a, b) => (q ? 0 : String(b.date).localeCompare(String(a.date)))),
+    ).flat();
+    const imported = new Set(
+      db
+        .prepare('SELECT sourceUrl FROM recipes WHERE sourceUrl IS NOT NULL')
+        .all()
+        .map((r) => r.sourceUrl.replace(/\/$/, '')),
+    );
+    return posts
+      .filter((p) => p.title && /^https?:/.test(p.url))
+      .map((p) => ({ ...p, imported: imported.has(p.url.replace(/\/$/, '')) }));
+  }
+
   return {
     list: () => db.prepare('SELECT * FROM recipe_sites ORDER BY name COLLATE NOCASE').all(),
 
@@ -184,32 +235,19 @@ export function createRecipeSites(db, { fetchPage, now = () => Date.now() }) {
 
     remove: (id) => db.prepare('DELETE FROM recipe_sites WHERE id = ?').run(id).changes > 0,
 
-    /**
-     * Each site's newest posts, or best matches for a search, taken in turn:
-     * one site's tenth doesn't come before another's first, and a site that
-     * posts hourly doesn't bury one that posts weekly. Each says whether it's
-     * already a recipe here.
-     */
+    /** The household's sites: what's new, or what matches a search. */
     async posts(query = '') {
-      const q = String(query).trim().slice(0, 100);
-      const sites = this.list();
-      const perSite = await Promise.all(sites.map((site) => postsOf(site, q).catch(() => [])));
-      const posts = Array.from({ length: PER_SITE }, (_, i) =>
-        perSite
-          .map((list) => list[i])
-          .filter(Boolean)
-          // Within a round, newest first; a search keeps each site's own order.
-          .sort((a, b) => (q ? 0 : String(b.date).localeCompare(String(a.date)))),
-      ).flat();
-      const imported = new Set(
-        db
-          .prepare('SELECT sourceUrl FROM recipes WHERE sourceUrl IS NOT NULL')
-          .all()
-          .map((r) => r.sourceUrl.replace(/\/$/, '')),
-      );
-      return posts
-        .filter((p) => p.title && /^https?:/.test(p.url))
-        .map((p) => ({ ...p, imported: imported.has(p.url.replace(/\/$/, '')) }));
+      return collectPosts(this.list(), query);
+    },
+
+    /**
+     * A search of well-known recipe sites the household doesn't follow, best
+     * matches from each in turn.
+     */
+    async searchMore(query) {
+      const followed = new Set(this.list().map((s) => new URL(s.origin).hostname.replace(/^www\./, '')));
+      const others = MORE_SITES.filter((s) => !followed.has(new URL(s.origin).hostname.replace(/^www\./, '')));
+      return collectPosts(others, query);
     },
   };
 }

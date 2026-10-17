@@ -190,6 +190,13 @@ function declaredNutrition(n, servings) {
   };
 }
 
+/** "PT1H30M" → 90; null for anything else. */
+export function isoMinutes(value) {
+  const match = /^P(?:\d+D)?T?(?:(\d+)H)?(?:(\d+)M)?/i.exec(String(value ?? ''));
+  if (!match || (!match[1] && !match[2])) return null;
+  return Number(match[1] ?? 0) * 60 + Number(match[2] ?? 0);
+}
+
 /**
  * The recipe a page declares about itself, or null when it declares none.
  * Nothing here is inferred: every field is one the page stated.
@@ -211,6 +218,14 @@ export function recipeFromJsonLd(html) {
     servingsStated: servings != null,
     sourceNutrition: nutrition?.calories != null ? nutrition : null,
     source: 'json-ld',
+    // What the page says about itself, for choosing between recipes.
+    minutes: isoMinutes(node.totalTime ?? node.cookTime),
+    tags: [node.keywords, node.recipeCategory, node.recipeCuisine]
+      .flat()
+      .flatMap((t) => (typeof t === 'string' ? t.split(',') : []))
+      .map((t) => decodeEntities(t).trim())
+      .filter(Boolean)
+      .slice(0, 15),
   };
 }
 
