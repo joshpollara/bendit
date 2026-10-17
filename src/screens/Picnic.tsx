@@ -17,6 +17,7 @@ import Sheet from '../components/Sheet';
 import { euros, Thumb, useSettled } from '../components/PicnicBits';
 import CheckoutSheet from '../components/PicnicCheckout';
 import GradeBadge from '../components/GradeBadge';
+import PicnicReminder from '../components/PicnicReminder';
 
 const quantityOf = (article: PicnicCartArticle) =>
   article.decorators?.find((d) => d.type === 'QUANTITY')?.quantity ?? 1;
@@ -693,6 +694,7 @@ export default function Picnic() {
           ) : tab === 'cart' ? (
             <div className="mx-4 mt-3 overflow-hidden rounded-2xl border border-line bg-card shadow-sm lg:mx-0">
               <SlotSection onChanged={() => api.picnicCart().then(setCart)} />
+              <PicnicReminder />
               <CartView cart={cart} onChange={changeCart} />
               {cart && cart.total_count > 0 && (
                 <div className="border-t border-line p-3">

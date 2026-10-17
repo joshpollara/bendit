@@ -925,6 +925,12 @@ export const api = {
     j<{ orders: PicnicPastOrder[]; usuals: PicnicUsual[] }>(`/api/picnic/new-order${refresh ? '?refresh=1' : ''}`),
   picnicAddBulk: (items: { productId: string; quantity: number }[]) =>
     post('/api/picnic/cart/bulk', { items }) as Promise<PicnicCart>,
+  picnicReminder: () =>
+    j<{ hoursBefore: number | null; push: boolean; next: { cutOffTime: string; windowStart: string; ordered: boolean } | null }>(
+      '/api/picnic/reminder',
+    ),
+  setPicnicReminder: (hoursBefore: number | null) =>
+    post('/api/picnic/reminder', { hoursBefore }, 'PUT') as Promise<{ hoursBefore: number | null }>,
   rateRecipe: (id: string, rating: 1 | -1 | 0) =>
     post(`/api/recipes/${encodeURIComponent(id)}/rating`, { rating }, 'PUT') as Promise<RecipeRatings>,
   toRate: (today: string) =>
