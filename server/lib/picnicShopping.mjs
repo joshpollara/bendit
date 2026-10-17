@@ -78,7 +78,7 @@ export function createSuggester(search, { ttlMs = 60 * 60 * 1000, now = () => Da
 }
 
 /** Runs `fn` over `items` with at most `limit` in flight: Picnic is one account, not a CDN. */
-async function mapLimited(items, limit, fn) {
+export async function mapLimited(items, limit, fn) {
   const out = new Array(items.length);
   let next = 0;
   const worker = async () => {

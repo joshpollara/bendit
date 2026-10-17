@@ -1,12 +1,13 @@
 import { useEffect, useMemo, useState } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { format, parseISO, startOfWeek } from 'date-fns';
-import { api, type PicnicOrderItem, type PicnicPastOrder } from '../lib/api';
+import { api, type NutriGrade, type PicnicNutriCheck, type PicnicOrderItem, type PicnicPastOrder } from '../lib/api';
 import { useData } from '../lib/useData';
 import { DAY, shiftDay, todayStr } from '../lib/dates';
 import { ChevronLeftIcon } from '../components/Icons';
 import { euros, Thumb } from '../components/PicnicBits';
 import Sheet from '../components/Sheet';
+import { GRADE_STYLE } from '../components/MealGrade';
 
 // Building the next Picnic order from what's usually bought, a past order, or
 // the meal plan, then adding it to the cart in one go. The draft lives on this
@@ -55,42 +56,63 @@ function Stepper({ value, onChange, label }: { value: number; onChange: (n: numb
   );
 }
 
+function Grade({ grade }: { grade: NutriGrade }) {
+  return (
+    <span
+      title={`Nutri-Score ${grade}`}
+      className={`mr-1.5 inline-flex h-4 w-4 shrink-0 items-center justify-center rounded align-[-2px] text-[10px] font-bold ${GRADE_STYLE[grade]}`}
+    >
+      {grade}
+    </span>
+  );
+}
+
 /** A product row: in the draft it shows a stepper, otherwise an add button. */
 function ProductRow({
   item,
   detail,
   badge,
+  grade,
   draft,
   setQuantity,
+  children,
 }: {
   item: PicnicOrderItem;
   detail?: string;
   badge?: string;
+  grade?: NutriGrade | null;
   draft: Draft;
   setQuantity: (item: PicnicOrderItem, quantity: number) => void;
+  children?: React.ReactNode;
 }) {
   const inDraft = draft[item.productId];
   return (
-    <li className="flex items-center gap-3 border-b border-line px-4 py-2 last:border-b-0">
-      <Thumb id={item.imageId} size="h-10 w-10" />
-      <span className="min-w-0 flex-1">
-        <span className="block truncate text-sm font-medium">{item.name}</span>
-        <span className="block truncate text-xs text-ink-muted">
-          {badge && <span className="mr-1 font-semibold text-accent">{badge}</span>}
-          {[detail, item.unitQuantity].filter(Boolean).join(' · ')}
+    <li className="border-b border-line px-4 py-2 last:border-b-0">
+      <div className="flex items-center gap-3">
+        <Thumb id={item.imageId} size="h-10 w-10" />
+        <span className="min-w-0 flex-1">
+          <span className="block truncate text-sm font-medium">
+            {grade && <Grade grade={grade} />}
+            {item.name}
+          </span>
+          <span className="block truncate text-xs text-ink-muted">
+            {badge && <span className="mr-1 font-semibold text-accent">{badge}</span>}
+            {[detail, item.unitQuantity].filter(Boolean).join(' · ')}
+          </span>
         </span>
-      </span>
-      {inDraft ? (
-        <Stepper label={item.name} value={inDraft.quantity} onChange={(n) => setQuantity(item, n)} />
-      ) : (
-        <button
-          type="button"
-          onClick={() => setQuantity(item, item.quantity)}
-          className="shrink-0 rounded-full bg-accent-soft px-3 py-1.5 text-xs font-semibold text-accent"
-        >
-          Add {item.quantity > 1 ? item.quantity : ''}
-        </button>
-      )}
+        {inDraft ? (
+          <Stepper label={item.name} value={inDraft.quantity} onChange={(n) => setQuantity(item, n)} />
+        ) : (
+          <button
+            type="button"
+            onClick={() => setQuantity(item, item.quantity)}
+            className="shrink-0 rounded-full bg-accent-soft px-3 py-1.5 text-xs font-semibold text-accent"
+          >
+            Add {item.quantity > 1 ? item.quantity : ''}
+          </button>
+        )}
+      </div>
+      {children}
     </li>
   );
 }
@@ -98,6 +120,23 @@ function ProductRow({
 /** How often, in the words a person would use. */
 const howOften = (days: number | null) =>
   days == null ? 'once' : days <= 9 ? 'weekly' : days <= 16 ? 'every 2 weeks' : days <= 23 ? 'every 3 weeks' : `every ~${Math.round(days / 7)} weeks`;
+
+/** "400 gram" → 400, "1,5 liter" → 1500, "6 x 330 ml" → 1980; null for "4 stuks". */
+function packGrams(unitQuantity: string | null) {
+  const match = (unitQuantity ?? '')
+    .toLowerCase()
+    .match(/(?:(\d+)\s*x\s*)?(\d+(?:[.,]\d+)?)\s*(kg|kilo|gram|g|liter|l|ml|cl)\b/);
+  if (!match) return null;
+  const scale = { kg: 1000, kilo: 1000, gram: 1, g: 1, liter: 1000, l: 1000, ml: 1, cl: 10 }[match[3]] ?? 1;
+  return Number(match[1] ?? 1) * Number(match[2].replace(',', '.')) * scale;
+}
+
+/** How many of a swap make up what was ordered: 4 × 95 g is 2 × 200 g. */
+function swapCount(item: PicnicOrderItem, to: { unitQuantity: string | null }) {
+  const from = packGrams(item.unitQuantity);
+  const into = packGrams(to.unitQuantity);
+  return from && into ? Math.max(1, Math.round((item.quantity * from) / into)) : item.quantity;
+}
 
 const card = 'mx-4 mt-3 overflow-hidden rounded-2xl border border-line bg-card shadow-sm lg:mx-0';
 const orderDate = (o: PicnicPastOrder) => format(parseISO(o.windowStart), 'EEE d MMM');
@@ -112,6 +151,9 @@ export default function PicnicNewOrder() {
   const [reviewing, setReviewing] = useState(false);
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  // Nutri-Score of what's in the draft, once someone asks for it.
+  const [checked, setChecked] = useState<Record<string, PicnicNutriCheck>>({});
+  const [checking, setChecking] = useState(false);
 
   // The plan's shopping list, this week or next.
   const [planWeek, setPlanWeek] = useState(0);
@@ -144,6 +186,49 @@ export default function PicnicNewOrder() {
       }
       return next;
     });
+  }
+
+  const unchecked = items.filter((i) => !checked[i.productId]);
+  const swappable = items.some((i) => checked[i.productId]?.swaps.length);
+
+  async function checkNutriScore() {
+    setChecking(true);
+    setError(null);
+    try {
+      const { results } = await api.picnicNutriCheck(unchecked.map((i) => ({ productId: i.productId, name: i.name })));
+      setChecked((current) => ({
+        ...current,
+        ...Object.fromEntries(results.map((r) => [r.productId, r])),
+      }));
+    } catch (err) {
+      setError(err instanceof Error ? err.message : 'Could not check them.');
+    } finally {
+      setChecking(false);
+    }
+  }
+
+  /** Puts a swap in an item's place: the same weight where both packs say, else the same count. */
+  function swap(item: PicnicOrderItem, to: PicnicNutriCheck['swaps'][number]) {
+    setDraft((current) => {
+      const next: Draft = {};
+      for (const [id, entry] of Object.entries(current)) {
+        if (id === to.productId) continue;
+        if (id !== item.productId) next[id] = entry;
+        else
+          next[to.productId] = {
+            productId: to.productId,
+            name: to.name,
+            imageId: to.imageId,
+            unitQuantity: to.unitQuantity,
+            quantity: swapCount(entry, to) + (current[to.productId]?.quantity ?? 0),
+          };
+      }
+      return next;
+    });
+    setChecked((current) => ({
+      ...current,
+      [to.productId]: { productId: to.productId, grade: to.grade, swaps: [] },
+    }));
   }
 
   async function addToCart() {
@@ -332,10 +417,52 @@ export default function PicnicNewOrder() {
 
       {reviewing && (
         <Sheet onClose={() => setReviewing(false)}>
-          <h2 className="mb-3 text-lg font-semibold">Your order</h2>
+          <div className="mb-3 flex items-center justify-between gap-3">
+            <h2 className="text-lg font-semibold">Your order</h2>
+            {unchecked.length > 0 && (
+              <button
+                type="button"
+                disabled={checking}
+                onClick={checkNutriScore}
+                className="rounded-full bg-accent-soft px-3 py-1.5 text-xs font-semibold text-accent disabled:opacity-60"
+              >
+                {checking ? 'Checking…' : 'Check Nutri-Score'}
+              </button>
+            )}
+          </div>
+          {unchecked.length === 0 && items.length > 0 && !swappable && (
+            <p className="mb-2 text-xs text-ink-muted">No better-scoring swaps found.</p>
+          )}
           <ul className="max-h-[55vh] overflow-y-auto">
             {items.map((item) => (
-              <ProductRow key={item.productId} item={item} draft={draft} setQuantity={setQuantity} />
+              <ProductRow
+                key={item.productId}
+                item={item}
+                grade={checked[item.productId]?.grade}
+                draft={draft}
+                setQuantity={setQuantity}
+              >
+                {checked[item.productId]?.swaps.map((to) => (
+                  <button
+                    key={to.productId}
+                    type="button"
+                    onClick={() => swap(item, to)}
+                    className="mt-1.5 flex w-full items-center gap-2 rounded-xl border border-line px-2 py-1.5 text-left"
+                  >
+                    <Thumb id={to.imageId} size="h-7 w-7" />
+                    <span className="min-w-0 flex-1 truncate text-xs">
+                      <Grade grade={to.grade} />
+                      {to.name}
+                      <span className="text-ink-muted">
+                        {[to.unitQuantity, to.price != null ? euros(to.price) : null]
+                          .filter(Boolean)
+                          .map((t) => ` · ${t}`)}
+                      </span>
+                    </span>
+                    <span className="shrink-0 text-xs font-semibold text-accent">Swap</span>
+                  </button>
+                ))}
+              </ProductRow>
             ))}
           </ul>
           {error && <p className="mt-2 text-sm text-over">{error}</p>}
