@@ -4,6 +4,7 @@ import { format, parseISO, startOfWeek } from 'date-fns';
 import {
   api,
   type NutriGrade,
+  type LazyOrderRecipe,
   type PicnicDeal,
   type PicnicNutriCheck,
   type PicnicOrderItem,
@@ -38,6 +39,26 @@ function saveDraft(draft: Draft) {
     localStorage.setItem(DRAFT_KEY, JSON.stringify(draft));
   } catch {
     // A draft that can't be kept still works for this visit.
+  }
+}
+
+/** Recipes from "Make me an order", saved and planned once the draft reaches the cart. */
+type Pending = { recipes: LazyOrderRecipe[]; plan: boolean };
+const PENDING_KEY = 'bendit.picnicDraftRecipes';
+
+function loadPending(): Pending {
+  try {
+    return JSON.parse(localStorage.getItem(PENDING_KEY) ?? 'null') ?? { recipes: [], plan: true };
+  } catch {
+    return { recipes: [], plan: true };
+  }
+}
+
+function savePending(pending: Pending) {
+  try {
+    localStorage.setItem(PENDING_KEY, JSON.stringify(pending));
+  } catch {
+    // Kept for this visit only.
   }
 }
 
@@ -167,6 +188,8 @@ export default function PicnicNewOrder() {
   const [openOrder, setOpenOrder] = useState<string | null>(null);
   const [reviewing, setReviewing] = useState(false);
   const [lazy, setLazy] = useState(false);
+  const [pending, setPending] = useState<Pending>(loadPending);
+  useEffect(() => savePending(pending), [pending]);
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
   // Nutri-Score of what's in the draft, once someone asks for it.
@@ -279,17 +302,35 @@ export default function PicnicNewOrder() {
     }
   }
 
+  function clearDraft() {
+    setDraft({});
+    setPending({ recipes: [], plan: true });
+  }
+
   async function addToCart() {
     setBusy(true);
     setError(null);
     try {
       await api.picnicAddBulk(items.map((i) => ({ productId: i.productId, quantity: i.quantity })));
-      setDraft({});
-      navigate('/picnic?tab=cart');
     } catch (err) {
       setError(err instanceof Error ? err.message : 'Could not add them.');
       setBusy(false);
+      return;
     }
+    // Now the recipes are being bought for: save and plan the ones whose
+    // products are still in the order.
+    const keep = pending.recipes.filter((r) => r.matched.length === 0 || r.matched.some((m) => draft[m.productId]));
+    let kept: string | null = null;
+    if (keep.length > 0) {
+      try {
+        await api.picnicKeepRecipes(keep, pending.plan);
+      } catch (err) {
+        kept = `Added to the cart, but the recipes weren't saved: ${err instanceof Error ? err.message : 'try again'}`;
+      }
+    }
+    clearDraft();
+    if (kept) window.alert(kept);
+    navigate('/picnic?tab=cart');
   }
 
   const due = (data?.usuals ?? []).filter((u) => u.due);
@@ -321,7 +362,7 @@ export default function PicnicNewOrder() {
         </button>
         <h1 className="flex-1 text-lg font-semibold md:px-2 lg:text-2xl lg:font-bold lg:tracking-tight">New order</h1>
         {items.length > 0 && (
-          <button type="button" onClick={() => setDraft({})} className="px-3 text-sm text-ink-muted">
+          <button type="button" onClick={clearDraft} className="px-3 text-sm text-ink-muted">
             Clear
           </button>
         )}
@@ -494,8 +535,12 @@ export default function PicnicNewOrder() {
       {lazy && (
         <LazyOrder
           onClose={() => setLazy(false)}
-          onAdd={(list) => {
+          onAdd={(list, recipes, plan) => {
             addAll(list);
+            setPending((current) => ({
+              recipes: [...current.recipes.filter((r) => !recipes.some((n) => n.url === r.url)), ...recipes],
+              plan,
+            }));
             setLazy(false);
             setReviewing(true);
           }}
@@ -601,6 +646,37 @@ export default function PicnicNewOrder() {
               </ProductRow>
             ))}
           </ul>
+          {pending.recipes.length > 0 && (
+            <div className="mt-3 rounded-xl bg-surface px-3 py-2">
+              <p className="text-xs font-medium text-ink-secondary">Recipes, saved when added to the cart</p>
+              <ul>
+                {pending.recipes.map((r) => (
+                  <li key={r.url} className="flex items-center gap-2 py-0.5 text-sm">
+                    <span className="min-w-0 flex-1 truncate">{r.title}</span>
+                    <button
+                      type="button"
+                      aria-label={`Don't save ${r.title}`}
+                      onClick={() =>
+                        setPending((current) => ({ ...current, recipes: current.recipes.filter((x) => x.url !== r.url) }))
+                      }
+                      className="shrink-0 rounded-full px-2 text-ink-muted"
+                    >
+                      ×
+                    </button>
+                  </li>
+                ))}
+              </ul>
+              <label className="mt-1 flex items-center gap-2 text-sm">
+                <input
+                  type="checkbox"
+                  checked={pending.plan}
+                  onChange={(e) => setPending((current) => ({ ...current, plan: e.target.checked }))}
+                  className="h-4 w-4 accent-[var(--color-accent)]"
+                />
+                Put them on the plan
+              </label>
+            </div>
+          )}
           {error && <p className="mt-2 text-sm text-over">{error}</p>}
           <button
             type="button"

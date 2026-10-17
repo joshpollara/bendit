@@ -1,13 +1,15 @@
 import { useState } from 'react';
 import { Link } from 'react-router-dom';
-import { api, type LazyOrder as Order, type PicnicOrderItem } from '../lib/api';
+import { api, type LazyOrder as Order, type LazyOrderRecipe, type PicnicOrderItem } from '../lib/api';
 import { useData } from '../lib/useData';
 import Sheet from './Sheet';
 import { SparkleIcon } from './Icons';
+import { Thumb } from './PicnicBits';
 
 // "Make me an order": the due usuals and a few new recipes from the
 // household's sites, picked by AI, with their ingredients as Picnic products.
-// The result goes into the draft to review like anything else.
+// It's a preview: nothing is kept until the draft is added to the Picnic cart,
+// when the recipes are saved and planned (see PicnicNewOrder).
 
 function Stepper({
   label,
@@ -50,7 +52,8 @@ export default function LazyOrder({
   onAdd,
   onClose,
 }: {
-  onAdd: (items: PicnicOrderItem[]) => void;
+  /** The items for the draft, and the recipes to save and plan when it reaches the cart. */
+  onAdd: (items: PicnicOrderItem[], recipes: LazyOrderRecipe[], plan: boolean) => void;
   onClose: () => void;
 }) {
   const members = useData(() => api.household(), []);
@@ -59,6 +62,7 @@ export default function LazyOrder({
   const [wish, setWish] = useState('');
   const [order, setOrder] = useState<Order | null>(null);
   const [dropped, setDropped] = useState<Set<string>>(new Set());
+  const [droppedItems, setDroppedItems] = useState<Set<string>>(new Set());
   const [plan, setPlan] = useState(true);
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
@@ -67,7 +71,9 @@ export default function LazyOrder({
   const recipes = (order?.recipes ?? []).filter((r) => !dropped.has(r.url));
   const keptTitles = new Set(recipes.map((r) => r.title));
   // An item stays if it's a usual or any recipe still in the order needs it.
-  const items = (order?.items ?? []).filter((i) => i.for.some((f) => f === 'Usual' || keptTitles.has(f)));
+  const items = (order?.items ?? []).filter(
+    (i) => !droppedItems.has(i.productId) && i.for.some((f) => f === 'Usual' || keptTitles.has(f)),
+  );
   const count = items.reduce((sum, i) => sum + i.quantity, 0);
   const usualCount = items.filter((i) => i.for.includes('Usual')).length;
 
@@ -77,6 +83,7 @@ export default function LazyOrder({
     try {
       setOrder(await api.picnicLazyOrder({ dinners, servings: people, wish: wish.trim() }));
       setDropped(new Set());
+      setDroppedItems(new Set());
     } catch (e) {
       setError(e instanceof Error ? e.message : "Couldn't put an order together.");
     } finally {
@@ -84,16 +91,12 @@ export default function LazyOrder({
     }
   }
 
-  async function accept() {
-    setBusy(true);
-    setError(null);
-    try {
-      if (recipes.length > 0) await api.picnicKeepRecipes(recipes, plan);
-      onAdd(items.map(({ for: _for, ...item }) => item));
-    } catch (e) {
-      setError(e instanceof Error ? e.message : "Couldn't save the recipes.");
-      setBusy(false);
-    }
+  function accept() {
+    onAdd(
+      items.map(({ for: _for, ...item }) => item),
+      recipes,
+      plan,
+    );
   }
 
   return (
@@ -167,6 +170,31 @@ export default function LazyOrder({
             {count} {count === 1 ? 'item' : 'items'}: {usualCount} {usualCount === 1 ? 'usual' : 'usuals'}
             {recipes.length > 0 ? `, ${items.length - usualCount} for the recipes` : ''}
           </p>
+          <ul className="mt-1 max-h-[32vh] divide-y divide-line overflow-y-auto">
+            {items.map((item) => (
+              <li key={item.productId} className="flex items-center gap-2 py-1.5">
+                <Thumb id={item.imageId} size="h-8 w-8" />
+                <span className="min-w-0 flex-1">
+                  <span className="block truncate text-sm">
+                    {item.quantity} × {item.name}
+                  </span>
+                  <span className="block truncate text-xs text-ink-muted">
+                    {[item.unitQuantity, item.for.filter((f) => f === 'Usual' || keptTitles.has(f)).join(', ')]
+                      .filter(Boolean)
+                      .join(' · ')}
+                  </span>
+                </span>
+                <button
+                  type="button"
+                  aria-label={`Leave out ${item.name}`}
+                  onClick={() => setDroppedItems((d) => new Set(d).add(item.productId))}
+                  className="shrink-0 rounded-full px-2 py-1 text-ink-muted hover:bg-surface"
+                >
+                  ×
+                </button>
+              </li>
+            ))}
+          </ul>
           {recipes.length > 0 && (
             <label className="mt-2 flex items-center gap-2 text-sm">
               <input
@@ -194,7 +222,7 @@ export default function LazyOrder({
               onClick={() => void accept()}
               className="flex-1 rounded-xl bg-accent py-3 text-sm font-semibold text-white disabled:opacity-60"
             >
-              {busy ? 'Saving…' : `Add ${count} to my order`}
+              Add {count} to my order
             </button>
           </div>
         </div>
