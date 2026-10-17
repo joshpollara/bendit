@@ -14,6 +14,8 @@ import { nutriScore } from './nutriScore.mjs';
 import { mapLimited } from './picnicShopping.mjs';
 
 const KEEP_MS = 30 * 24 * 60 * 60 * 1000;
+/** Raised when grading changes, so grades kept from before are worked out again. */
+const GRADE_VERSION = 2;
 const SWAP_GRADES = new Set(['D', 'E']);
 /** A swap has to be worth making: E to D is barely one. */
 const GOOD_GRADES = new Set(['A', 'B', 'C']);
@@ -25,6 +27,8 @@ export function createSwapTables(db) {
     productId TEXT PRIMARY KEY, name TEXT, brand TEXT, grade TEXT,
     similarJson TEXT NOT NULL DEFAULT '[]', swapsJson TEXT, checkedAt TEXT NOT NULL
   )`);
+  const columns = new Set(db.prepare('PRAGMA table_info(picnic_product_grades)').all().map((c) => c.name));
+  if (!columns.has('version')) db.exec('ALTER TABLE picnic_product_grades ADD COLUMN version INTEGER NOT NULL DEFAULT 1');
 }
 
 /** Words in names that say nothing about what the food is. */
@@ -75,13 +79,13 @@ export function pickSwaps(original, candidates) {
     .map(({ shared, brand, ...swap }) => swap);
 }
 
-const fresh = (row, now) => row && now - Date.parse(row.checkedAt) < KEEP_MS;
+const fresh = (row, now) => row && row.version === GRADE_VERSION && now - Date.parse(row.checkedAt) < KEEP_MS;
 
 export function createSwapChecker(db, picnic, { now = () => Date.now() } = {}) {
   const read = db.prepare('SELECT * FROM picnic_product_grades WHERE productId = ?');
   const write = db.prepare(
-    `INSERT OR REPLACE INTO picnic_product_grades (productId, name, brand, grade, similarJson, swapsJson, checkedAt)
-     VALUES (@productId, @name, @brand, @grade, @similarJson, @swapsJson, @checkedAt)`,
+    `INSERT OR REPLACE INTO picnic_product_grades (productId, name, brand, grade, similarJson, swapsJson, checkedAt, version)
+     VALUES (@productId, @name, @brand, @grade, @similarJson, @swapsJson, @checkedAt, ${GRADE_VERSION})`,
   );
   const setSwaps = db.prepare('UPDATE picnic_product_grades SET swapsJson = ? WHERE productId = ?');
 

@@ -89,14 +89,25 @@ export function nutriScore(per100, { beverage = per100?.basis === 'ml' } = {}) {
 
   const fibrePoints = points(num(per100?.fiber100) ?? 0, FIBRE);
   const proteinPoints = points(num(per100?.protein100) ?? 0, PROTEIN);
-  // Above 80% the award jumps from 2 to 5, on both scales.
+  // Above 80% the award jumps from 2 to 5 for a food. A drink's are 2, 4 and
+  // 10, so that pure juice lands at C rather than with the colas.
   const share = num(per100?.fruitVeg) ?? 0;
-  const fruitPoints = share > 80 ? 5 : points(share, FRUIT_VEG);
+  const fruitPoints = beverage
+    ? share > 80
+      ? 10
+      : share > 60
+        ? 4
+        : share > 40
+          ? 2
+          : 0
+    : share > 80
+      ? 5
+      : points(share, FRUIT_VEG);
 
   // Protein stops counting in its favour once a food is this far into the
   // negative — otherwise cured meat and hard cheese score like a salad. A food
   // that is mostly fruit or vegetable keeps it.
-  const proteinCounted = !(negative >= 11 && fruitPoints < 5);
+  const proteinCounted = !(negative >= 11 && share <= 80);
   const positive = fibrePoints + fruitPoints + (proteinCounted ? proteinPoints : 0);
 
   // Each component's points, so a grade can be explained rather than only stated.

@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import { nutriScore } from './nutriScore.mjs';
-import { packGrams, parsePicnicNutrition, picnicFood } from './picnicNutrition.mjs';
+import { isDrink, packGrams, parsePicnicNutrition, picnicFood } from './picnicNutrition.mjs';
 
 // Sections as Picnic returned them for real products.
 
@@ -90,5 +90,37 @@ describe('picnicFood', () => {
 
   it('has nothing to offer for a product without a nutrition section', () => {
     expect(picnicFood({ id: 's1', unitQuantity: '4 stuks', infoSections: [{ title: 'Extra informatie', content: '' }] })).toBeNull();
+  });
+});
+
+describe('drinks and fruit on Picnic products', () => {
+  const page = (name, unitQuantity, ingredients) => ({
+    id: 's1',
+    name,
+    unitQuantity,
+    infoSections: [
+      // Picnic's labels say per 100 g even for juice.
+      { title: 'Voedingswaarde', content: 'Per 100 g\nEnergie\n194 kJ /\nkcal\n46 kcal\nVet\n0 g\nwaarvan verzadigd\n0 g\nKoolhydraten\n10,8 g\nwaarvan suikers\n10,2 g\nEiwit\n0 g\nZout\n0 g' },
+      ...(ingredients ? [{ title: 'Ingrediënten', content: ingredients }] : []),
+    ],
+  });
+
+  it('takes something sold by volume for a drink, unless it is a food sold that way', () => {
+    expect(isDrink({ unitQuantity: '1 liter' }, 'Flevosap appelsap')).toBe(true);
+    expect(isDrink({ unitQuantity: '6 x 330 ml' }, 'Pepsi zero cherry')).toBe(true);
+    expect(isDrink({ unitQuantity: '1 liter' }, 'Picnic volle melk')).toBe(false);
+    expect(isDrink({ unitQuantity: '1 liter' }, 'Campina vanillevla')).toBe(false);
+    expect(isDrink({ unitQuantity: '570 ml' }, 'Unox tomatensoep')).toBe(false);
+    expect(isDrink({ unitQuantity: '500 gram' }, 'Appelmoes')).toBe(false);
+  });
+
+  it('grades a juice as a drink, with its fruit counted', () => {
+    const juice = picnicFood(page('Flevosap appelsap', '1 liter', 'Ingrediënten: Appelsap (100%)'));
+    expect(juice).toMatchObject({ basis: 'ml', fruitVeg: 100 });
+    expect(nutriScore(juice).grade).toBe('C');
+  });
+
+  it('leaves the fruit share out when the list says nothing countable', () => {
+    expect(picnicFood(page('Koekjes', '200 gram', 'Bloem, suiker, boter')).fruitVeg).toBeUndefined();
   });
 });

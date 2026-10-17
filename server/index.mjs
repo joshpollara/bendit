@@ -797,10 +797,10 @@ function gradedEntry(row) {
 const upsertFood = db.prepare(`INSERT OR REPLACE INTO foods
   (id, name, brand, barcode, servingLabel, servingGrams, caloriesPerServing, protein, carbs, fat,
    source, sourceId, basis, kcal100, protein100, carbs100, fat100, fiber100, sugar100, satFat100,
-   sodiumMg100, updatedAt, ownerId)
+   sodiumMg100, fruitVeg, updatedAt, ownerId)
   VALUES (@id, @name, @brand, @barcode, @servingLabel, @servingGrams, @caloriesPerServing, @protein,
    @carbs, @fat, @source, @sourceId, @basis, @kcal100, @protein100, @carbs100, @fat100, @fiber100,
-   @sugar100, @satFat100, @sodiumMg100, @updatedAt, @ownerId)`);
+   @sugar100, @satFat100, @sodiumMg100, @fruitVeg, @updatedAt, @ownerId)`);
 
 const clearServings = db.prepare('DELETE FROM food_servings WHERE foodId = ?');
 const insertServing = db.prepare(
@@ -837,6 +837,7 @@ function saveFood(f) {
     sugar100: null,
     satFat100: null,
     sodiumMg100: null,
+    fruitVeg: null,
     // Null means shared: the reference data, and anything with a barcode.
     ownerId: null,
     ...f,
