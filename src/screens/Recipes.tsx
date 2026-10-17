@@ -161,17 +161,27 @@ export default function Recipes() {
   }
 
   if (draft) {
+    const existing = draft.id ? recipes?.find((r) => r.id === draft.id) : undefined;
     return (
-      <RecipeEditor
-        initial={draft.draft}
-        recipeId={draft.id}
-        onClose={() => setDraft(null)}
-        onSaved={(recipe) => {
-          setDraft(null);
-          setSaved(recipe);
-          setReload((n) => n + 1);
-        }}
-      />
+      <>
+        <RecipeEditor
+          initial={draft.draft}
+          recipeId={draft.id}
+          onClose={() => setDraft(null)}
+          onSaved={(recipe) => {
+            setDraft(null);
+            setSaved(recipe);
+            setReload((n) => n + 1);
+          }}
+          onShop={viaPicnic && existing ? () => setShopping(existing) : undefined}
+        />
+        {shopping && (
+          <RecipeShop
+            recipe={{ id: shopping.id, name: shopping.name, servings: shopping.servings }}
+            onClose={() => setShopping(null)}
+          />
+        )}
+      </>
     );
   }
 

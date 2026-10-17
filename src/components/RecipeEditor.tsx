@@ -8,7 +8,7 @@ import {
   type SourceNutrition,
 } from '../lib/api';
 import { formatCalories } from '../lib/units';
-import { SparkleIcon } from './Icons';
+import { BasketIcon, SparkleIcon } from './Icons';
 
 // Checking a recipe before it becomes a food.
 //
@@ -55,11 +55,14 @@ export default function RecipeEditor({
   recipeId,
   onSaved,
   onClose,
+  onShop,
 }: {
   initial: RecipeDraft;
   recipeId?: string;
   onSaved: (recipe: Recipe) => void;
   onClose: () => void;
+  /** Shop for the saved recipe on Picnic, when Picnic is connected. */
+  onShop?: () => void;
 }) {
   const [name, setName] = useState(initial.name ?? '');
   const [servings, setServings] = useState(String(initial.servings ?? 4));
@@ -161,6 +164,17 @@ export default function RecipeEditor({
       </div>
 
       <input className={field} placeholder="Recipe name" value={name} onChange={(e) => setName(e.target.value)} />
+
+      {onShop && (
+        <button
+          type="button"
+          onClick={onShop}
+          className="flex items-center justify-center gap-2 rounded-xl border border-accent py-2.5 text-sm font-semibold text-accent"
+        >
+          <BasketIcon className="h-4 w-4" />
+          Shop on Picnic
+        </button>
+      )}
 
       {initial.sourceType === 'url' && (
         <div className="flex items-start gap-2 rounded-xl bg-surface px-3 py-2.5 text-xs text-ink-secondary">
