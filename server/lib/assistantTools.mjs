@@ -103,6 +103,7 @@ export function createAssistantTools({ db, picnic, userId, finder = null }) {
             recipeId: r.id,
             name: r.name,
             makes: r.servings,
+            nutriScore: r.grade?.grade ?? null,
             perServing: r.food
               ? { calories: r.food.caloriesPerServing, protein: r.food.protein, carbs: r.food.carbs, fat: r.food.fat }
               : null,

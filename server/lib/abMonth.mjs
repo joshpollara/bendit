@@ -87,3 +87,11 @@ export function abMonth(db, userId, month, { rows, gradeOf }) {
     },
   };
 }
+
+/** The person's A/B target for the month a date is in, or null. */
+export function goalFor(db, userId, date = new Date().toISOString().slice(0, 10)) {
+  return (
+    db.prepare('SELECT target FROM ab_goals WHERE userId = ? AND month = ?').get(userId, String(date).slice(0, 7))
+      ?.target ?? null
+  );
+}

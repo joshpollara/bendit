@@ -63,7 +63,11 @@ export function sharedWords(original, candidate, { strict = true } = {}) {
  */
 export function pickSwaps(original, candidates) {
   return candidates
-    .filter((c) => c.productId !== original.productId && GOOD_GRADES.has(c.grade))
+    // Graded A to C, and better than the original: a C is only swapped for an A or B.
+    .filter(
+      (c) =>
+        c.productId !== original.productId && GOOD_GRADES.has(c.grade) && 'ABCDE'.indexOf(c.grade) < 'ABCDE'.indexOf(original.grade),
+    )
     .map((c) => ({ ...c, shared: sharedWords(original, c) }))
     .filter((c) => c.shared > 0)
     .sort((a, b) => b.shared - a.shared || a.grade.localeCompare(b.grade) || (a.price ?? 0) - (b.price ?? 0))
@@ -146,11 +150,14 @@ export function createSwapChecker(db, picnic, { now = () => Date.now() } = {}) {
     return swaps;
   }
 
-  /** Each product's grade, and for a D or E, up to three better swaps. */
-  async function check(products) {
+  /**
+   * Each product's grade, and for a D or E, up to three better swaps — for a
+   * C too when `alsoC`, as during someone's A/B month.
+   */
+  async function check(products, { alsoC = false } = {}) {
     return mapLimited(products, 3, async (product) => {
       const row = await graded(product);
-      const swaps = SWAP_GRADES.has(row.grade) ? await swapsFor(row) : [];
+      const swaps = SWAP_GRADES.has(row.grade) || (alsoC && row.grade === 'C') ? await swapsFor(row) : [];
       return { productId: product.productId, grade: row.grade, swaps };
     });
   }

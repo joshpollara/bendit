@@ -7,6 +7,7 @@ import { BasketIcon, CameraIcon, ChipIcon, SparkleIcon, TrashIcon } from '../com
 import RecipeEditor from '../components/RecipeEditor';
 import RecipeShop from '../components/RecipeShop';
 import RecipeSites from '../components/RecipeSites';
+import GradeBadge from '../components/GradeBadge';
 
 const CameraCapture = lazy(() => import('../components/CameraCapture'));
 
@@ -353,7 +354,10 @@ export default function Recipes() {
                 onClick={() => void edit(recipe)}
                 className="min-w-0 flex-1 text-left disabled:opacity-50"
               >
-                <p className="truncate font-medium">{recipe.name}</p>
+                <p className="truncate font-medium">
+                  <GradeBadge grade={recipe.grade?.grade} className="mr-1.5" />
+                  {recipe.name}
+                </p>
                 <p className="truncate text-xs text-ink-muted">
                   {recipe.servings} servings · {recipe.ingredients.length} ingredients
                   {recipe.author ? ` · ${recipe.author}` : ''}
