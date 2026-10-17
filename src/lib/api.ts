@@ -248,6 +248,21 @@ export interface PicnicShoppingList extends ShoppingList {
   })[];
 }
 
+/** A line whose packs leave some over after the week's plan. */
+export interface LessWasteLine {
+  key: string;
+  name: string;
+  needed: number;
+  bought: number;
+  left: number;
+  product: PicnicListProduct;
+  packs: number;
+  /** The same food in a size that leaves clearly less. */
+  better: { product: PicnicListProduct; packs: number; left: number } | null;
+  /** Other household recipes that would use up what's left. */
+  recipes: { recipeId: string; name: string; servings: number; uses: number }[];
+}
+
 export interface PicnicSlot {
   slotId: string;
   windowStart: string;
@@ -774,6 +789,8 @@ export const api = {
     post('/api/picnic/choices', { itemKey, product }, 'PUT'),
   picnicForget: (itemKey: string) =>
     j<unknown>(`/api/picnic/choices/${encodeURIComponent(itemKey)}`, { method: 'DELETE' }),
+  picnicLessWaste: (from: string, to: string) =>
+    j<{ lines: LessWasteLine[] }>(`/api/shopping-list/picnic/less-waste?${new URLSearchParams({ from, to })}`),
   picnicAddList: (from: string, to: string) =>
     post('/api/shopping-list/picnic/cart', { from, to }) as Promise<{ added: number; cart: PicnicCart }>,
   picnicSlots: () => j<PicnicSlots>('/api/picnic/slots'),

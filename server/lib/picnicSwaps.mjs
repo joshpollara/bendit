@@ -147,11 +147,18 @@ export function createSwapChecker(db, picnic, { now = () => Date.now() } = {}) {
   }
 
   /** Each product's grade, and for a D or E, up to three better swaps. */
-  return async function check(products) {
+  async function check(products) {
     return mapLimited(products, 3, async (product) => {
       const row = await graded(product);
       const swaps = SWAP_GRADES.has(row.grade) ? await swapsFor(row) : [];
       return { productId: product.productId, grade: row.grade, swaps };
     });
+  }
+
+  /** A product's brand and Picnic's similar products, from the same month-long keeping. */
+  check.similar = async (product) => {
+    const row = await graded(product);
+    return { brand: row.brand, products: JSON.parse(row.similarJson) };
   };
+  return check;
 }
