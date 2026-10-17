@@ -13,6 +13,15 @@ import { abMonth, AbError, clearGoal, createAbTables, goalFor, setGoal } from '.
 import { createRatingTables, rate, RatingError, ratingsOf, toRate } from './lib/ratings.mjs';
 import { picnicHome } from './lib/picnicHome.mjs';
 import { trackingOf } from './lib/picnicTracking.mjs';
+import {
+  backfillPrices,
+  createPriceTables,
+  dayOf,
+  pricesFromDelivery,
+  pricesFromSearch,
+  pricesFromSearchPage,
+  recordPrices,
+} from './lib/priceHistory.mjs';
 import { createPicnicReminders, createPicnicReminderTables, reminderFor, setReminder } from './lib/picnicReminder.mjs';
 import { cachedCost, costRecipe, createRecipeCostTables } from './lib/recipeCost.mjs';
 import {
@@ -2000,13 +2009,51 @@ createCheckoutTables(db);
 createHistoryTables(db);
 createSwapTables(db);
 const checkSwaps = createSwapChecker(db, picnic);
-const dealFinder = createDealFinder(picnic, { similarOf: checkSwaps.similar, grade: checkSwaps.gradeOf });
+createPriceTables(db);
+const dealFinder = createDealFinder(picnic, {
+  similarOf: checkSwaps.similar,
+  grade: checkSwaps.gradeOf,
+  onRead: (read) => recordPrices(db, pricesFromSearchPage(read, priceDay())),
+});
 /** The usuals worth checking for deals: everything due, and the most bought. */
 const dealUsuals = () => {
   const list = usuals(db);
   return [...list.filter((u) => u.due), ...list.filter((u) => !u.due).slice(0, 40)].slice(0, 60);
 };
 const suggestProduct = createSuggester((term) => picnic.search(term));
+
+// Price history. See lib/priceHistory.mjs.
+const priceDay = () => dayOf();
+/** A delivery fetched for the history: its prices too, once it's delivered. */
+function keepDeliveryPrices(summary, delivery) {
+  if (summary.status !== 'COMPLETED') return;
+  recordPrices(db, pricesFromDelivery(delivery, summary.windowStart));
+  db.prepare('INSERT OR REPLACE INTO picnic_price_scans (deliveryId, scannedAt) VALUES (?, ?)').run(
+    summary.id,
+    new Date().toISOString(),
+  );
+}
+/**
+ * Once a day, the usuals' prices, unless most were seen today already; and
+ * older orders' prices, fifty at a time, until they're all read.
+ */
+async function priceTick() {
+  if (!picnic.status().connected) return;
+  const list = dealUsuals();
+  const seen = db
+    .prepare(`SELECT COUNT(*) AS n FROM picnic_prices WHERE day = ? AND productId IN (SELECT value FROM json_each(?))`)
+    .get(priceDay(), JSON.stringify(list.map((u) => u.productId))).n;
+  if (list.length && seen < list.length / 2) await dealFinder.usualDeals(list);
+  await backfillPrices(db, picnic, { limit: 50 });
+}
+let pricing = null;
+const runPriceTick = () => {
+  pricing ??= priceTick()
+    .catch((error) => console.error('price history failed:', error?.message ?? error))
+    .finally(() => (pricing = null));
+};
+setTimeout(runPriceTick, 2 * 60_000).unref();
+setInterval(runPriceTick, 60 * 60_000).unref();
 
 /** An async handler whose PicnicErrors become a status and a code the client can act on. */
 const picnicRoute = (fn) => async (req, res) => {
@@ -2041,9 +2088,12 @@ app.post('/api/picnic/disconnect', picnicRoute(() => picnic.disconnect()));
 
 app.get(
   '/api/picnic/search',
-  picnicRoute((req) => {
+  picnicRoute(async (req) => {
     const q = String(req.query.q ?? '').trim();
-    return q ? picnic.search(q) : [];
+    if (!q) return [];
+    const results = await picnic.search(q);
+    recordPrices(db, pricesFromSearch(results, priceDay()));
+    return results;
   }),
 );
 // The details, plus the food they'd make: null when the page has no nutrition
@@ -2207,7 +2257,7 @@ app.get(
     picnic.status().connected || picnicNotConnected();
     if (req.query.refresh === '1' || Date.now() - historySyncedAt > HISTORY_FRESH_MS) {
       // Two people opening the screen at once share one sync rather than racing.
-      historySync ??= syncHistory(db, picnic).finally(() => (historySync = null));
+      historySync ??= syncHistory(db, picnic, { onDelivery: keepDeliveryPrices }).finally(() => (historySync = null));
       await historySync;
       historySyncedAt = Date.now();
     }
@@ -2285,7 +2335,7 @@ app.post(
     picnic.status().connected || picnicNotConnected();
     // History first, so "due" is current.
     if (Date.now() - historySyncedAt > HISTORY_FRESH_MS) {
-      historySync ??= syncHistory(db, picnic).finally(() => (historySync = null));
+      historySync ??= syncHistory(db, picnic, { onDelivery: keepDeliveryPrices }).finally(() => (historySync = null));
       await historySync;
       historySyncedAt = Date.now();
     }

@@ -61,7 +61,7 @@ async function mapLimited(items, limit, fn) {
  * kept yet, and any not yet delivered, whose contents can still change.
  * Cancelled deliveries are remembered but never counted.
  */
-export async function syncHistory(db, picnic, { now = Date.now() } = {}) {
+export async function syncHistory(db, picnic, { now = Date.now(), onDelivery = null } = {}) {
   const since = new Date(now - HISTORY_DAYS * DAY_MS).toISOString();
   const summaries = (await picnic.deliveries()).filter((d) => (d.windowStart ?? d.creationTime) >= since);
   const kept = new Map(db.prepare('SELECT id, status FROM picnic_deliveries').all().map((r) => [r.id, r.status]));
@@ -82,7 +82,12 @@ export async function syncHistory(db, picnic, { now = Date.now() } = {}) {
     }
   });
 
-  await mapLimited(stale, 3, async (summary) => save(summary, itemsOf(await picnic.delivery(summary.id))));
+  await mapLimited(stale, 3, async (summary) => {
+    const delivery = await picnic.delivery(summary.id);
+    save(summary, itemsOf(delivery));
+    // Anything else wanting what a delivery held, like its prices, gets it here.
+    onDelivery?.(summary, delivery);
+  });
   for (const summary of summaries.filter((d) => d.status === 'CANCELLED' && !kept.has(d.id))) save(summary, []);
   return { fetched: stale.length };
 }
