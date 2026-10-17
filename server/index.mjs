@@ -72,6 +72,7 @@ import {
   logItem as logPlanItem,
   plannedFor,
   PlanError,
+  recipeShoppingList,
   removeItem as removePlanItem,
   setChecked,
   shoppingList,
@@ -2047,6 +2048,16 @@ app.get(
       planned,
     });
     return { lines };
+  }),
+);
+
+// One recipe's ingredients, for some number of servings, with a Picnic product
+// on each line: shopping for a recipe without planning it first.
+app.get(
+  '/api/picnic/recipes/:id/shopping',
+  picnicRoute((req) => {
+    picnic.status().connected || picnicNotConnected();
+    return withProducts(db, recipeShoppingList(db, req.params.id, req.query.servings), suggestProduct);
   }),
 );
 

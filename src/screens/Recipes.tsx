@@ -3,8 +3,9 @@ import { ApiError, api, type Recipe, type RecipeDraft } from '../lib/api';
 import { useData } from '../lib/useData';
 import { resizeForModel } from '../lib/vision';
 import { formatCalories } from '../lib/units';
-import { CameraIcon, ChipIcon, SparkleIcon, TrashIcon } from '../components/Icons';
+import { BasketIcon, CameraIcon, ChipIcon, SparkleIcon, TrashIcon } from '../components/Icons';
 import RecipeEditor from '../components/RecipeEditor';
+import RecipeShop from '../components/RecipeShop';
 import RecipeSites from '../components/RecipeSites';
 
 const CameraCapture = lazy(() => import('../components/CameraCapture'));
@@ -51,6 +52,11 @@ export default function Recipes() {
   const [photoToRetry, setPhotoToRetry] = useState<string | null>(null);
   const [shooting, setShooting] = useState(false);
   const fileInput = useRef<HTMLInputElement>(null);
+  const picnic = useData(() => api.picnicStatus(), []);
+  const viaPicnic = picnic?.connected === true;
+  const [shopping, setShopping] = useState<Recipe | null>(null);
+  // The recipe just saved, so it can be shopped for straight away.
+  const [saved, setSaved] = useState<Recipe | null>(null);
 
   async function fromUrl(link = url) {
     if (!link.trim() || busy !== null) return;
@@ -160,8 +166,9 @@ export default function Recipes() {
         initial={draft.draft}
         recipeId={draft.id}
         onClose={() => setDraft(null)}
-        onSaved={() => {
+        onSaved={(recipe) => {
           setDraft(null);
+          setSaved(recipe);
           setReload((n) => n + 1);
         }}
       />
@@ -171,6 +178,26 @@ export default function Recipes() {
   return (
     <div className="mx-auto flex w-full max-w-3xl flex-col gap-3 px-4 py-4">
       <h1 className="text-xl font-semibold">Recipes</h1>
+
+      {saved && viaPicnic && (
+        <div className="flex items-center gap-3 rounded-2xl border border-line bg-card px-4 py-3 shadow-sm">
+          <p className="min-w-0 flex-1 truncate text-sm">Saved {saved.name}.</p>
+          <button
+            type="button"
+            onClick={() => {
+              setShopping(saved);
+              setSaved(null);
+            }}
+            className="flex shrink-0 items-center gap-1.5 rounded-full bg-accent px-3 py-1.5 text-xs font-semibold text-white"
+          >
+            <BasketIcon className="h-4 w-4" />
+            Shop on Picnic
+          </button>
+          <button type="button" onClick={() => setSaved(null)} aria-label="Dismiss" className="text-ink-muted">
+            ×
+          </button>
+        </div>
+      )}
 
       <section className="overflow-hidden rounded-2xl border border-accent/30 bg-card shadow-sm">
         <div className="flex items-start gap-3 border-b border-line bg-surface/60 px-4 py-4">
@@ -330,6 +357,16 @@ export default function Recipes() {
                 </p>
                 <p className="text-[11px] text-ink-muted">per serving</p>
               </div>
+              {viaPicnic && (
+                <button
+                  type="button"
+                  aria-label={`Shop for ${recipe.name} on Picnic`}
+                  onClick={() => setShopping(recipe)}
+                  className="rounded-full p-1.5 text-ink-muted hover:bg-surface hover:text-accent"
+                >
+                  <BasketIcon className="h-4 w-4" />
+                </button>
+              )}
               <button
                 type="button"
                 aria-label={`Delete ${recipe.name}`}
@@ -357,6 +394,12 @@ export default function Recipes() {
             }}
           />
         </Suspense>
+      )}
+      {shopping && (
+        <RecipeShop
+          recipe={{ id: shopping.id, name: shopping.name, servings: shopping.servings }}
+          onClose={() => setShopping(null)}
+        />
       )}
     </div>
   );
