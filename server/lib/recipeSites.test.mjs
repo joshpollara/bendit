@@ -8,6 +8,7 @@ import {
   originOf,
   postsFromFeed,
   siteName,
+  siteIn,
 } from './recipeSites.mjs';
 
 const WP_POSTS = [
@@ -122,5 +123,23 @@ describe('the household sites', () => {
     await sites.posts();
     await sites.posts();
     expect(fake.asked.filter((u) => u === 'https://rss.test/feed/')).toHaveLength(1);
+  });
+});
+
+describe('siteIn', () => {
+  const list = [
+    { name: 'Skinnytaste', origin: 'https://www.skinnytaste.com' },
+    { name: 'Budget Bytes', origin: 'https://www.budgetbytes.com' },
+    { name: 'Two Peas & Their Pod', origin: 'https://www.twopeasandtheirpod.com' },
+  ];
+  it('finds a site by name, spaced or not, or by address', () => {
+    expect(siteIn('skinnytaste vegetarian', list)).toMatchObject({ site: list[0], rest: 'vegetarian' });
+    expect(siteIn('Skinny Taste soup', list)).toMatchObject({ site: list[0], rest: 'soup' });
+    expect(siteIn('chili from budgetbytes.com', list)).toMatchObject({ site: list[1], rest: 'chili from' });
+    expect(siteIn('two peas and their pod pasta', list)).toMatchObject({ site: list[2], rest: 'pasta' });
+    expect(siteIn('two peas & their pod pasta', list)).toMatchObject({ site: list[2], rest: 'pasta' });
+  });
+  it('is null when no site is named', () => {
+    expect(siteIn('vegetarian lasagna', list)).toBeNull();
   });
 });

@@ -31,12 +31,24 @@ export function createRecipeFinder({ db, sites, fetch = fetchPage, saveFood }) {
   return {
     load,
 
-    /** Matches from the household's sites, then from well-known ones. */
-    async find(query, { limit = 12 } = {}) {
-      const q = String(query ?? '').trim();
-      if (!q) throw new FinderError('Say what to search for.');
-      const [own, more] = await Promise.all([sites.posts(q), sites.searchMore(q)]);
+    /**
+     * Matches from the household's sites, then from well-known ones — or,
+     * when a site is named (as `site`, or in the search itself), from that
+     * site alone.
+     */
+    async find(query, { site: siteName = null, limit = 12 } = {}) {
+      let q = String(query ?? '').trim();
+      let site = siteName ? sites.named(siteName) : null;
+      if (siteName && !site) throw new FinderError(`${siteName} isn't a recipe site that can be searched here.`);
+      if (!site) {
+        const named = sites.siteIn(q);
+        if (named) ({ site, rest: q } = named);
+      }
+      if (!q && !site) throw new FinderError('Say what to search for.');
+      const followed = new Set(sites.list().map((s) => s.origin));
       const shape = (yourSite) => (p) => ({ title: p.title, url: p.url, site: p.site, yourSite, alreadySaved: p.imported });
+      if (site) return (await sites.searchSite(site, q)).slice(0, limit).map(shape(followed.has(site.origin)));
+      const [own, more] = await Promise.all([sites.posts(q), sites.searchMore(q)]);
       return [...own.slice(0, Math.ceil(limit / 2)).map(shape(true)), ...more.map(shape(false))].slice(0, limit);
     },
 

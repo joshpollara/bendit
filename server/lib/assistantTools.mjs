@@ -133,18 +133,22 @@ export function createAssistantTools({ db, picnic, userId, finder = null }) {
     },
     find_recipes: {
       description:
-        "Search for new recipes online: the household's own recipe sites first (yourSite), then well-known recipe sites. Returns titles and links; use read_recipe to check one.",
+        "Search for new recipes online: the household's own recipe sites first (yourSite), then well-known recipe sites, or one site when it's named. Returns titles and links; use read_recipe to check one.",
       parameters: obj(
         {
           query: {
             type: 'string',
             description:
-              'Two to four plain English words, like a recipe title: "instant pot lentil curry". No OR, quotes or long lists; search again for another idea.',
+              'Two to four plain English words, like a recipe title: "instant pot lentil curry". No OR, quotes or long lists; search again for another idea. Leave the site name out of it.',
+          },
+          site: {
+            type: 'string',
+            description: 'Only this site, when the person names one: "Skinnytaste", "budgetbytes.com".',
           },
         },
         ['query'],
       ),
-      run: ({ query }) => needFinder().find(query),
+      run: ({ query, site }) => needFinder().find(query, { site: site || null }),
     },
     read_recipe: {
       description:

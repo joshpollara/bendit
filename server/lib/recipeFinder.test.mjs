@@ -1,6 +1,7 @@
 import Database from 'better-sqlite3';
 import { beforeEach, describe, expect, it } from 'vitest';
 import { createRecipeFinder } from './recipeFinder.mjs';
+import { siteIn } from './recipeSites.mjs';
 import { createAssistantTools } from './assistantTools.mjs';
 import { createRecipeTables } from './recipeStore.mjs';
 import { createUser, createUsersTable } from './users.mjs';
@@ -20,11 +21,21 @@ const fetch = async (url) => {
   if (url === 'https://cook.test/lentil-curry/') return PAGE;
   return '<html>no recipe here</html>';
 };
+const MINE = { id: 'mine', name: 'Mine', origin: 'https://mine.test', kind: 'wordpress' };
+const SKINNY = { id: 'more:skinny', name: 'Skinnytaste', origin: 'https://www.skinnytaste.com', kind: 'wordpress' };
+const searched = [];
 const sites = {
+  list: () => [MINE],
   posts: async () => [{ title: 'Lentil Curry', url: 'https://mine.test/curry/', site: 'Mine', imported: true }],
   searchMore: async () => [
     { title: 'Instant Pot Lentil Curry', url: 'https://cook.test/lentil-curry/', site: 'Cook', imported: false },
   ],
+  named: (name) => siteIn(name, [MINE, SKINNY])?.site ?? null,
+  siteIn: (query) => siteIn(query, [MINE, SKINNY]),
+  searchSite: async (site, query) => {
+    searched.push([site.name, query]);
+    return [{ title: `${site.name}: ${query}`, url: `${site.origin}/x/`, site: site.name, imported: false }];
+  },
 };
 
 let db;
@@ -55,8 +66,33 @@ describe('finding recipes', () => {
     const finder = createRecipeFinder({ db, sites, fetch, saveFood });
     expect(await finder.find('lentil curry')).toEqual([
       { title: 'Lentil Curry', url: 'https://mine.test/curry/', site: 'Mine', yourSite: true, alreadySaved: true },
-      { title: 'Instant Pot Lentil Curry', url: 'https://cook.test/lentil-curry/', site: 'Cook', yourSite: false, alreadySaved: false },
+      {
+        title: 'Instant Pot Lentil Curry',
+        url: 'https://cook.test/lentil-curry/',
+        site: 'Cook',
+        yourSite: false,
+        alreadySaved: false,
+      },
     ]);
+  });
+
+  it('searches only a site named in the search, without its name', async () => {
+    const finder = createRecipeFinder({ db, sites, fetch, saveFood });
+    searched.length = 0;
+    const found = await finder.find('skinnytaste vegetarian dinner');
+    expect(searched).toEqual([['Skinnytaste', 'vegetarian dinner']]);
+    expect(found).toEqual([expect.objectContaining({ site: 'Skinnytaste', yourSite: false })]);
+    await finder.find('soup', { site: 'Skinny Taste' });
+    await finder.find('Mine curry');
+    expect(searched.slice(1)).toEqual([
+      ['Skinnytaste', 'soup'],
+      ['Mine', 'curry'],
+    ]);
+  });
+
+  it("says so when the site asked for can't be searched", async () => {
+    const finder = createRecipeFinder({ db, sites, fetch, saveFood });
+    await expect(finder.find('soup', { site: 'nowhere.example' })).rejects.toThrow(/isn't a recipe site/);
   });
 
   it('reads what a page says about its recipe', async () => {
@@ -87,7 +123,9 @@ describe("the assistant's recipe tools", () => {
   it('searches and reads straight away, and proposes saving in plain words', async () => {
     const finder = createRecipeFinder({ db, sites, fetch, saveFood });
     const { tools, declarations } = createAssistantTools({ db, picnic, userId: ann, finder });
-    expect(declarations.map((d) => d.name)).toEqual(expect.arrayContaining(['find_recipes', 'read_recipe', 'save_recipe']));
+    expect(declarations.map((d) => d.name)).toEqual(
+      expect.arrayContaining(['find_recipes', 'read_recipe', 'save_recipe']),
+    );
     expect(tools.find_recipes.write).toBeUndefined();
     expect(await tools.save_recipe.describe({ url: 'https://cook.test/lentil-curry/' })).toBe(
       'Save "Instant Pot Lentil Curry" (serves 6) from cook.test to Recipes',

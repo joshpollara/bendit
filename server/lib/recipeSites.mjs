@@ -129,6 +129,34 @@ export function feedLinkIn(html, base) {
   return href ? new URL(decodeEntities(href), base).href : null;
 }
 
+const squash = (value) => String(value ?? '').toLowerCase().replace(/[^a-z0-9]/g, '');
+const hostOf = (origin) => new URL(origin).hostname.replace(/^www\./, '');
+
+/**
+ * A site named in a search — "skinnytaste vegetarian", "Skinny Taste soup",
+ * "budgetbytes.com chili" — and the search without it. Names are compared
+ * without spaces or punctuation; the longest match wins.
+ */
+export function siteIn(query, sites) {
+  const words = String(query ?? '').trim().split(/\s+/).filter(Boolean);
+  let best = null;
+  for (let start = 0; start < words.length; start++) {
+    for (let end = start + 1; end <= Math.min(words.length, start + 6); end++) {
+      const said = squash(words.slice(start, end).join(''));
+      if (!said) continue;
+      const site = sites.find(
+        (s) =>
+          squash(s.name) === said ||
+          squash(hostOf(s.origin)) === said ||
+          squash(hostOf(s.origin).replace(/\.[a-z]+$/, '')) === said,
+      );
+      if (site && (!best || end - start > best.end - best.start)) best = { site, start, end };
+    }
+  }
+  if (!best) return null;
+  return { site: best.site, rest: [...words.slice(0, best.start), ...words.slice(best.end)].join(' ') };
+}
+
 export function createRecipeSites(db, { fetchPage, now = () => Date.now() }) {
   const cache = new Map();
 
@@ -238,6 +266,21 @@ export function createRecipeSites(db, { fetchPage, now = () => Date.now() }) {
     /** The household's sites: what's new, or what matches a search. */
     async posts(query = '') {
       return collectPosts(this.list(), query);
+    },
+
+    /** A site by name or address, the household's or a well-known one, or null. */
+    named(name) {
+      return siteIn(name, [...this.list(), ...MORE_SITES])?.site ?? null;
+    },
+
+    /** A named site in a search, and the search without it; null when none is named. */
+    siteIn(query) {
+      return siteIn(query, [...this.list(), ...MORE_SITES]);
+    },
+
+    /** One site: what's new on it, or what matches a search. */
+    async searchSite(site, query = '') {
+      return collectPosts([site], query);
     },
 
     /**
