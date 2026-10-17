@@ -9,6 +9,7 @@ import { STRINGS } from "../lib/strings";
 import { useUI } from "../store/ui";
 import MealGrade, { type MealGradeData } from "../components/MealGrade";
 import FastingCard from "../components/FastingCard";
+import { AbToday } from "../components/AbMonth";
 import { STATUS_FILL, STATUS_TEXT } from "../components/DayImpact";
 import {
   MACRO_LABELS,
@@ -621,6 +622,7 @@ export default function Today({ profile }: { profile: Profile }) {
         <div className="lg:sticky lg:top-8 lg:space-y-3">
           <BudgetSummary budget={budget} food={foodCalories} />
           <WeekLine date={date} dailyBudget={budget} />
+          <AbToday date={date} />
           <MacroBreakdown day={standing} />
           {/* A fast is running now, not on the day you happen to be reading. */}
           {date === todayStr() && <FastingCard profile={profile} />}

@@ -9,6 +9,7 @@ import { barcodeVariants } from './lib/barcode.mjs';
 import { per100FromServing } from './lib/foodSchema.mjs';
 import { matchFood, searchFoods, searchFoodsTiered } from './lib/foodSearch.mjs';
 import { gradeMeal, nutriScore, processingForMeal } from './lib/nutriScore.mjs';
+import { abMonth, AbError, clearGoal, createAbTables, setGoal } from './lib/abMonth.mjs';
 import {
   authenticate,
   countUsers,
@@ -174,6 +175,7 @@ CREATE INDEX IF NOT EXISTS idx_fasts_started ON fasts(startedAt);
 
 createUsersTable(db);
 createRecipeTables(db);
+createAbTables(db);
 createRecipeSiteTables(db);
 
 // Columns added after the first release. SQLite only supports ADD COLUMN, which
@@ -969,6 +971,41 @@ app.get('/api/day', (req, res) => {
 // Browsing the whole database: every food, newest sources first, with how many
 // log entries reference each one so deletes are an informed choice.
 // The Monday-to-Sunday week containing `date`, for the week-so-far line.
+// An A/B month: the person's goal, and each day's share of calories from food
+// graded A or B. See lib/abMonth.mjs.
+const abRoute = (fn) => (req, res) => {
+  try {
+    res.json(fn(req));
+  } catch (error) {
+    if (error instanceof AbError) return res.status(error.status).json({ error: error.message });
+    throw error;
+  }
+};
+const abMonthFor = (userId, month) => {
+  const rows = db
+    .prepare(
+      `SELECT l.*, ${foodColumns} FROM food_log l LEFT JOIN foods f ON f.id = l.foodId
+       WHERE l.userId = ? AND l.date LIKE ?`,
+    )
+    .all(userId, `${String(month).slice(0, 7)}-%`);
+  return abMonth(db, userId, month, { rows, gradeOf: (row) => gradedEntry(row)?.grade ?? null });
+};
+app.get('/api/ab-month', abRoute((req) => abMonthFor(req.userId, String(req.query.month ?? ''))));
+app.put(
+  '/api/ab-month',
+  abRoute((req) => {
+    setGoal(db, req.userId, req.body ?? {});
+    return abMonthFor(req.userId, req.body.month);
+  }),
+);
+app.delete(
+  '/api/ab-month',
+  abRoute((req) => {
+    clearGoal(db, req.userId, String(req.query.month ?? ''));
+    return abMonthFor(req.userId, String(req.query.month ?? ''));
+  }),
+);
+
 app.get('/api/week', (req, res) => {
   const { date } = req.query;
   if (!isDate(date)) return res.status(400).json({ error: 'bad date' });
