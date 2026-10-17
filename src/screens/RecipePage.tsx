@@ -12,6 +12,7 @@ import GradeBadge from '../components/GradeBadge';
 import RecipeEditor, { draftFromRecipe } from '../components/RecipeEditor';
 import RecipeShop from '../components/RecipeShop';
 import { RateButtons, whoRated } from '../components/Ratings';
+import { euros } from '../components/PicnicBits';
 import Sheet from '../components/Sheet';
 import { AddSheet } from './Plan';
 
@@ -188,6 +189,16 @@ export default function RecipePage() {
   const session = useData(() => api.session(), []);
   const members = useData(() => api.household(), []) ?? [];
   const picnic = useData(() => api.picnicStatus().catch(() => null), []);
+  // Worked out on first view, then kept a week on the server.
+  const cost = useData(
+    () =>
+      recipe?.cost
+        ? Promise.resolve(recipe.cost)
+        : picnic?.connected && recipe
+          ? api.picnicRecipeCost(recipe.id).catch(() => null)
+          : Promise.resolve(null),
+    [recipe?.id, Boolean(recipe?.cost), picnic?.connected],
+  );
   const [servings, setServings] = useState<number | null>(null);
   const [awake, setAwake] = useState(false);
   const [editing, setEditing] = useState(false);
@@ -257,6 +268,12 @@ export default function RecipePage() {
           </span>
         )}
         {recipe.perServing.calories != null && <span>{formatCalories(recipe.perServing.calories)} cal a serving</span>}
+        {cost?.perServing != null && (
+          <span>
+            ≈ {euros(cost.perServing)} a serving
+            {cost.priced < cost.lines ? ` (${cost.priced} of ${cost.lines} ingredients)` : ''}
+          </span>
+        )}
         {site && (
           <a href={recipe.sourceUrl!} target="_blank" rel="noreferrer" className="text-accent underline">
             {site}

@@ -399,6 +399,15 @@ export interface PicnicUsual extends PicnicOrderItem {
   due: boolean;
 }
 
+export interface RecipeCost {
+  /** Euro cents, or null when nothing could be priced. */
+  perServing: number | null;
+  priced: number;
+  lines: number;
+  /** Priced with Picnic's top match rather than a household pick. */
+  guessed: number;
+}
+
 export interface RecipeRatings {
   likes: number;
   dislikes: number;
@@ -454,6 +463,8 @@ export interface LazyOrderRecipe {
   image: string | null;
   reason: string;
   servings: number;
+  /** What buying its products comes to, a serving, in euro cents. */
+  costPerServing?: number;
   /** How many ingredient lines it has, and the ones matched to a product. */
   ingredients: number;
   matched: { raw: string; productId: string; name: string; imageId: string | null; unitQuantity: string | null; price: number | null }[];
@@ -622,6 +633,8 @@ export interface Recipe {
   imageUrl: string | null;
   /** What the household thought of it; `yours` is 1, -1 or 0. */
   ratings?: RecipeRatings;
+  /** Its cost a serving at Picnic's prices, when it's been worked out lately. */
+  cost?: RecipeCost | null;
   instructions: string | null;
   notes: string | null;
   author: string | null;
@@ -931,6 +944,7 @@ export const api = {
     ),
   setPicnicReminder: (hoursBefore: number | null) =>
     post('/api/picnic/reminder', { hoursBefore }, 'PUT') as Promise<{ hoursBefore: number | null }>,
+  picnicRecipeCost: (id: string) => j<RecipeCost>(`/api/picnic/recipes/${encodeURIComponent(id)}/cost`),
   rateRecipe: (id: string, rating: 1 | -1 | 0) =>
     post(`/api/recipes/${encodeURIComponent(id)}/rating`, { rating }, 'PUT') as Promise<RecipeRatings>,
   toRate: (today: string) =>

@@ -12,6 +12,7 @@ import { gradeMeal, nutriScore, processingForMeal } from './lib/nutriScore.mjs';
 import { abMonth, AbError, clearGoal, createAbTables, goalFor, setGoal } from './lib/abMonth.mjs';
 import { createRatingTables, rate, RatingError, ratingsOf, toRate } from './lib/ratings.mjs';
 import { createPicnicReminders, createPicnicReminderTables, reminderFor, setReminder } from './lib/picnicReminder.mjs';
+import { cachedCost, costRecipe, createRecipeCostTables } from './lib/recipeCost.mjs';
 import {
   authenticate,
   countUsers,
@@ -181,6 +182,7 @@ createRecipeTables(db);
 createAbTables(db);
 createRatingTables(db);
 createPicnicReminderTables(db);
+createRecipeCostTables(db);
 createRecipeSiteTables(db);
 
 // Columns added after the first release. SQLite only supports ADD COLUMN, which
@@ -1898,7 +1900,11 @@ app.put('/api/meals/estimate/:id/feedback', createMealFeedbackHandler({ db }));
 const recipes = createRecipeRoutes({
   db,
   saveFood,
-  decorate: (recipe, req) => ({ ...recipe, ratings: ratingsOf(db, recipe.id, req.userId) }),
+  decorate: (recipe, req) => ({
+    ...recipe,
+    ratings: ratingsOf(db, recipe.id, req.userId),
+    cost: cachedCost(db, recipe.id),
+  }),
 });
 
 // Liked it, or not again: one rating per person per recipe. See lib/ratings.mjs.
@@ -2128,6 +2134,17 @@ app.get(
   picnicRoute((req) => {
     picnic.status().connected || picnicNotConnected();
     return withProducts(db, recipeShoppingList(db, req.params.id, req.query.servings), suggestProduct);
+  }),
+);
+
+// What a recipe costs a serving at Picnic's prices, worked out when asked and
+// kept for a week. See lib/recipeCost.mjs.
+app.get(
+  '/api/picnic/recipes/:id/cost',
+  picnicRoute(async (req) => {
+    picnic.status().connected || picnicNotConnected();
+    if (!db.prepare('SELECT 1 FROM recipes WHERE id = ?').get(req.params.id)) throw new PlanError('No such recipe.', 404);
+    return (req.query.refresh !== '1' && cachedCost(db, req.params.id)) || costRecipe(db, req.params.id, { suggest: suggestProduct });
   }),
 );
 

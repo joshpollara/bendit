@@ -4,7 +4,7 @@ import { api, type LazyOrder as Order, type LazyOrderRecipe, type PicnicOrderIte
 import { useData } from '../lib/useData';
 import Sheet from './Sheet';
 import { SparkleIcon } from './Icons';
-import { Thumb } from './PicnicBits';
+import { euros, Thumb } from './PicnicBits';
 
 // "Make me an order": the due usuals and a few new recipes from the
 // household's sites, picked by AI, with their ingredients as Picnic products.
@@ -152,6 +152,7 @@ export default function LazyOrder({
                     <span className="block truncate text-sm font-medium">{r.title}</span>
                     <span className="line-clamp-2 text-xs text-ink-muted">
                       {r.reason} · {r.site}
+                      {r.costPerServing ? ` · ≈ ${euros(r.costPerServing)} a serving to buy` : ''}
                     </span>
                   </a>
                   <button
