@@ -5,6 +5,7 @@ import { resizeForModel } from '../lib/vision';
 import { formatCalories } from '../lib/units';
 import { CameraIcon, ChipIcon, SparkleIcon, TrashIcon } from '../components/Icons';
 import RecipeEditor from '../components/RecipeEditor';
+import RecipeSites from '../components/RecipeSites';
 
 const CameraCapture = lazy(() => import('../components/CameraCapture'));
 
@@ -51,13 +52,13 @@ export default function Recipes() {
   const [shooting, setShooting] = useState(false);
   const fileInput = useRef<HTMLInputElement>(null);
 
-  async function fromUrl() {
-    if (!url.trim() || busy !== null) return;
+  async function fromUrl(link = url) {
+    if (!link.trim() || busy !== null) return;
     setBusy('url');
     setError(null);
     setPhotoToRetry(null);
     try {
-      setDraft({ draft: await api.recipeFromUrl(url.trim()) });
+      setDraft({ draft: await api.recipeFromUrl(link.trim()) });
       setUrl('');
     } catch (e) {
       setError(e instanceof Error ? e.message : "Couldn't read that page.");
@@ -291,6 +292,15 @@ export default function Recipes() {
           </div>
         )}
       </section>
+
+      <RecipeSites
+        busy={busy !== null}
+        onImport={(link) => {
+          // The import's progress and errors show in the import card above.
+          window.scrollTo({ top: 0, behavior: 'smooth' });
+          void fromUrl(link);
+        }}
+      />
 
       {recipes?.length === 0 && (
         <p className="px-1 py-6 text-center text-sm text-ink-muted">No recipes yet.</p>

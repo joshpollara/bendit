@@ -37,6 +37,8 @@ import {
   createRecipeRoutes,
 } from './lib/recipeRoute.mjs';
 import { createRecipeTables } from './lib/recipeStore.mjs';
+import { createRecipeSiteTables, createRecipeSites, SiteError } from './lib/recipeSites.mjs';
+import { fetchPage } from './lib/recipeImport.mjs';
 import { createAssistant, createAssistantTables } from './lib/assistant.mjs';
 import { createChatModel } from './lib/geminiChat.mjs';
 import { ToolError } from './lib/assistantTools.mjs';
@@ -168,6 +170,7 @@ CREATE INDEX IF NOT EXISTS idx_fasts_started ON fasts(startedAt);
 
 createUsersTable(db);
 createRecipeTables(db);
+createRecipeSiteTables(db);
 
 // Columns added after the first release. SQLite only supports ADD COLUMN, which
 // is all these need — every one is nullable or defaulted.
@@ -1857,6 +1860,23 @@ app.delete('/api/recipes/:id', recipes.remove);
 app.post('/api/recipes/price', createRecipePriceHandler({ db }));
 app.post('/api/recipes/from-url', createRecipeFromUrlHandler({ db, visionHandler }));
 app.post('/api/recipes/from-photo', bigJson, createRecipeFromPhotoHandler({ db, visionHandler }));
+
+// The household's favourite recipe sites: what's new on them, and searching
+// them. Shared, like recipes.
+const recipeSites = createRecipeSites(db, { fetchPage });
+const siteRoute = (fn) => async (req, res) => {
+  try {
+    res.json(await fn(req));
+  } catch (error) {
+    if (error instanceof SiteError) return res.status(error.status).json({ error: { message: error.message } });
+    console.error(error);
+    res.status(500).json({ error: { message: 'Something went wrong.' } });
+  }
+};
+app.get('/api/recipe-sites', siteRoute(() => recipeSites.list()));
+app.post('/api/recipe-sites', siteRoute((req) => recipeSites.add(req.body?.url, { userId: req.userId })));
+app.delete('/api/recipe-sites/:id', siteRoute((req) => ({ ok: recipeSites.remove(req.params.id) })));
+app.get('/api/recipe-sites/posts', siteRoute((req) => recipeSites.posts(String(req.query.q ?? ''))));
 
 // ——— meal plan ———
 //

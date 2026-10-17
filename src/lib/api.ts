@@ -545,6 +545,25 @@ export interface Recipe {
   perServing: { calories: number | null; grams: number | null };
 }
 
+/** A recipe site the household follows. */
+export interface RecipeSite {
+  id: string;
+  name: string;
+  origin: string;
+  /** WordPress sites can be searched; others only show what's new. */
+  kind: 'wordpress' | 'rss';
+}
+
+export interface RecipeSitePost {
+  title: string;
+  url: string;
+  image: string | null;
+  date: string | null;
+  site: string;
+  /** Already saved as a recipe here. */
+  imported: boolean;
+}
+
 /** Counts over some set of model calls — a window, a task, or a model. */
 export interface UsageTally {
   calls: number;
@@ -891,6 +910,11 @@ export const api = {
   saveRecipe: (recipe: RecipeInput, id?: string) =>
     (id ? post(`/api/recipes/${id}`, recipe, 'PUT') : post('/api/recipes', recipe)) as Promise<Recipe>,
   deleteRecipe: (id: string) => j<unknown>(`/api/recipes/${id}`, { method: 'DELETE' }),
+  recipeSites: () => j<RecipeSite[]>('/api/recipe-sites'),
+  addRecipeSite: (url: string) => post('/api/recipe-sites', { url }) as Promise<RecipeSite>,
+  removeRecipeSite: (id: string) => j<unknown>(`/api/recipe-sites/${id}`, { method: 'DELETE' }),
+  recipeSitePosts: (q = '') =>
+    j<RecipeSitePost[]>(`/api/recipe-sites/posts${q ? `?${new URLSearchParams({ q })}` : ''}`),
 
   mealTemplates: () => j<MealTemplate[]>('/api/meal-templates'),
   createMealTemplate: (name: string, items: Omit<MealTemplateItem, 'id' | 'food'>[]) =>
