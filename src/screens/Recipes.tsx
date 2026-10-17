@@ -131,6 +131,8 @@ export default function Recipes() {
         notes: recipe.notes,
         sourceType: (recipe.sourceType as 'url' | 'photo' | 'manual') ?? 'manual',
         sourceUrl: recipe.sourceUrl,
+        sourceNutrition: recipe.sourceNutrition,
+        nutritionFrom: recipe.nutritionFrom,
         total: { grams: recipe.total.grams, calories: recipe.total.calories },
         perServing: {
           grams: recipe.perServing.grams,

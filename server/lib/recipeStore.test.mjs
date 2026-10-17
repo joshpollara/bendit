@@ -155,3 +155,61 @@ describe('deleteRecipe', () => {
     expect(deleteRecipe(db, 'nope')).toBe(false);
   });
 });
+
+describe("a recipe's page nutrition", () => {
+  const PAGE = {
+    servings: 4,
+    calories: 255,
+    protein: 30,
+    carbs: 6,
+    fat: 11,
+    satFat: 0.5,
+    sugar: 2,
+    fiber: 2,
+    sodiumMg: 849,
+  };
+
+  it("gives its food the page's figures when chosen, rescaled to the servings it makes", () => {
+    // The page's 4 servings, made as 2: each serving is twice the page's.
+    const { id } = saveRecipe(
+      db,
+      { ...BOLOGNESE, servings: 2, sourceNutrition: PAGE, nutritionFrom: 'page' },
+      { saveFood, ownerId: 'ada' },
+    );
+    const food = saved.at(-1);
+    expect(food).toMatchObject({ caloriesPerServing: 510, protein: 60, carbs: 12, fat: 22 });
+    // 250 g a serving, so per 100 g it's 2/5 of a serving.
+    expect(food).toMatchObject({ sugar100: 1.6, satFat100: 0.4, sodiumMg100: 679.2 });
+    expect(readRecipe(db, id)).toMatchObject({ nutritionFrom: 'page', sourceNutrition: PAGE });
+  });
+
+  it('gives no weight, and so no grade, when not every ingredient could be weighed', () => {
+    saveRecipe(
+      db,
+      {
+        ...BOLOGNESE,
+        ingredients: ['500 g ground beef', '1 tsp unobtainium'],
+        sourceNutrition: PAGE,
+        nutritionFrom: 'page',
+      },
+      { saveFood, ownerId: 'ada' },
+    );
+    expect(saved.at(-1)).toMatchObject({ caloriesPerServing: 255, servingGrams: null, sugar100: null });
+  });
+
+  it('keeps the ingredient figures otherwise, and remembers the page for later', () => {
+    const { id } = saveRecipe(db, { ...BOLOGNESE, sourceNutrition: PAGE }, { saveFood, ownerId: 'ada' });
+    expect(saved.at(-1)).toMatchObject({ caloriesPerServing: 250 });
+    expect(saved.at(-1).sugar100).toBeUndefined();
+    expect(readRecipe(db, id)).toMatchObject({ nutritionFrom: 'ingredients', sourceNutrition: PAGE });
+  });
+
+  it("ignores a page's figures without calories", () => {
+    const { id } = saveRecipe(
+      db,
+      { ...BOLOGNESE, sourceNutrition: { protein: 30 }, nutritionFrom: 'page' },
+      { saveFood, ownerId: 'ada' },
+    );
+    expect(readRecipe(db, id)).toMatchObject({ nutritionFrom: 'ingredients', sourceNutrition: null });
+  });
+});

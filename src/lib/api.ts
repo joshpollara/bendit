@@ -468,6 +468,22 @@ export interface RecipeIngredientInput {
   foodId?: string | null;
 }
 
+/** One serving's nutrition as a recipe's page states it, for the servings it says the recipe makes. */
+export interface SourceNutrition {
+  servings: number | null;
+  calories: number | null;
+  protein: number | null;
+  carbs: number | null;
+  fat: number | null;
+  satFat?: number | null;
+  sugar?: number | null;
+  fiber?: number | null;
+  sodiumMg?: number | null;
+}
+
+/** Where a recipe's food takes its nutrition from. */
+export type NutritionFrom = 'page' | 'ingredients';
+
 export interface RecipeInput {
   name: string;
   servings: number;
@@ -477,6 +493,8 @@ export interface RecipeInput {
   notes?: string | null;
   sourceType?: 'url' | 'photo' | 'manual';
   sourceUrl?: string | null;
+  sourceNutrition?: SourceNutrition | null;
+  nutritionFrom?: NutritionFrom;
 }
 
 /** What a read recipe looks like before it is saved. */
@@ -490,13 +508,9 @@ export interface RecipeDraft {
   notes?: string | null;
   sourceType?: 'url' | 'photo' | 'manual';
   sourceUrl?: string | null;
-  /** Nutrition declared by the recipe publisher, used only as a sanity check. */
-  sourceNutrition?: {
-    calories: number | null;
-    protein: number | null;
-    carbs: number | null;
-    fat: number | null;
-  } | null;
+  /** Nutrition declared by the recipe publisher. */
+  sourceNutrition?: SourceNutrition | null;
+  nutritionFrom?: NutritionFrom;
   /** Whether AI could verify that a photographed source contained the whole recipe. */
   sourceComplete?: boolean;
   sourceWarnings?: string[];
@@ -519,6 +533,8 @@ export interface Recipe {
   servingsStated: boolean;
   sourceType: string | null;
   sourceUrl: string | null;
+  sourceNutrition: SourceNutrition | null;
+  nutritionFrom: NutritionFrom;
   instructions: string | null;
   notes: string | null;
   author: string | null;

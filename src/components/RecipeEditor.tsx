@@ -1,5 +1,5 @@
 import { useEffect, useState } from 'react';
-import { api, type RecipeDraft, type RecipeIngredientInput } from '../lib/api';
+import { api, type NutritionFrom, type RecipeDraft, type RecipeIngredientInput, type SourceNutrition } from '../lib/api';
 import { formatCalories } from '../lib/units';
 import { SparkleIcon } from './Icons';
 
@@ -31,6 +31,18 @@ export function recipeIngredientInputs(
     });
 }
 
+/** The page's serving, for a recipe making `makes`: its figures are for its own yield. */
+export function pageServing(source: SourceNutrition, makes: number) {
+  const scale = source.servings && makes > 0 ? source.servings / makes : 1;
+  const per = (value: number | null | undefined) => (value == null ? null : Math.round(value * scale * 10) / 10);
+  return {
+    calories: source.calories == null ? null : Math.round(source.calories * scale),
+    protein: per(source.protein),
+    carbs: per(source.carbs),
+    fat: per(source.fat),
+  };
+}
+
 export default function RecipeEditor({
   initial,
   recipeId,
@@ -51,6 +63,12 @@ export default function RecipeEditor({
   const [pricing, setPricing] = useState(false);
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const source = initial.sourceNutrition?.calories ? initial.sourceNutrition : null;
+  // A page's own figures are usually better than matching every ingredient, so
+  // a fresh import starts from them.
+  const [nutritionFrom, setNutritionFrom] = useState<NutritionFrom>(
+    initial.nutritionFrom ?? (source ? 'page' : 'ingredients'),
+  );
 
   const makes = Number(servings) || 1;
 
@@ -92,6 +110,8 @@ export default function RecipeEditor({
           notes: notes.trim() || null,
           sourceType: initial.sourceType ?? 'manual',
           sourceUrl: initial.sourceUrl ?? null,
+          sourceNutrition: source,
+          nutritionFrom: source ? nutritionFrom : 'ingredients',
         },
         recipeId,
       );
@@ -102,13 +122,26 @@ export default function RecipeEditor({
     }
   }
 
-  const per = priced.perServing;
-  const declaredCalories = initial.sourceNutrition?.calories;
+  const fromIngredients = priced.perServing;
+  const page = source ? pageServing(source, makes) : null;
+  const usePage = page != null && nutritionFrom === 'page';
+  const per = usePage
+    ? {
+        ...fromIngredients,
+        grams: priced.complete === false ? null : fromIngredients.grams,
+        calories: page.calories,
+        protein: page.protein ?? fromIngredients.protein,
+        carbs: page.carbs ?? fromIngredients.carbs,
+        fat: page.fat ?? fromIngredients.fat,
+      }
+    : fromIngredients;
+  const declaredCalories = page?.calories;
   const nutritionDisagrees =
+    !usePage &&
     declaredCalories != null &&
     declaredCalories > 0 &&
-    per.calories != null &&
-    Math.abs(per.calories - declaredCalories) / declaredCalories > 0.3;
+    fromIngredients.calories != null &&
+    Math.abs(fromIngredients.calories - declaredCalories) / declaredCalories > 0.3;
   const valid = name.trim() !== '' && lines.trim() !== '';
 
   return (
@@ -225,17 +258,37 @@ export default function RecipeEditor({
           <p className="text-2xl font-semibold tabular-nums">
             {per.calories == null ? '—' : formatCalories(per.calories)}{' '}
             <span className="text-base font-normal">
-              cal per serving{priced.complete === false ? ' (partial)' : ''}
+              cal per serving{!usePage && priced.complete === false ? ' (partial)' : ''}
             </span>
           </p>
           <p className="text-xs text-ink-secondary tabular-nums">
             {per.grams ? `${Math.round(per.grams)} g · ` : ''}
             P {per.protein ?? 0}g · C {per.carbs ?? 0}g · F {per.fat ?? 0}g
           </p>
-          {priced.total.calories != null && (
+          {!usePage && priced.total.calories != null && (
             <p className="mt-1 text-xs text-ink-muted tabular-nums">
               whole recipe {formatCalories(priced.total.calories)} cal
             </p>
+          )}
+          {page && (
+            <div className="mt-3 grid grid-cols-2 gap-1 rounded-xl bg-surface p-1 text-xs font-medium">
+              {(
+                [
+                  ['page', 'The page', page.calories],
+                  ['ingredients', 'Ingredients', fromIngredients.calories],
+                ] as const
+              ).map(([key, label, calories]) => (
+                <button
+                  key={key}
+                  type="button"
+                  aria-pressed={nutritionFrom === key}
+                  onClick={() => setNutritionFrom(key)}
+                  className={`rounded-lg px-2 py-1.5 ${nutritionFrom === key ? 'bg-card shadow-sm' : 'text-ink-secondary'}`}
+                >
+                  {label} · {calories == null ? '—' : formatCalories(calories)} cal
+                </button>
+              ))}
+            </div>
           )}
         </div>
       </div>
@@ -258,7 +311,7 @@ export default function RecipeEditor({
 
       {nutritionDisagrees && (
         <p className="rounded-xl bg-warn-soft px-3 py-2 text-xs text-warn-deep">
-          This estimate differs substantially from the page’s stated {formatCalories(declaredCalories)} calories per serving. Review the food matches before saving.
+          The ingredients come to quite different calories from the page’s {formatCalories(declaredCalories!)}. Review the food matches, or use the page’s figures.
         </p>
       )}
 

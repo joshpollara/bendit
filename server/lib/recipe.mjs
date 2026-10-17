@@ -191,9 +191,21 @@ export function buildRecipe(db, { ingredients, servings = 1, ownerId } = {}) {
  * The food a recipe produces: one serving of it, in the canonical shape the
  * rest of the app logs against.
  */
-export function recipeFood(recipe, { id, name, ownerId = null }) {
-  const per = recipe.perServing;
-  const grams = per.grams > 0 ? per.grams : null;
+export function recipeFood(recipe, { id, name, ownerId = null, declared = null }) {
+  // The page's own figures for a serving, where the recipe uses them; the
+  // serving's weight still comes from the ingredients, since pages rarely say.
+  const per = declared
+    ? {
+        ...recipe.perServing,
+        calories: declared.calories,
+        protein: declared.protein ?? recipe.perServing.protein,
+        carbs: declared.carbs ?? recipe.perServing.carbs,
+        fat: declared.fat ?? recipe.perServing.fat,
+      }
+    : recipe.perServing;
+  // With the page's figures, a weight from partly matched ingredients would make
+  // every per-100 g figure — and the grade — wrong, so there is none.
+  const grams = per.grams > 0 && (!declared || recipe.complete) ? per.grams : null;
   const scale = (value) => (value == null || !grams ? null : round((value * 100) / grams, 1));
 
   return {
@@ -215,6 +227,15 @@ export function recipeFood(recipe, { id, name, ownerId = null }) {
     protein100: scale(per.protein),
     carbs100: scale(per.carbs),
     fat100: scale(per.fat),
+    // Only a page states these; with them, the recipe can be given a Nutri-Score.
+    ...(declared
+      ? {
+          satFat100: scale(declared.satFat),
+          sugar100: scale(declared.sugar),
+          fiber100: scale(declared.fiber),
+          sodiumMg100: scale(declared.sodiumMg),
+        }
+      : {}),
     ownerId,
     servings: grams
       ? [
