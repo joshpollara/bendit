@@ -27,7 +27,20 @@ export function arrivingOf(deliveries, now = Date.now()) {
 const within = (promise, ms) =>
   Promise.race([promise, new Promise((resolve) => setTimeout(() => resolve(null), ms).unref?.())]);
 
-export async function picnicHome({ next, deliveries, usualsDue, dealCount, planCount, dealWaitMs = 1500, now }) {
+/** Close enough to its window that the van could be out: from two hours before. */
+export const nearWindow = (arriving, now = Date.now()) =>
+  Boolean(arriving) && Date.parse(arriving.windowStart) - now < 2 * 60 * 60 * 1000;
+
+export async function picnicHome({
+  next,
+  deliveries,
+  usualsDue,
+  dealCount,
+  planCount,
+  track = async () => null,
+  dealWaitMs = 1500,
+  now,
+}) {
   const [nextDelivery, placed, deals] = await Promise.all([
     next().catch(() => null),
     deliveries().catch(() => []),
@@ -36,9 +49,11 @@ export async function picnicHome({ next, deliveries, usualsDue, dealCount, planC
       dealWaitMs,
     ),
   ]);
+  const arriving = arrivingOf(placed, now);
+  const tracking = nearWindow(arriving, now) ? await track(arriving.id).catch(() => null) : null;
   return {
     next: nextDelivery,
-    arriving: arrivingOf(placed, now),
+    arriving: arriving && { ...arriving, eta: tracking?.eta ?? null, minutes: tracking?.minutes ?? null },
     usualsDue,
     deals,
     plan: planCount,

@@ -210,5 +210,7 @@ export function createPicnic({ db, env = process.env, Client = PicnicClient }) {
     delivery: (id) => call((p) => p.delivery.getDelivery(id)),
     /** Live position, or null: Picnic only answers while a delivery is on its way. */
     position: (id) => call((p) => p.delivery.getDeliveryPosition(id)).catch(() => null),
+    /** The planned route and the driver, or null, likewise only while it's on its way. */
+    scenario: (id) => call((p) => p.delivery.getDeliveryScenario(id)).catch(() => null),
   };
 }

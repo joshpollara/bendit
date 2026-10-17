@@ -33,7 +33,15 @@ export function leftUntil(iso: string, now = Date.now()) {
 
 const sentence = (s: string) => s.charAt(0).toUpperCase() + s.slice(1);
 
-export default function PicnicHome({ cart, onCart }: { cart?: PicnicCart; onCart: () => void }) {
+export default function PicnicHome({
+  cart,
+  onCart,
+  onDelivery,
+}: {
+  cart?: PicnicCart;
+  onCart: () => void;
+  onDelivery: (id: string) => void;
+}) {
   const monday = format(startOfWeek(parseISO(todayStr()), { weekStartsOn: 1 }), DAY);
   const home = useData(() => api.picnicHome(monday, shiftDay(monday, 6)), [monday]);
   const soldOut = (cart?.items ?? []).reduce(
@@ -93,15 +101,26 @@ export default function PicnicHome({ cart, onCart }: { cart?: PicnicCart; onCart
       </section>
 
       {home?.arriving && (
-        <Link to="/picnic?tab=orders" className={`${card} block`}>
+        <button
+          type="button"
+          onClick={() => onDelivery(home.arriving!.id)}
+          className={`${card} block w-[calc(100%-2rem)] text-left lg:w-full`}
+        >
           <h2 className="text-xs font-semibold uppercase tracking-wide text-ink-muted">On its way</h2>
           <p className="mt-1 text-base font-semibold">
             {sentence(windowOf(home.arriving.windowStart, home.arriving.windowEnd))}
           </p>
-          {home.arriving.totalPrice != null && (
-            <p className="text-sm text-ink-secondary">{euros(home.arriving.totalPrice)}</p>
+          {home.arriving.eta ? (
+            <p className="text-sm font-medium text-accent">
+              Arriving about {clock(home.arriving.eta)}
+              {home.arriving.minutes ? ` · ${home.arriving.minutes} min` : ''}
+            </p>
+          ) : (
+            home.arriving.totalPrice != null && (
+              <p className="text-sm text-ink-secondary">{euros(home.arriving.totalPrice)}</p>
+            )
           )}
-        </Link>
+        </button>
       )}
 
       {starts.length > 0 && (

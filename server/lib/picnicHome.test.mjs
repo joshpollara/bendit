@@ -69,3 +69,36 @@ describe('picnicHome', () => {
     expect(home).toMatchObject({ next: null, arriving: null, deals: null, usualsDue: 4, plan: 7 });
   });
 });
+
+describe('picnicHome tracking', () => {
+  const placed = [
+    { id: 'd1', status: 'CURRENT', windowStart: '2026-10-20T13:00:00Z', windowEnd: '2026-10-20T14:00:00Z' },
+  ];
+  const base = {
+    next: async () => null,
+    deliveries: async () => placed,
+    usualsDue: 0,
+    dealCount: async () => 0,
+    planCount: 0,
+  };
+
+  it('adds the live arrival when the window is near', async () => {
+    const home = await picnicHome({
+      ...base,
+      now: NOW,
+      track: async () => ({ eta: '2026-10-20T13:20:00Z', minutes: 80 }),
+    });
+    expect(home.arriving).toMatchObject({ id: 'd1', eta: '2026-10-20T13:20:00Z', minutes: 80 });
+  });
+
+  it("doesn't ask Picnic when the window is far off", async () => {
+    let asked = false;
+    const home = await picnicHome({
+      ...base,
+      now: Date.parse('2026-10-19T12:00:00Z'),
+      track: async () => ((asked = true), null),
+    });
+    expect(asked).toBe(false);
+    expect(home.arriving).toMatchObject({ id: 'd1', eta: null });
+  });
+});
