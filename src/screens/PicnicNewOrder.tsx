@@ -595,6 +595,9 @@ export default function PicnicNewOrder() {
                 draft={draft}
                 setQuantity={setQuantity}
               >
+                {priced(item)?.unavailable && (
+                  <p className="mt-1 text-xs font-medium text-over">Sold out at Picnic: {priced(item)!.unavailable}</p>
+                )}
                 {priced(item)?.oneMore && (
                   <button
                     type="button"

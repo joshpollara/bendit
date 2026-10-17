@@ -25,6 +25,13 @@ function collect(node, visit, context = null) {
   for (const value of Array.isArray(node) ? node : Object.values(node)) collect(value, visit, here);
 }
 
+/** Picnic's word for why a product can't be delivered, if it can't. */
+function unavailableText(unit) {
+  const d = (unit.decorators ?? []).find((x) => x?.type === 'UNAVAILABLE');
+  if (!d) return null;
+  return d.explanation?.short_explanation || d.reason || 'Not available';
+}
+
 /** The products on a search page, and each one's deal where it has one. */
 export function readSearchPage(page) {
   const products = new Map();
@@ -38,6 +45,7 @@ export function readSearchPage(page) {
         imageId: unit.image_id ?? null,
         unitQuantity: unit.unit_quantity ?? null,
         price: unit.display_price ?? null,
+        unavailable: unavailableText(unit),
       });
     }
     if (tile && typeof node.promotion_label === 'string' && !deals.has(tile)) {
@@ -184,6 +192,7 @@ export function createDealFinder(picnic, { now = () => Date.now(), grade = null,
           productId: item.productId,
           price,
           deal,
+          unavailable: current.unavailable ?? null,
           cost,
           saves,
           oneMore: oneMore && oneMore.saves > 0 ? oneMore : null,

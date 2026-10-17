@@ -18,6 +18,7 @@ import { euros, Thumb, useSettled } from '../components/PicnicBits';
 import CheckoutSheet from '../components/PicnicCheckout';
 import GradeBadge from '../components/GradeBadge';
 import PicnicReminder from '../components/PicnicReminder';
+import { unavailableOf } from '../lib/picnicUnavailable';
 
 const quantityOf = (article: PicnicCartArticle) =>
   article.decorators?.find((d) => d.type === 'QUANTITY')?.quantity ?? 1;
@@ -138,6 +139,12 @@ function CartView({
   const graded = useData(() => api.picnicCartGrades().catch(() => undefined), [cart?.total_count]);
   if (!cart) return <p className="px-4 py-6 text-center text-sm text-ink-muted">Loading…</p>;
   const articles = cart.items.flatMap((line) => line.items);
+  // Sold out, by article, from the article's own decorators or its line's.
+  const soldOut = new Map(
+    cart.items.flatMap((line) =>
+      line.items.map((a) => [a.id, unavailableOf(a, line)] as const).filter(([, u]) => u != null),
+    ),
+  );
   const gradeOf = new Map((graded?.grades ?? []).map((g) => [g.productId, g.grade]));
   const ab = articles.filter((a) => ['A', 'B'].includes(gradeOf.get(a.id) ?? '')).length;
   const ungraded = articles.filter((a) => graded && !gradeOf.get(a.id)).length;
@@ -146,41 +153,85 @@ function CartView({
   }
   return (
     <>
+      {soldOut.size > 0 && (
+        <p className="border-b border-line bg-over-soft px-4 py-2 text-xs font-medium text-over">
+          {soldOut.size} {soldOut.size === 1 ? 'item is' : 'items are'} sold out at Picnic
+        </p>
+      )}
       <ul>
         {articles.map((article) => {
           const count = quantityOf(article);
+          const unavailable = soldOut.get(article.id);
           return (
-            <li key={article.id} className="flex items-center gap-3 border-b border-line px-4 py-2.5">
-              <Thumb id={article.image_ids[0]} />
-              <span className="min-w-0 flex-1">
-                <span className="block truncate text-sm font-medium">
-                  <GradeBadge grade={gradeOf.get(article.id)} className="mr-1.5" />
-                  {article.name}
+            <li key={article.id} className="border-b border-line px-4 py-2.5">
+              <div className="flex items-center gap-3">
+                <Thumb id={article.image_ids[0]} />
+                <span className="min-w-0 flex-1">
+                  <span className="block truncate text-sm font-medium">
+                    <GradeBadge grade={gradeOf.get(article.id)} className="mr-1.5" />
+                    {article.name}
+                  </span>
+                  <span className="block truncate text-xs text-ink-muted">
+                    {article.unit_quantity} · {euros(article.price)}
+                  </span>
                 </span>
-                <span className="block truncate text-xs text-ink-muted">
-                  {article.unit_quantity} · {euros(article.price)}
+                <span className="flex items-center gap-1">
+                  <button
+                    type="button"
+                    aria-label={`One fewer ${article.name}`}
+                    onClick={() => onChange(() => api.picnicRemoveFromCart(article.id))}
+                    className="h-8 w-8 rounded-lg border border-line text-ink-secondary"
+                  >
+                    −
+                  </button>
+                  <span className="w-6 text-center text-sm tabular-nums">{count}</span>
+                  <button
+                    type="button"
+                    aria-label={`One more ${article.name}`}
+                    disabled={count >= article.max_count}
+                    onClick={() => onChange(() => api.picnicAddToCart(article.id))}
+                    className="h-8 w-8 rounded-lg border border-line text-ink-secondary disabled:opacity-40"
+                  >
+                    +
+                  </button>
                 </span>
-              </span>
-              <span className="flex items-center gap-1">
-                <button
-                  type="button"
-                  aria-label={`One fewer ${article.name}`}
-                  onClick={() => onChange(() => api.picnicRemoveFromCart(article.id))}
-                  className="h-8 w-8 rounded-lg border border-line text-ink-secondary"
-                >
-                  −
-                </button>
-                <span className="w-6 text-center text-sm tabular-nums">{count}</span>
-                <button
-                  type="button"
-                  aria-label={`One more ${article.name}`}
-                  disabled={count >= article.max_count}
-                  onClick={() => onChange(() => api.picnicAddToCart(article.id))}
-                  className="h-8 w-8 rounded-lg border border-line text-ink-secondary disabled:opacity-40"
-                >
-                  +
-                </button>
-              </span>
+              </div>
+              {unavailable && (
+                <div className="mt-1.5 pl-[52px]">
+                  <p className="text-xs font-medium text-over">Sold out{unavailable.explanation ? `: ${unavailable.explanation}` : ''}</p>
+                  {unavailable.replacements.slice(0, 3).map((r) => (
+                    <button
+                      key={r.id}
+                      type="button"
+                      onClick={() =>
+                        onChange(async () => {
+                          await api.picnicRemoveFromCart(article.id, count);
+                          return api.picnicAddToCart(r.id, Math.max(1, Math.min(count, r.max_count || count)));
+                        })
+                      }
+                      className="mt-1 flex w-full items-center gap-2 rounded-xl border border-line px-2 py-1.5 text-left"
+                    >
+                      <Thumb id={r.image_id} size="h-7 w-7" />
+                      <span className="min-w-0 flex-1 truncate text-xs">
+                        {r.name}
+                        <span className="text-ink-muted">
+                          {' '}· {r.unit_quantity} · {euros(r.display_price)}
+                        </span>
+                      </span>
+                      <span className="shrink-0 text-xs font-semibold text-accent">Swap</span>
+                    </button>
+                  ))}
+                  {unavailable.replacements.length === 0 && (
+                    <button
+                      type="button"
+                      onClick={() => onChange(() => api.picnicRemoveFromCart(article.id, count))}
+                      className="mt-1 text-xs font-semibold text-accent"
+                    >
+                      Remove it
+                    </button>
+                  )}
+                </div>
+              )}
             </li>
           );
         })}

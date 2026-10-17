@@ -148,12 +148,18 @@ export interface PicnicCartArticle {
   image_ids: string[];
   max_count: number;
   /** A QUANTITY decorator carries how many are in the cart; absent means one. */
-  decorators: { type: string; quantity?: number }[];
+  decorators: { type: string; quantity?: number; [key: string]: unknown }[];
 }
 
 export interface PicnicCart {
   id: string;
-  items: { id: string; items: PicnicCartArticle[]; display_price: number; price: number }[];
+  items: {
+    id: string;
+    items: PicnicCartArticle[];
+    display_price: number;
+    price: number;
+    decorators?: { type: string; [key: string]: unknown }[];
+  }[];
   total_count: number;
   total_price: number;
   checkout_total_price: number;
@@ -440,6 +446,8 @@ export interface PicnicPriceCheck {
   cost: number | null;
   /** What the deal saves on that quantity. */
   saves: number;
+  /** Picnic says it can't deliver this one, and why. */
+  unavailable?: string | null;
   /** One more completes a multi-buy: what it adds, and what it saves. */
   oneMore: { extra: number; saves: number } | null;
   /** The same food, about the same amount, for less. */
