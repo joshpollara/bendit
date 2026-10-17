@@ -49,7 +49,11 @@ export function createRecipeTables(db) {
   // recipe's food takes its nutrition from that ('page') or its ingredients.
   if (!columns.has('sourceNutrition')) db.exec('ALTER TABLE recipes ADD COLUMN sourceNutrition TEXT');
   if (!columns.has('nutritionFrom')) db.exec('ALTER TABLE recipes ADD COLUMN nutritionFrom TEXT');
+  // The recipe page's photo, linked rather than copied.
+  if (!columns.has('imageUrl')) db.exec('ALTER TABLE recipes ADD COLUMN imageUrl TEXT');
 }
+
+const cleanImage = (url) => (typeof url === 'string' && /^https?:\/\//.test(url) ? url.slice(0, 2000) : null);
 
 const num = (value) => (typeof value === 'number' && Number.isFinite(value) && value >= 0 ? value : null);
 
@@ -184,9 +188,9 @@ export function saveRecipe(db, input, { saveFood, ownerId, id = newId() }) {
     db.prepare(
       `INSERT OR REPLACE INTO recipes
          (id, name, servings, servingsStated, sourceType, sourceUrl, instructions, notes,
-          foodId, createdBy, createdAt, updatedAt, sourceNutrition, nutritionFrom)
+          foodId, createdBy, createdAt, updatedAt, sourceNutrition, nutritionFrom, imageUrl)
        VALUES (@id, @name, @servings, @servingsStated, @sourceType, @sourceUrl, @instructions,
-               @notes, @foodId, @createdBy, @createdAt, @updatedAt, @sourceNutrition, @nutritionFrom)`,
+               @notes, @foodId, @createdBy, @createdAt, @updatedAt, @sourceNutrition, @nutritionFrom, @imageUrl)`,
     ).run({
       id,
       name: input.name,
@@ -203,6 +207,8 @@ export function saveRecipe(db, input, { saveFood, ownerId, id = newId() }) {
       updatedAt: new Date().toISOString(),
       sourceNutrition: sourceNutrition ? JSON.stringify(sourceNutrition) : null,
       nutritionFrom,
+      // An edit that doesn't mention the photo keeps it.
+      imageUrl: input.imageUrl !== undefined ? cleanImage(input.imageUrl) : (existing?.imageUrl ?? null),
     });
 
     db.prepare('DELETE FROM recipe_ingredients WHERE recipeId = ?').run(id);

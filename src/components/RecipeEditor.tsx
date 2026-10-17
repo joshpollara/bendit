@@ -50,6 +50,27 @@ export function pageServing(source: SourceNutrition, makes: number) {
   };
 }
 
+/** A saved recipe as the editor's starting point. */
+export function draftFromRecipe(recipe: Recipe): RecipeDraft {
+  return {
+    name: recipe.name,
+    servings: recipe.servings,
+    servingsStated: recipe.servingsStated,
+    ingredients: recipe.ingredients,
+    instructions: recipe.instructions,
+    notes: recipe.notes,
+    sourceType: (recipe.sourceType as 'url' | 'photo' | 'manual') ?? 'manual',
+    sourceUrl: recipe.sourceUrl,
+    sourceNutrition: recipe.sourceNutrition,
+    nutritionFrom: recipe.nutritionFrom,
+    imageUrl: recipe.imageUrl,
+    total: { grams: recipe.total.grams, calories: recipe.total.calories },
+    perServing: { grams: recipe.perServing.grams, calories: recipe.perServing.calories, protein: null, carbs: null, fat: null },
+    unresolved: [],
+    approximate: [],
+  };
+}
+
 export default function RecipeEditor({
   initial,
   recipeId,
@@ -122,6 +143,7 @@ export default function RecipeEditor({
           sourceUrl: initial.sourceUrl ?? null,
           sourceNutrition: source,
           nutritionFrom: source ? nutritionFrom : 'ingredients',
+          ...(initial.imageUrl !== undefined ? { imageUrl: initial.imageUrl } : {}),
         },
         recipeId,
       );

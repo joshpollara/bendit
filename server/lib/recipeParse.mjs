@@ -54,8 +54,17 @@ const PREPARATION =
 function readQuantity(text) {
   const rest0 = text.trim();
 
-  // A range means the middle of it: "2-3 cloves" is two or three.
-  const range = /^(\d+(?:\.\d+)?)\s*(?:-|–|to)\s*(\d+(?:\.\d+)?)\b/.exec(rest0);
+  // "1-1/2 cups", as some sites write it, is one and a half, not a range.
+  const hyphenated = /^(\d+)\s*-\s*(\d+)\s*\/\s*(\d+)\s*/.exec(rest0);
+  if (hyphenated) {
+    return {
+      quantity: Number(hyphenated[1]) + Number(hyphenated[2]) / Number(hyphenated[3]),
+      rest: rest0.slice(hyphenated[0].length).trim(),
+    };
+  }
+
+  // A range means the middle of it: "2-3 cloves" is two or three, as is "2 or 3".
+  const range = /^(\d+(?:\.\d+)?)\s*(?:-|–|to|or)\s*(\d+(?:\.\d+)?)\b(?!\s*\/)/.exec(rest0);
   if (range) {
     return {
       quantity: (Number(range[1]) + Number(range[2])) / 2,

@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { assertFetchable, fetchPage, pageText, readYield, recipeFromJsonLd } from './recipeImport.mjs';
+import { assertFetchable, fetchPage, imageOf, pageText, readYield, recipeFromJsonLd } from './recipeImport.mjs';
 
 // The JSON-LD fixtures are the shapes real recipe sites publish: a bare object,
 // one wrapped in @graph, a @type that is an array, instructions as objects.
@@ -193,5 +193,16 @@ describe('fetching a page', () => {
       throw new TypeError('fetch failed');
     };
     await expect(fetchPage('https://public.test/', { fetchImpl, resolver })).rejects.toThrow("Couldn't reach that page.");
+  });
+});
+
+describe("a recipe's photo", () => {
+  it('reads each shape schema.org allows', () => {
+    expect(imageOf('https://a.test/1.jpg')).toBe('https://a.test/1.jpg');
+    expect(imageOf(['https://a.test/1.jpg', 'https://a.test/2.jpg'])).toBe('https://a.test/1.jpg');
+    expect(imageOf({ '@type': 'ImageObject', url: 'https://a.test/3.jpg' })).toBe('https://a.test/3.jpg');
+    expect(imageOf([{ url: 'https://a.test/4.jpg' }])).toBe('https://a.test/4.jpg');
+    expect(imageOf('javascript:alert(1)')).toBeNull();
+    expect(imageOf(undefined)).toBeNull();
   });
 });

@@ -566,6 +566,8 @@ export interface RecipeInput {
   sourceUrl?: string | null;
   sourceNutrition?: SourceNutrition | null;
   nutritionFrom?: NutritionFrom;
+  /** Left out, an edit keeps the photo it had. */
+  imageUrl?: string | null;
 }
 
 /** What a read recipe looks like before it is saved. */
@@ -582,6 +584,7 @@ export interface RecipeDraft {
   /** Nutrition declared by the recipe publisher. */
   sourceNutrition?: SourceNutrition | null;
   nutritionFrom?: NutritionFrom;
+  imageUrl?: string | null;
   /** Whether AI could verify that a photographed source contained the whole recipe. */
   sourceComplete?: boolean;
   sourceWarnings?: string[];
@@ -608,6 +611,8 @@ export interface Recipe {
   nutritionFrom: NutritionFrom;
   /** Its Nutri-Score: from the page's figures, or its ingredients by weight. */
   grade: { grade: NutriGrade; covered: number; from: 'page' | 'ingredients' } | null;
+  /** The recipe page's photo. */
+  imageUrl: string | null;
   instructions: string | null;
   notes: string | null;
   author: string | null;

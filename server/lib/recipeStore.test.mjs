@@ -213,3 +213,13 @@ describe("a recipe's page nutrition", () => {
     expect(readRecipe(db, id)).toMatchObject({ nutritionFrom: 'ingredients', sourceNutrition: null });
   });
 });
+
+describe("a recipe's photo", () => {
+  it('is kept when an edit says nothing about it', () => {
+    const { id } = saveRecipe(db, { ...BOLOGNESE, imageUrl: 'https://a.test/b.jpg' }, { saveFood, ownerId: 'ada' });
+    saveRecipe(db, { ...BOLOGNESE, name: 'Bolognese, edited' }, { saveFood, ownerId: 'ada', id });
+    expect(readRecipe(db, id).imageUrl).toBe('https://a.test/b.jpg');
+    saveRecipe(db, { ...BOLOGNESE, imageUrl: null }, { saveFood, ownerId: 'ada', id });
+    expect(readRecipe(db, id).imageUrl).toBeNull();
+  });
+});

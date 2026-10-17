@@ -108,6 +108,7 @@ export function createRecipeFromUrlHandler({ db, visionHandler, fetch = fetchPag
     return res.json({
       ...asDraft(db, read, req.userId),
       sourceNutrition: declared?.sourceNutrition ?? null,
+      imageUrl: declared?.imageUrl ?? null,
       sourceType: 'url',
       sourceUrl: url,
       readBy: 'model',
