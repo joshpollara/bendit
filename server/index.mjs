@@ -61,6 +61,7 @@ import {
   startCheckout,
 } from './lib/picnicCheckout.mjs';
 import { createHistoryTables, pastOrders, syncHistory, usuals } from './lib/picnicHistory.mjs';
+import { createSwapChecker, createSwapTables } from './lib/picnicSwaps.mjs';
 import {
   addItem as addPlanItem,
   createMealPlanTables,
@@ -1902,6 +1903,8 @@ const picnic = createPicnic({ db });
 createPicnicShoppingTables(db);
 createCheckoutTables(db);
 createHistoryTables(db);
+createSwapTables(db);
+const checkSwaps = createSwapChecker(db, picnic);
 const suggestProduct = createSuggester((term) => picnic.search(term));
 
 /** An async handler whose PicnicErrors become a status and a code the client can act on. */
@@ -2076,6 +2079,20 @@ app.post(
       .filter((i) => /^s?\d+$/.test(i.productId));
     if (items.length === 0) throw new PlanError('Nothing to add.');
     return picnic.addProducts(items.slice(0, 200));
+  }),
+);
+
+// Each product's Nutri-Score, with better-graded swaps for a D or E. The first
+// check of an order takes a while; after that it's kept.
+app.post(
+  '/api/picnic/nutri-check',
+  picnicRoute(async (req) => {
+    picnic.status().connected || picnicNotConnected();
+    const products = (Array.isArray(req.body?.products) ? req.body.products : [])
+      .map((p) => ({ productId: String(p?.productId ?? ''), name: String(p?.name ?? '').slice(0, 200) }))
+      .filter((p) => /^s?\d+$/.test(p.productId))
+      .slice(0, 100);
+    return { results: await checkSwaps(products) };
   }),
 );
 

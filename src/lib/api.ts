@@ -374,6 +374,20 @@ export interface PicnicUsual extends PicnicOrderItem {
   due: boolean;
 }
 
+/** A product's Nutri-Score from its Picnic page, and better ones for a D or E. */
+export interface PicnicNutriCheck {
+  productId: string;
+  grade: NutriGrade | null;
+  swaps: {
+    productId: string;
+    name: string;
+    imageId: string | null;
+    unitQuantity: string | null;
+    price: number | null;
+    grade: NutriGrade;
+  }[];
+}
+
 export interface DayData {
   entries: JoinedEntry[];
   /** Your portions from the household plan for this day, not yet logged. */
@@ -768,6 +782,8 @@ export const api = {
     j<{ orders: PicnicPastOrder[]; usuals: PicnicUsual[] }>(`/api/picnic/new-order${refresh ? '?refresh=1' : ''}`),
   picnicAddBulk: (items: { productId: string; quantity: number }[]) =>
     post('/api/picnic/cart/bulk', { items }) as Promise<PicnicCart>,
+  picnicNutriCheck: (products: { productId: string; name: string }[]) =>
+    post('/api/picnic/nutri-check', { products }) as Promise<{ results: PicnicNutriCheck[] }>,
   picnicStartCheckout: (resolveKey?: string) =>
     post('/api/picnic/checkout', resolveKey ? { resolveKey } : {}) as Promise<PicnicCheckoutSummary>,
   picnicPay: (orderId: string) =>
