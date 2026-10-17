@@ -65,9 +65,10 @@ const UPDATE = `
 export function createVisionExtractHandler({ db, provider, providers = {}, dailyLimit = 100 }) {
   const reserveRequest = db.prepare(INSERT);
   const finishRequest = db.prepare(UPDATE);
-  // The assistant logs here too but has its own ceiling; it must not use up the photo reads.
+  // The assistant and AI orders log here too but have their own ceilings; they
+  // must not use up the photo reads.
   const countToday = db.prepare(
-    "SELECT COUNT(*) AS n FROM vision_requests WHERE createdAt >= datetime('now', 'start of day') AND task != 'assistant'",
+    "SELECT COUNT(*) AS n FROM vision_requests WHERE createdAt >= datetime('now', 'start of day') AND task NOT IN ('assistant', 'order')",
   );
 
   return async function extractHandler(req, res) {

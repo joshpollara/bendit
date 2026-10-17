@@ -18,7 +18,7 @@ import {
   setPassword,
   USER_TABLES,
 } from './lib/users.mjs';
-import { createVisionProvider } from './lib/vision.mjs';
+import { createVisionProvider, VisionError } from './lib/vision.mjs';
 import {
   createLabelExtractHandler,
   createLabelValidateHandler,
@@ -66,6 +66,7 @@ import { createHistoryTables, pastOrders, syncHistory, usuals } from './lib/picn
 import { createSwapChecker, createSwapTables } from './lib/picnicSwaps.mjs';
 import { lessWaste } from './lib/lessWaste.mjs';
 import { createDealFinder } from './lib/picnicDeals.mjs';
+import { createLazyOrder, OrderError } from './lib/lazyOrder.mjs';
 import {
   addItem as addPlanItem,
   createMealPlanTables,
@@ -2161,6 +2162,58 @@ app.post(
     const regulars = new Set(usuals(db).filter((u) => u.orders >= 2).map((u) => u.productId));
     return { results: await dealFinder.check(items, { regulars }) };
   }),
+);
+
+// "Make me an order": due usuals and a few new recipes from the household's
+// sites, as a draft. See lib/lazyOrder.mjs. Uses the fast text model, like
+// the assistant; ORDER_MODEL moves it.
+const lazyOrder = createLazyOrder({
+  db,
+  model: createVisionProvider({
+    model: process.env.ORDER_MODEL ?? 'gemini-3.5-flash-lite',
+    thinkingLevel: process.env.ORDER_THINKING_LEVEL ?? 'low',
+  }),
+  sites: recipeSites,
+  search: (term) => suggestProduct.results(term),
+  dailyLimit: Number(process.env.ORDER_DAILY_LIMIT ?? 20),
+});
+const orderRoute = (fn) =>
+  picnicRoute(async (req) => {
+    try {
+      return await fn(req);
+    } catch (error) {
+      if (error instanceof OrderError) throw new PlanError(error.message, error.status);
+      if (error instanceof VisionError) {
+        console.error('AI order failed:', error.code, error.message);
+        throw new PlanError(
+          error.code === 'rate_limited' || error.code === 'provider_error'
+            ? 'The AI is busy. Try again in a moment.'
+            : error.code === 'timeout'
+              ? 'The AI took too long. Try again.'
+              : "The AI couldn't put an order together. Try again.",
+          502,
+        );
+      }
+      throw error;
+    }
+  });
+app.post(
+  '/api/picnic/lazy-order',
+  orderRoute(async (req) => {
+    picnic.status().connected || picnicNotConnected();
+    // History first, so "due" is current.
+    if (Date.now() - historySyncedAt > HISTORY_FRESH_MS) {
+      historySync ??= syncHistory(db, picnic).finally(() => (historySync = null));
+      await historySync;
+      historySyncedAt = Date.now();
+    }
+    const { dinners, servings, wish } = req.body ?? {};
+    return lazyOrder.build({ dinners, servings, wish, userId: req.userId });
+  }),
+);
+app.post(
+  '/api/picnic/lazy-order/recipes',
+  orderRoute((req) => lazyOrder.keep(req.body?.recipes, { plan: req.body?.plan !== false, userId: req.userId, saveFood })),
 );
 
 // A whole draft order into the cart, added to whatever is already there.

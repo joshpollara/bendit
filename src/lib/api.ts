@@ -430,6 +430,27 @@ export interface PicnicPriceCheck {
   }[];
 }
 
+/** A recipe the AI picked for an order, and the products for its ingredients. */
+export interface LazyOrderRecipe {
+  title: string;
+  url: string;
+  site: string;
+  image: string | null;
+  reason: string;
+  servings: number;
+  /** How many ingredient lines it has, and the ones matched to a product. */
+  ingredients: number;
+  matched: { raw: string; productId: string; name: string; imageId: string | null; unitQuantity: string | null; price: number | null }[];
+}
+
+export interface LazyOrder {
+  recipes: LazyOrderRecipe[];
+  /** What each item is for: "Usual", or the recipes that need it. */
+  items: (PicnicOrderItem & { for: string[] })[];
+  /** Whether the household follows any recipe sites to pick from. */
+  usingSites: boolean;
+}
+
 /** A product's Nutri-Score from its Picnic page, and better ones for a D or E. */
 export interface PicnicNutriCheck {
   productId: string;
@@ -879,6 +900,10 @@ export const api = {
     j<{ orders: PicnicPastOrder[]; usuals: PicnicUsual[] }>(`/api/picnic/new-order${refresh ? '?refresh=1' : ''}`),
   picnicAddBulk: (items: { productId: string; quantity: number }[]) =>
     post('/api/picnic/cart/bulk', { items }) as Promise<PicnicCart>,
+  picnicLazyOrder: (input: { dinners: number; servings: number; wish: string }) =>
+    post('/api/picnic/lazy-order', input) as Promise<LazyOrder>,
+  picnicKeepRecipes: (recipes: LazyOrderRecipe[], plan: boolean) =>
+    post('/api/picnic/lazy-order/recipes', { recipes, plan }) as Promise<{ recipeId: string; name: string; date: string | null }[]>,
   picnicDeals: () => j<{ usuals: (PicnicUsual & { price: number | null; deal: PicnicDeal })[] }>('/api/picnic/deals'),
   picnicPriceCheck: (items: PicnicOrderItem[]) =>
     post('/api/picnic/price-check', { items }) as Promise<{ results: PicnicPriceCheck[] }>,
