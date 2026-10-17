@@ -22,7 +22,11 @@ const euros = (cents) => `€${(cents / 100).toFixed(2)}`;
 export class ToolError extends Error {}
 
 /** The tools for one person's conversation. */
-export function createAssistantTools({ db, picnic, userId }) {
+export function createAssistantTools({ db, picnic, userId, finder = null }) {
+  const needFinder = () => {
+    if (!finder) throw new ToolError('Recipe search is not available.');
+    return finder;
+  };
   const members = () => listUsers(db).map(({ id, username }) => ({ id, username }));
   const memberId = (username) => {
     const found = members().find((m) => m.username === String(username).trim().toLowerCase());
@@ -104,6 +108,27 @@ export function createAssistantTools({ db, picnic, userId }) {
               : null,
           })),
     },
+    find_recipes: {
+      description:
+        "Search for new recipes online: the household's own recipe sites first (yourSite), then well-known recipe sites. Returns titles and links; use read_recipe to check one.",
+      parameters: obj(
+        {
+          query: {
+            type: 'string',
+            description:
+              'Two to four plain English words, like a recipe title: "instant pot lentil curry". No OR, quotes or long lists; search again for another idea.',
+          },
+        },
+        ['query'],
+      ),
+      run: ({ query }) => needFinder().find(query),
+    },
+    read_recipe: {
+      description:
+        'Read a recipe page from find_recipes: how many it serves, time, tags, ingredients, the start of the method, and nutrition per serving.',
+      parameters: obj({ url: { type: 'string' } }, ['url']),
+      run: ({ url }) => needFinder().read(url),
+    },
     get_shopping_list: {
       description: 'What the meal plan needs bought between two dates.',
       parameters: obj({ from: date, to: date }, ['from', 'to']),
@@ -165,10 +190,31 @@ export function createAssistantTools({ db, picnic, userId }) {
     },
 
     // ——— writes: proposed, then approved by the person ———
+    save_recipe: {
+      write: true,
+      description:
+        'Save a recipe from a web page (a url from find_recipes) to the household\'s Recipes, so it can be planned and logged. Returns its recipeId.',
+      parameters: obj({ url: { type: 'string' } }, ['url']),
+      describe: async ({ url }) => {
+        const recipe = await needFinder().load(url);
+        if (!recipe) throw new ToolError("That page doesn't publish a recipe that can be saved.");
+        let site = '';
+        try {
+          site = new URL(url).hostname.replace(/^www\./, '');
+        } catch {
+          throw new ToolError('That is not a web address.');
+        }
+        return `Save "${recipe.name}"${recipe.servings ? ` (serves ${recipe.servings})` : ''} from ${site} to Recipes`;
+      },
+      run: async ({ url }) => {
+        const saved = await needFinder().save(url, { userId });
+        return { recipeId: saved.recipeId, name: saved.name, alreadySaved: saved.existed };
+      },
+    },
     plan_meal: {
       write: true,
       description:
-        "Add a recipe or food to the household meal plan. Give recipeId or foodId (from list_recipes or search_foods), and each person's servings by username.",
+        "Add a recipe or food to the household meal plan. Give recipeId or foodId (from list_recipes, search_foods or save_recipe), and each person's servings by username, each person once. For guests or leftovers, add their servings to the cook's portion: 5 people from a household of 3 is 1, 1 and 3.",
       parameters: obj(
         {
           date,
@@ -188,6 +234,10 @@ export function createAssistantTools({ db, picnic, userId }) {
           : food(foodId)?.name;
         if (!name) throw new ToolError('No such recipe or food.');
         portions.forEach((p) => memberId(p.username));
+        const names = portions.map((p) => String(p.username).trim().toLowerCase());
+        if (new Set(names).size !== names.length) {
+          throw new ToolError("List each person once; give guests' servings to one person's portion.");
+        }
         return `Plan ${name} for ${m} on ${dayLabel(d)}: ${portions.map((p) => `${p.username} ${p.servings}`).join(', ')}`;
       },
       run: ({ date: d, meal: m, recipeId, foodId, portions = [] }) => {

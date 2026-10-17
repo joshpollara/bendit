@@ -67,6 +67,7 @@ import { createSwapChecker, createSwapTables } from './lib/picnicSwaps.mjs';
 import { lessWaste } from './lib/lessWaste.mjs';
 import { createDealFinder } from './lib/picnicDeals.mjs';
 import { createLazyOrder, OrderError } from './lib/lazyOrder.mjs';
+import { createRecipeFinder } from './lib/recipeFinder.mjs';
 import {
   addItem as addPlanItem,
   createMealPlanTables,
@@ -2353,6 +2354,7 @@ const assistant = createAssistant({
   picnic,
   model: createChatModel(),
   dailyLimit: Number(process.env.ASSISTANT_DAILY_LIMIT ?? 300),
+  finder: createRecipeFinder({ db, sites: recipeSites, saveFood }),
 });
 
 const ASSISTANT_STATUS = { unconfigured: 503, quota_exceeded: 429, rate_limited: 429, timeout: 504 };

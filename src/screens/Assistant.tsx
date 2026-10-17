@@ -9,6 +9,30 @@ import { useUI } from '../store/ui';
 import type { Profile } from '../types';
 import { ChevronLeftIcon } from '../components/Icons';
 
+/**
+ * The assistant's words with its links made tappable: "[title](https://…)"
+ * shows as the title, a bare address as itself. Bold markers are dropped;
+ * everything else is plain text.
+ */
+export function MessageText({ text }: { text: string }) {
+  const parts: React.ReactNode[] = [];
+  // A bare address ends before trailing punctuation: "see https://x.test/a." links /a.
+  const pattern = /\[([^\]]+)\]\((https?:\/\/[^\s)]+)\)|(https?:\/\/[^\s)]*[^\s).,;:!?])/g;
+  let last = 0;
+  for (const match of text.matchAll(pattern)) {
+    parts.push(text.slice(last, match.index).replace(/\*\*/g, ''));
+    const href = match[2] ?? match[3];
+    parts.push(
+      <a key={match.index} href={href} target="_blank" rel="noreferrer" className="font-medium text-accent underline">
+        {match[1] ?? href}
+      </a>,
+    );
+    last = (match.index ?? 0) + match[0].length;
+  }
+  parts.push(text.slice(last).replace(/\*\*/g, ''));
+  return <>{parts}</>;
+}
+
 const STARTERS = [
   'Plan dinners for next week within my calories',
   'What could I eat for the rest of today?',
@@ -179,7 +203,7 @@ export default function Assistant({ profile }: { profile: Profile }) {
                   entry.role === 'user' ? 'bg-accent text-white' : 'border border-line bg-card'
                 }`}
               >
-                {entry.text}
+                {entry.role === 'user' ? entry.text : <MessageText text={entry.text} />}
               </p>
             </div>
           ),
