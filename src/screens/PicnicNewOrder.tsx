@@ -1,7 +1,15 @@
 import { useEffect, useMemo, useState } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { format, parseISO, startOfWeek } from 'date-fns';
-import { api, type NutriGrade, type PicnicNutriCheck, type PicnicOrderItem, type PicnicPastOrder } from '../lib/api';
+import {
+  api,
+  type NutriGrade,
+  type PicnicDeal,
+  type PicnicNutriCheck,
+  type PicnicOrderItem,
+  type PicnicPastOrder,
+  type PicnicPriceCheck,
+} from '../lib/api';
 import { useData } from '../lib/useData';
 import { DAY, shiftDay, todayStr } from '../lib/dates';
 import { ChevronLeftIcon } from '../components/Icons';
@@ -138,12 +146,20 @@ function swapCount(item: PicnicOrderItem, to: { unitQuantity: string | null }) {
   return from && into ? Math.max(1, Math.round((item.quantity * from) / into)) : item.quantity;
 }
 
+/** "€2.01, was €2.69" for a reduction; "€2.99 each" for a multi-buy. */
+const dealPrice = (deal: PicnicDeal, price: number | null) =>
+  deal.was != null && deal.price != null
+    ? `${euros(deal.price)}, was ${euros(deal.was)}`
+    : price != null
+      ? `${euros(price)} each`
+      : '';
+
 const card = 'mx-4 mt-3 overflow-hidden rounded-2xl border border-line bg-card shadow-sm lg:mx-0';
 const orderDate = (o: PicnicPastOrder) => format(parseISO(o.windowStart), 'EEE d MMM');
 
 export default function PicnicNewOrder() {
   const navigate = useNavigate();
-  const [tab, setTab] = useState<'usuals' | 'past' | 'plan'>('usuals');
+  const [tab, setTab] = useState<'usuals' | 'deals' | 'past' | 'plan'>('usuals');
   const [draft, setDraft] = useState<Draft>(loadDraft);
   const [refresh, setRefresh] = useState(0);
   const data = useData(() => api.picnicNewOrder(refresh > 0), [refresh]);
@@ -154,6 +170,10 @@ export default function PicnicNewOrder() {
   // Nutri-Score of what's in the draft, once someone asks for it.
   const [checked, setChecked] = useState<Record<string, PicnicNutriCheck>>({});
   const [checking, setChecking] = useState(false);
+  // Prices and deals for what's in the draft, at the quantity they were checked for.
+  const [prices, setPrices] = useState<Record<string, PicnicPriceCheck & { quantity: number }>>({});
+  const [pricing, setPricing] = useState(false);
+  const deals = useData(() => (tab === 'deals' ? api.picnicDeals() : Promise.resolve(undefined)), [tab]);
 
   // The plan's shopping list, this week or next.
   const [planWeek, setPlanWeek] = useState(0);
@@ -207,8 +227,32 @@ export default function PicnicNewOrder() {
     }
   }
 
+  const priced = (i: PicnicOrderItem) => (prices[i.productId]?.quantity === i.quantity ? prices[i.productId] : null);
+  const unpriced = items.filter((i) => !priced(i));
+  const pricedItems = items.map(priced).filter((p): p is NonNullable<typeof p> => p != null);
+  const estimate = pricedItems.reduce((sum, p) => sum + (p.cost ?? 0), 0);
+  const dealSavings = pricedItems.reduce((sum, p) => sum + p.saves, 0);
+  const couldSave = pricedItems.reduce((sum, p) => sum + (p.cheaper[0]?.saves ?? 0), 0);
+
+  async function checkPrices() {
+    setPricing(true);
+    setError(null);
+    try {
+      const { results } = await api.picnicPriceCheck(unpriced);
+      const quantities = new Map(unpriced.map((i) => [i.productId, i.quantity]));
+      setPrices((current) => ({
+        ...current,
+        ...Object.fromEntries(results.map((r) => [r.productId, { ...r, quantity: quantities.get(r.productId) ?? 0 }])),
+      }));
+    } catch (err) {
+      setError(err instanceof Error ? err.message : 'Could not check prices.');
+    } finally {
+      setPricing(false);
+    }
+  }
+
   /** Puts a swap in an item's place: the same weight where both packs say, else the same count. */
-  function swap(item: PicnicOrderItem, to: PicnicNutriCheck['swaps'][number]) {
+  function swap(item: PicnicOrderItem, to: PicnicNutriCheck['swaps'][number] | PicnicPriceCheck['cheaper'][number]) {
     setDraft((current) => {
       const next: Draft = {};
       for (const [id, entry] of Object.entries(current)) {
@@ -220,15 +264,17 @@ export default function PicnicNewOrder() {
             name: to.name,
             imageId: to.imageId,
             unitQuantity: to.unitQuantity,
-            quantity: swapCount(entry, to) + (current[to.productId]?.quantity ?? 0),
+            quantity: ('quantity' in to ? to.quantity : swapCount(entry, to)) + (current[to.productId]?.quantity ?? 0),
           };
       }
       return next;
     });
-    setChecked((current) => ({
-      ...current,
-      [to.productId]: { productId: to.productId, grade: to.grade, swaps: [] },
-    }));
+    if ('grade' in to) {
+      setChecked((current) => ({
+        ...current,
+        [to.productId]: { productId: to.productId, grade: to.grade, swaps: [] },
+      }));
+    }
   }
 
   async function addToCart() {
@@ -279,20 +325,39 @@ export default function PicnicNewOrder() {
         )}
       </header>
 
-      <div className="mx-4 grid grid-cols-3 rounded-xl bg-card p-1 text-center text-xs font-semibold lg:mx-0">
-        {(['usuals', 'past', 'plan'] as const).map((t) => (
+      <div className="mx-4 grid grid-cols-4 rounded-xl bg-card p-1 text-center text-xs font-semibold lg:mx-0">
+        {(['usuals', 'deals', 'past', 'plan'] as const).map((t) => (
           <button
             key={t}
             type="button"
             onClick={() => setTab(t)}
             className={`rounded-lg py-2 ${tab === t ? 'bg-accent text-white' : 'text-ink-secondary'}`}
           >
-            {t === 'usuals' ? 'Usuals' : t === 'past' ? 'Past orders' : 'From plan'}
+            {t === 'usuals' ? 'Usuals' : t === 'deals' ? 'Deals' : t === 'past' ? 'Past orders' : 'From plan'}
           </button>
         ))}
       </div>
 
-      {tab !== 'plan' && !data ? (
+      {tab === 'deals' ? (
+        deals === undefined ? (
+          <p className="mx-4 mt-6 text-center text-sm text-ink-muted">Checking this week's deals…</p>
+        ) : deals.usuals.length === 0 ? (
+          <p className="mx-4 mt-6 text-center text-sm text-ink-muted">None of your usuals are on a deal this week.</p>
+        ) : (
+          <ul className={card}>
+            {deals.usuals.map((u) => (
+              <ProductRow
+                key={u.productId}
+                item={u}
+                badge={u.deal.label}
+                detail={dealPrice(u.deal, u.price)}
+                draft={draft}
+                setQuantity={setQuantity}
+              />
+            ))}
+          </ul>
+        )
+      ) : tab !== 'plan' && !data ? (
         <p className="mx-4 mt-6 text-center text-sm text-ink-muted">Reading your past orders…</p>
       ) : tab === 'usuals' ? (
         <>
@@ -417,19 +482,39 @@ export default function PicnicNewOrder() {
 
       {reviewing && (
         <Sheet onClose={() => setReviewing(false)}>
-          <div className="mb-3 flex items-center justify-between gap-3">
-            <h2 className="text-lg font-semibold">Your order</h2>
-            {unchecked.length > 0 && (
-              <button
-                type="button"
-                disabled={checking}
-                onClick={checkNutriScore}
-                className="rounded-full bg-accent-soft px-3 py-1.5 text-xs font-semibold text-accent disabled:opacity-60"
-              >
-                {checking ? 'Checking…' : 'Check Nutri-Score'}
-              </button>
-            )}
-          </div>
+          <h2 className="text-lg font-semibold">Your order</h2>
+          {(unchecked.length > 0 || unpriced.length > 0) && (
+            <div className="mt-2 flex gap-2">
+              {unchecked.length > 0 && (
+                <button
+                  type="button"
+                  disabled={checking}
+                  onClick={checkNutriScore}
+                  className="rounded-full bg-accent-soft px-3 py-1.5 text-xs font-semibold text-accent disabled:opacity-60"
+                >
+                  {checking ? 'Checking…' : 'Check Nutri-Score'}
+                </button>
+              )}
+              {unpriced.length > 0 && (
+                <button
+                  type="button"
+                  disabled={pricing}
+                  onClick={checkPrices}
+                  className="rounded-full bg-accent-soft px-3 py-1.5 text-xs font-semibold text-accent disabled:opacity-60"
+                >
+                  {pricing ? 'Checking…' : 'Check prices'}
+                </button>
+              )}
+            </div>
+          )}
+          {pricedItems.length > 0 && (
+            <p className="mt-2 text-xs text-ink-secondary">
+              About {euros(estimate)}
+              {dealSavings > 0 ? ` · deals save ${euros(dealSavings)}` : ''}
+              {couldSave > 0 ? ` · swaps could save ${euros(couldSave)}` : ''}
+            </p>
+          )}
+          <div className="mb-3" />
           {unchecked.length === 0 && items.length > 0 && !swappable && (
             <p className="mb-2 text-xs text-ink-muted">No better-scoring swaps found.</p>
           )}
@@ -439,9 +524,38 @@ export default function PicnicNewOrder() {
                 key={item.productId}
                 item={item}
                 grade={checked[item.productId]?.grade}
+                badge={priced(item)?.deal?.label}
                 draft={draft}
                 setQuantity={setQuantity}
               >
+                {priced(item)?.oneMore && (
+                  <button
+                    type="button"
+                    onClick={() => setQuantity(item, item.quantity + 1)}
+                    className="mt-1.5 flex w-full items-center gap-2 rounded-xl border border-line px-2 py-1.5 text-left text-xs"
+                  >
+                    <span className="min-w-0 flex-1 truncate">
+                      <span className="font-semibold text-good">−{euros(priced(item)!.oneMore!.saves)}</span> One more
+                      for {euros(priced(item)!.oneMore!.extra)}
+                    </span>
+                    <span className="shrink-0 font-semibold text-accent">Add</span>
+                  </button>
+                )}
+                {priced(item)?.cheaper.map((to) => (
+                  <button
+                    key={to.productId}
+                    type="button"
+                    onClick={() => swap(item, to)}
+                    className="mt-1.5 flex w-full items-center gap-2 rounded-xl border border-line px-2 py-1.5 text-left"
+                  >
+                    <Thumb id={to.imageId} size="h-7 w-7" />
+                    <span className="min-w-0 flex-1 truncate text-xs">
+                      <span className="font-semibold text-good">−{euros(to.saves)}</span> {to.quantity} × {to.name}
+                      {to.unitQuantity ? <span className="text-ink-muted"> · {to.unitQuantity}</span> : null}
+                    </span>
+                    <span className="shrink-0 text-xs font-semibold text-accent">Swap</span>
+                  </button>
+                ))}
                 {checked[item.productId]?.swaps.map((to) => (
                   <button
                     key={to.productId}

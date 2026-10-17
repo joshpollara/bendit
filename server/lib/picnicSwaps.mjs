@@ -155,6 +155,9 @@ export function createSwapChecker(db, picnic, { now = () => Date.now() } = {}) {
     });
   }
 
+  /** A product's grade, or null, kept for a month. */
+  check.gradeOf = async (product) => (await graded(product)).grade;
+
   /** A product's brand and Picnic's similar products, from the same month-long keeping. */
   check.similar = async (product) => {
     const row = await graded(product);
