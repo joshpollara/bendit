@@ -14,6 +14,7 @@ import {
   PlusIcon,
   ScaleIcon,
   SearchIcon,
+  TagIcon,
   TrendIcon,
 } from './Icons';
 
@@ -43,6 +44,7 @@ const GROUPS = [
       { to: '/assistant', label: 'Assistant', icon: <ChatIcon className="h-5 w-5" /> },
       { to: '/plan', label: 'Plan', icon: <CalendarIcon className="h-5 w-5" /> },
       { to: '/picnic', label: 'Picnic', icon: <BasketIcon className="h-5 w-5" /> },
+      { to: '/prices', label: 'Prices', icon: <TagIcon className="h-5 w-5" /> },
       { to: '/nutri-score', label: 'Nutri-Score', icon: <GradeIcon className="h-5 w-5" /> },
     ],
   },

@@ -44,6 +44,13 @@ export const TrendIcon = (p: IconProps) => (
   </Svg>
 );
 
+export const TagIcon = (p: IconProps) => (
+  <Svg {...p}>
+    <path d="M3 12V4h8l9 9-8 8z" />
+    <circle cx="7.5" cy="8.5" r="1.3" />
+  </Svg>
+);
+
 export const PlusIcon = (p: IconProps) => (
   <Svg {...p}>
     <path d="M12 5v14M5 12h14" />

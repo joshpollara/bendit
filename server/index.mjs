@@ -22,6 +22,7 @@ import {
   pricesFromSearchPage,
   recordPrices,
 } from './lib/priceHistory.mjs';
+import { priceOverview, productPrices } from './lib/priceInsights.mjs';
 import { createPicnicReminders, createPicnicReminderTables, reminderFor, setReminder } from './lib/picnicReminder.mjs';
 import { cachedCost, costRecipe, createRecipeCostTables } from './lib/recipeCost.mjs';
 import {
@@ -2054,6 +2055,16 @@ const runPriceTick = () => {
 };
 setTimeout(runPriceTick, 2 * 60_000).unref();
 setInterval(runPriceTick, 60 * 60_000).unref();
+
+// The Prices page: what's been kept, worked through. See lib/priceInsights.mjs.
+app.get('/api/prices', (req, res) => {
+  res.json(priceOverview(db, { usuals: usuals(db) }));
+});
+app.get('/api/prices/products/:id', (req, res) => {
+  const found = productPrices(db, req.params.id);
+  if (!found) return res.status(404).json({ error: 'No prices kept for that yet.' });
+  res.json(found);
+});
 
 /** An async handler whose PicnicErrors become a status and a code the client can act on. */
 const picnicRoute = (fn) => async (req, res) => {
