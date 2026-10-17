@@ -19,6 +19,8 @@ export const TASK = 'assistant';
 const PROMPT_VERSION = 'assistant-v1';
 /** Model calls in one turn before it stops: enough to plan a week, not enough to loop forever. */
 const MAX_STEPS = 10;
+const LAST_STEP =
+  "That's all the looking up for this message. Answer now with what you have found, and say what else you could look for.";
 /** Older turns are dropped past this many entries, keeping the conversation affordable. */
 const MAX_CONTENTS = 60;
 export const MAX_MESSAGE_CHARS = 2000;
@@ -55,7 +57,7 @@ function systemPrompt({ today, username, members, budget, targets, picnicConnect
       : 'Picnic is not connected, so its tools will fail.',
     '',
     'Use the tools to look things up rather than guessing. Never invent ids: find them with a search first.',
-    'For new recipes, search online with find_recipes rather than only the saved ones: a few short searches for different ideas. Check the promising ones with read_recipe (servings, time, ingredients) and offer about three that fit, each with its link, time and calories. To use one, save it with save_recipe, then plan it with the recipeId; servings scale to any number of people, so a recipe for 4 is fine for 5.',
+    'For new recipes, search online with find_recipes rather than only the saved ones: a few short searches for different ideas, with site set when the person names a site. Check the promising ones with read_recipe (servings, time, ingredients) and offer about three that fit, each with its link, time and calories; stop searching once you have them, and offer fewer rather than keep looking. To use one, save it with save_recipe, then plan it with the recipeId; servings scale to any number of people, so a recipe for 4 is fine for 5.',
     'Tools that change something (saving a recipe, planning, logging, the Picnic cart, the delivery slot) are shown to the person to approve. Propose what you would do, then wait; do not describe it as done until it has been approved.',
     'You cannot check out or pay. If asked, say it is done from the Picnic page.',
     'Answer briefly and plainly. Calories and grams as whole numbers. No headings.',
@@ -129,7 +131,7 @@ export function createAssistant({ db, picnic, model, dailyLimit = 300, finder = 
   );
 
   /** One model call, counted against the ceiling and logged whatever happens. */
-  async function generate(userId, chat, declarations) {
+  async function generate(userId, chat, declarations, { noTools = false } = {}) {
     if (usedToday.get(TASK).n >= dailyLimit) {
       throw new VisionError('quota_exceeded', "That's today's limit for the assistant. Try again tomorrow.");
     }
@@ -146,7 +148,12 @@ export function createAssistant({ db, picnic, model, dailyLimit = 300, finder = 
       userId,
     };
     try {
-      const result = await model.generate({ system: chat.system, contents: chat.contents, tools: declarations });
+      const result = await model.generate({
+        system: chat.system,
+        contents: chat.contents,
+        tools: declarations,
+        noTools,
+      });
       logCall.run({ ...row, status: 'ok', errorCode: null, latencyMs: result.latencyMs, ...result.usage });
       return result;
     } catch (error) {
@@ -181,7 +188,12 @@ export function createAssistant({ db, picnic, model, dailyLimit = 300, finder = 
   async function advance(userId, chat, toolset) {
     for (let step = 0; step < MAX_STEPS; step++) {
       chat.contents = trimmed(chat.contents);
-      const { content } = await generate(userId, chat, toolset.declarations);
+      // The last step answers with what's been found rather than looking further.
+      const last = step === MAX_STEPS - 1;
+      if (last) {
+        chat.contents.at(-1).parts.push({ text: LAST_STEP });
+      }
+      const { content } = await generate(userId, chat, toolset.declarations, { noTools: last });
       chat.contents.push({ ...content, role: 'model' });
       const said = textOf(content);
       if (said) chat.log.push({ role: 'assistant', text: said });

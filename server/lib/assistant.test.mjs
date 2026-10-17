@@ -68,6 +68,28 @@ describe('the assistant', () => {
     ]);
   });
 
+  it('answers with what it has on its last step rather than giving up', async () => {
+    const sent = [];
+    const model = {
+      model: 'test-model',
+      configured: true,
+      async generate({ contents, noTools }) {
+        sent.push({ noTools, last: structuredClone(contents.at(-1)) });
+        const parts = noTools ? say('The butternut soup serves 6.') : call('get_day', { date: '2026-10-16' });
+        return {
+          content: { role: 'model', parts },
+          usage: { inputTokens: 1, outputTokens: 1, totalTokens: 2 },
+          latencyMs: 1,
+        };
+      },
+    };
+    const assistant = createAssistant({ db, picnic, model });
+    const state = await assistant.send(ann, 'a recipe for six', context);
+    expect(sent.filter((s) => s.noTools)).toHaveLength(1);
+    expect(sent.at(-1).last.parts.at(-1).text).toMatch(/Answer now/);
+    expect(state.log.at(-1)).toEqual({ role: 'assistant', text: 'The butternut soup serves 6.' });
+  });
+
   it('runs a read straight away and gives the model the result', async () => {
     db.prepare(`INSERT INTO food_log VALUES ('e1', '2026-10-16', 'breakfast', 'yogurt', 1, 100, NULL, 0, NULL, NULL, ?)`).run(ann);
     const model = scriptedModel([call('get_day', { date: '2026-10-16' }, 'c1'), say('100 calories so far.')]);

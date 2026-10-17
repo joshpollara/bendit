@@ -76,12 +76,14 @@ export function createChatModel({
      * shape, passed back exactly as it came — model turns carry signatures
      * that must be returned untouched for the next turn to be accepted.
      */
-    async generate({ system, contents, tools }) {
+    async generate({ system, contents, tools, noTools = false }) {
       if (!apiKey) throw new VisionError('unconfigured', 'No model is configured.');
       const body = {
         systemInstruction: { parts: [{ text: system }] },
         contents,
         tools: [{ functionDeclarations: tools }],
+        // The tools stay declared (the conversation refers to them) but can't be called.
+        ...(noTools && { toolConfig: { functionCallingConfig: { mode: 'NONE' } } }),
         generationConfig: level ? { thinkingConfig: { thinkingLevel: level } } : {},
       };
       try {
