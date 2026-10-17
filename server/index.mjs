@@ -11,6 +11,7 @@ import { matchFood, searchFoods, searchFoodsTiered } from './lib/foodSearch.mjs'
 import { gradeMeal, nutriScore, processingForMeal } from './lib/nutriScore.mjs';
 import { abMonth, AbError, clearGoal, createAbTables, goalFor, setGoal } from './lib/abMonth.mjs';
 import { createRatingTables, rate, RatingError, ratingsOf, toRate } from './lib/ratings.mjs';
+import { picnicHome } from './lib/picnicHome.mjs';
 import { createPicnicReminders, createPicnicReminderTables, reminderFor, setReminder } from './lib/picnicReminder.mjs';
 import { cachedCost, costRecipe, createRecipeCostTables } from './lib/recipeCost.mjs';
 import {
@@ -2717,6 +2718,30 @@ app.put('/api/picnic/reminder', (req, res) => {
     res.status(error.status ?? 500).json({ error: error.message });
   }
 });
+
+// What the Picnic screen opens on. See lib/picnicHome.mjs. `from` and `to` are
+// the week whose plan to count, in the viewer's own days.
+app.get(
+  '/api/picnic/home',
+  picnicRoute(async (req) => {
+    picnic.status().connected || picnicNotConnected();
+    const { from, to } = req.query;
+    // Only what someone picked a product for: counting needn't search Picnic.
+    const plan =
+      from && to
+        ? (await withProducts(db, shoppingList(db, from, to), async () => null)).items.filter(
+            (i) => !i.checked && i.choice,
+          ).length
+        : 0;
+    return picnicHome({
+      next: () => picnicReminders.next(),
+      deliveries: () => picnic.deliveries(),
+      usualsDue: usuals(db).filter((u) => u.due).length,
+      dealCount: async () => (await dealFinder.usualDeals(dealUsuals())).length,
+      planCount: plan,
+    });
+  }),
+);
 
 // Every five minutes: cheap, and fine-grained enough for an hourly trigger.
 if (pushReady) {

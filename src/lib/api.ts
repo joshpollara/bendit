@@ -309,6 +309,15 @@ export interface PicnicDeliverySummary {
   totalPrice: number;
 }
 
+export interface PicnicHome {
+  next: { cutOffTime: string; windowStart: string; windowEnd: string | null; ordered: boolean } | null;
+  arriving: { id: string; status: string; windowStart: string; windowEnd: string | null; totalPrice: number | null } | null;
+  usualsDue: number;
+  /** Usuals on a deal; null when the deals weren't ready in time. */
+  deals: number | null;
+  plan: number;
+}
+
 export interface PicnicDelivery {
   id: string;
   status: string;
@@ -940,6 +949,7 @@ export const api = {
     ),
   picnicAddList: (from: string, to: string) =>
     post('/api/shopping-list/picnic/cart', { from, to }) as Promise<{ added: number; cart: PicnicCart }>,
+  picnicHome: (from: string, to: string) => j<PicnicHome>(`/api/picnic/home?${new URLSearchParams({ from, to })}`),
   picnicSlots: () => j<PicnicSlots>('/api/picnic/slots'),
   picnicSetSlot: (slotId: string) => post('/api/picnic/slot', { slotId }, 'PUT') as Promise<PicnicCart>,
   picnicNewOrder: (refresh = false) =>
@@ -947,7 +957,7 @@ export const api = {
   picnicAddBulk: (items: { productId: string; quantity: number }[]) =>
     post('/api/picnic/cart/bulk', { items }) as Promise<PicnicCart>,
   picnicReminder: () =>
-    j<{ hoursBefore: number | null; push: boolean; next: { cutOffTime: string; windowStart: string; ordered: boolean } | null }>(
+    j<{ hoursBefore: number | null; push: boolean; next: { cutOffTime: string; windowStart: string; windowEnd: string | null; ordered: boolean } | null }>(
       '/api/picnic/reminder',
     ),
   setPicnicReminder: (hoursBefore: number | null) =>

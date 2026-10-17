@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useState } from 'react';
-import { useNavigate } from 'react-router-dom';
+import { useNavigate, useSearchParams } from 'react-router-dom';
 import { format, parseISO, startOfWeek } from 'date-fns';
 import {
   api,
@@ -181,13 +181,17 @@ const orderDate = (o: PicnicPastOrder) => format(parseISO(o.windowStart), 'EEE d
 
 export default function PicnicNewOrder() {
   const navigate = useNavigate();
-  const [tab, setTab] = useState<'usuals' | 'deals' | 'past' | 'plan'>('usuals');
+  const [params] = useSearchParams();
+  const [tab, setTab] = useState<'usuals' | 'deals' | 'past' | 'plan'>(() => {
+    const t = params.get('tab');
+    return t === 'deals' || t === 'past' || t === 'plan' ? t : 'usuals';
+  });
   const [draft, setDraft] = useState<Draft>(loadDraft);
   const [refresh, setRefresh] = useState(0);
   const data = useData(() => api.picnicNewOrder(refresh > 0), [refresh]);
   const [openOrder, setOpenOrder] = useState<string | null>(null);
   const [reviewing, setReviewing] = useState(false);
-  const [lazy, setLazy] = useState(false);
+  const [lazy, setLazy] = useState(() => params.get('lazy') === '1');
   const [pending, setPending] = useState<Pending>(loadPending);
   useEffect(() => savePending(pending), [pending]);
   const [busy, setBusy] = useState(false);
