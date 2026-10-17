@@ -8,8 +8,8 @@ const tile = (id, deal) => ({
   analytics: { contexts: [{ data: deal }] },
   content: {},
 });
-const unit = (id, name, price, unitQuantity) => ({
-  sellingUnit: { id, name, display_price: price, unit_quantity: unitQuantity, image_id: `img-${id}` },
+const unit = (id, name, price, unitQuantity, decorators = []) => ({
+  sellingUnit: { id, name, display_price: price, unit_quantity: unitQuantity, image_id: `img-${id}`, decorators },
 });
 const PAGE = {
   body: {
@@ -18,17 +18,25 @@ const PAGE = {
       tile('s2', { promotion_id: 'p2', promotion_label: '25% korting', price: 201, strikethrough_price: 269, show_strikethrough_price: true }),
       tile('s3', { type: 'SEARCH_RESULT_ENTITY' }),
     ],
-    results: [unit('s1', 'Cheddar', 299, '150 gram'), unit('s2', 'Tortillas', 201, '8 stuks'), unit('s3', 'Butter', 269, '250 gram')],
+    results: [
+      unit('s1', 'Cheddar', 299, '150 gram'),
+      unit('s2', 'Tortillas', 201, '8 stuks'),
+      unit('s3', 'Butter', 269, '250 gram'),
+      unit('s7', 'Asperges', 769, '450 gram', [
+        { type: 'UNAVAILABLE', reason: 'SOLD_OUT', explanation: { short_explanation: 'Tijdelijk uitverkocht' } },
+      ]),
+    ],
   },
 };
 
 describe('reading a search page', () => {
   it("finds each product, and each one's own deal", () => {
     const { products, deals } = readSearchPage(PAGE);
-    expect(products.map((p) => [p.productId, p.price])).toEqual([
-      ['s1', 299],
-      ['s2', 201],
-      ['s3', 269],
+    expect(products.map((p) => [p.productId, p.price, p.unavailable])).toEqual([
+      ['s1', 299, null],
+      ['s2', 201, null],
+      ['s3', 269, null],
+      ['s7', 769, 'Tijdelijk uitverkocht'],
     ]);
     expect(deals.get('s1')).toEqual({ label: '2 voor €5', price: 299, was: null });
     expect(deals.get('s2')).toEqual({ label: '25% korting', price: 201, was: 269 });
