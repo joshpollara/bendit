@@ -13,6 +13,7 @@ import { cartAdditions, withProducts } from './picnicShopping.mjs';
 import { listRecipes } from './recipeStore.mjs';
 import { listUsers } from './users.mjs';
 import { ratingsOf } from './ratings.mjs';
+import { cachedCost } from './recipeCost.mjs';
 
 const date = { type: 'string', description: 'A date as YYYY-MM-DD.' };
 const meal = { type: 'string', enum: MEALS };
@@ -35,6 +36,15 @@ export function createAssistantTools({ db, picnic, userId, finder = null }) {
     return found.id;
   };
   const food = (id) => db.prepare('SELECT * FROM foods WHERE id = ?').get(id);
+  // What a recipe costs a serving, when it's been worked out.
+  const costFor = (recipeId) => {
+    try {
+      const cost = cachedCost(db, recipeId);
+      return cost?.perServing != null ? { costPerServing: euros(cost.perServing) } : {};
+    } catch {
+      return {};
+    }
+  };
   // How the household rated a recipe, where the table exists and anyone has.
   const ratingFor = (recipeId) => {
     try {
@@ -115,6 +125,7 @@ export function createAssistantTools({ db, picnic, userId, finder = null }) {
             makes: r.servings,
             nutriScore: r.grade?.grade ?? null,
             ...ratingFor(r.id),
+            ...costFor(r.id),
             perServing: r.food
               ? { calories: r.food.caloriesPerServing, protein: r.food.protein, carbs: r.food.carbs, fat: r.food.fat }
               : null,

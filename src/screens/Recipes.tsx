@@ -9,6 +9,7 @@ import RecipeEditor from '../components/RecipeEditor';
 import RecipeShop from '../components/RecipeShop';
 import RecipeSites from '../components/RecipeSites';
 import GradeBadge from '../components/GradeBadge';
+import { euros } from '../components/PicnicBits';
 
 const CameraCapture = lazy(() => import('../components/CameraCapture'));
 
@@ -354,6 +355,7 @@ export default function Recipes() {
                   {recipe.servings} servings · {recipe.ingredients.length} ingredients
                   {recipe.author ? ` · ${recipe.author}` : ''}
                   {recipe.ratings?.likes ? ` · liked by ${recipe.ratings.likes}` : ''}
+                  {recipe.cost?.perServing != null ? ` · ≈ ${euros(recipe.cost.perServing)}` : ''}
                 </p>
               </button>
               <div className="text-right">

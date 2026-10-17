@@ -368,6 +368,11 @@ export function createLazyOrder({ db, model, sites, search, fetch = fetchPage, d
         recipes: recipes.map(({ ingredients, factor, ...r }) => ({
           ...r,
           ingredients: ingredients.length,
+          // What buying this dinner's products comes to, a serving: whole packs.
+          costPerServing: Math.round(
+            bought.filter((b) => b.recipe === r.title).reduce((sum, b) => sum + (b.price ?? 0) * b.quantity, 0) /
+              Math.max(1, r.servings),
+          ),
           matched: bought
             .filter((b) => b.recipe === r.title)
             .map((b) => ({
