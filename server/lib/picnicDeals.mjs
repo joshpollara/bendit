@@ -92,7 +92,10 @@ const regularCost = (quantity, price, deal) => quantity * (deal?.was ?? price);
  * which keeps them for a month: a product's brand and Picnic's similar
  * products, and its grade, so a cheaper swap is never a less healthy one.
  */
-export function createDealFinder(picnic, { now = () => Date.now(), grade = null, similarOf = async () => null } = {}) {
+export function createDealFinder(
+  picnic,
+  { now = () => Date.now(), grade = null, similarOf = async () => null, onRead = null } = {},
+) {
   const cache = new Map();
 
   /** A search page, read and kept for an hour. */
@@ -102,6 +105,8 @@ export function createDealFinder(picnic, { now = () => Date.now(), grade = null,
     if (hit && now() - hit.at < CACHE_MS) return hit.read;
     const read = readSearchPage(await picnic.searchPage(term));
     cache.set(key, { at: now(), read });
+    // Every product on the page has its price on it: worth keeping.
+    onRead?.(read);
     return read;
   }
 
