@@ -11,6 +11,7 @@ import { matchFood, searchFoods, searchFoodsTiered } from './lib/foodSearch.mjs'
 import { gradeMeal, nutriScore, processingForMeal } from './lib/nutriScore.mjs';
 import { abMonth, AbError, clearGoal, createAbTables, goalFor, setGoal } from './lib/abMonth.mjs';
 import { createRatingTables, rate, RatingError, ratingsOf, toRate } from './lib/ratings.mjs';
+import { createPicnicReminders, createPicnicReminderTables, reminderFor, setReminder } from './lib/picnicReminder.mjs';
 import {
   authenticate,
   countUsers,
@@ -179,6 +180,7 @@ createUsersTable(db);
 createRecipeTables(db);
 createAbTables(db);
 createRatingTables(db);
+createPicnicReminderTables(db);
 createRecipeSiteTables(db);
 
 // Columns added after the first release. SQLite only supports ADD COLUMN, which
@@ -2681,8 +2683,30 @@ async function reminderTick() {
   }
 }
 
+// Before Picnic's cutoff for the next delivery. See lib/picnicReminder.mjs.
+const picnicReminders = createPicnicReminders({ db, picnic, send: sendReminder });
+app.get('/api/picnic/reminder', async (req, res) => {
+  res.json({
+    hoursBefore: reminderFor(db, req.userId),
+    push: pushReady,
+    next: picnic.status().connected ? await picnicReminders.next() : null,
+  });
+});
+app.put('/api/picnic/reminder', (req, res) => {
+  try {
+    res.json({ hoursBefore: setReminder(db, req.userId, req.body?.hoursBefore ?? null) });
+  } catch (error) {
+    res.status(error.status ?? 500).json({ error: error.message });
+  }
+});
+
 // Every five minutes: cheap, and fine-grained enough for an hourly trigger.
-if (pushReady) setInterval(() => void reminderTick(), 5 * 60_000).unref();
+if (pushReady) {
+  setInterval(() => {
+    void reminderTick();
+    picnicReminders.tick().catch((error) => console.error('picnic reminder failed:', error?.message ?? error));
+  }, 5 * 60_000).unref();
+}
 
 
 // ——— backup & export ———

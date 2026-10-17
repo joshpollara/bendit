@@ -26,6 +26,27 @@ function urlBase64ToUint8Array(base64: string): ArrayBuffer {
   return bytes.buffer;
 }
 
+/**
+ * Asks for notification permission and signs this device up for pushes,
+ * once. Throws with a message a person can act on.
+ */
+export async function ensurePushSubscription(publicKey: string | null | undefined) {
+  if (!publicKey) throw new Error('Reminders are not configured on the server.');
+  const permission = await Notification.requestPermission();
+  if (permission !== 'granted') {
+    throw new Error('Notifications are blocked for this app in your device settings.');
+  }
+  const registration = await navigator.serviceWorker.ready;
+  const existing = await registration.pushManager.getSubscription();
+  const subscription =
+    existing ??
+    (await registration.pushManager.subscribe({
+      userVisibleOnly: true,
+      applicationServerKey: urlBase64ToUint8Array(publicKey),
+    }));
+  await api.pushSubscribe(subscription.toJSON());
+}
+
 export default function ReminderSetting({ profile }: { profile: Profile }) {
   const bump = useUI((s) => s.bump);
   const config = useData(() => api.pushConfig(), []);
@@ -40,20 +61,7 @@ export default function ReminderSetting({ profile }: { profile: Profile }) {
     setBusy(true);
     setError(null);
     try {
-      if (!config?.publicKey) throw new Error('Reminders are not configured on the server.');
-      const permission = await Notification.requestPermission();
-      if (permission !== 'granted') {
-        throw new Error('Notifications are blocked for this app in your device settings.');
-      }
-      const registration = await navigator.serviceWorker.ready;
-      const existing = await registration.pushManager.getSubscription();
-      const subscription =
-        existing ??
-        (await registration.pushManager.subscribe({
-          userVisibleOnly: true,
-          applicationServerKey: urlBase64ToUint8Array(config.publicKey),
-        }));
-      await api.pushSubscribe(subscription.toJSON());
+      await ensurePushSubscription(config?.publicKey);
       await api.putProfile({
         ...profile,
         reminderHour: atHour,
@@ -70,12 +78,8 @@ export default function ReminderSetting({ profile }: { profile: Profile }) {
   async function disable() {
     setBusy(true);
     try {
-      const registration = await navigator.serviceWorker.ready;
-      const subscription = await registration.pushManager.getSubscription();
-      if (subscription) {
-        await api.pushUnsubscribe(subscription.endpoint);
-        await subscription.unsubscribe();
-      }
+      // The device stays signed up: other reminders, like Picnic's, use it,
+      // and nothing is sent that nobody asked for.
       await api.putProfile({ ...profile, reminderHour: null });
       bump();
     } finally {

@@ -116,6 +116,7 @@ export const USER_TABLES = [
   'assistant_chats',
   'ab_goals',
   'recipe_ratings',
+  'picnic_reminders',
 ];
 
 /** Deletes a user and everything of theirs. Returns what was removed. */
