@@ -311,6 +311,52 @@ export interface PicnicDeliverySummary {
   totalPrice: number;
 }
 
+/** A price kept for a day: the regular price of one, and with a deal, in cents. */
+export interface PricePoint {
+  day: string;
+  price: number;
+  paid: number | null;
+  deal: string | null;
+}
+
+export interface PriceNote {
+  kind: 'lowest' | 'up' | 'smaller';
+  text: string;
+}
+
+export interface PriceOverview {
+  spending: { months: { month: string; total: number; orders: number }[]; perWeek: number | null };
+  basket: { months: { month: string; index: number | null; products: number }[]; change: number | null };
+  notes: { productId: string; name: string; imageId: string | null; note: PriceNote }[];
+  products: {
+    productId: string;
+    name: string;
+    unitQuantity: string | null;
+    imageId: string | null;
+    price: number;
+    paid: number | null;
+    deal: string | null;
+    seen: string;
+    /** Percent against a year ago, when there's a price from then. */
+    change: number | null;
+    note: PriceNote | null;
+    /** Typical price each of the last 12 months. */
+    months: (number | null)[];
+  }[];
+  kept: { n: number; since: string | null };
+}
+
+export interface ProductPrices {
+  productId: string;
+  name: string;
+  unitQuantity: string | null;
+  points: PricePoint[];
+  latest: PricePoint;
+  year: { low: number; high: number; dealWeeks: number; weeks: number } | null;
+  packs: { day: string; unitQuantity: string }[];
+  note: PriceNote | null;
+}
+
 export interface PicnicHome {
   next: { cutOffTime: string; windowStart: string; windowEnd: string | null; ordered: boolean } | null;
   arriving: {
@@ -971,6 +1017,8 @@ export const api = {
     ),
   picnicAddList: (from: string, to: string) =>
     post('/api/shopping-list/picnic/cart', { from, to }) as Promise<{ added: number; cart: PicnicCart }>,
+  prices: () => j<PriceOverview>('/api/prices'),
+  productPrices: (id: string) => j<ProductPrices>(`/api/prices/products/${encodeURIComponent(id)}`),
   picnicHome: (from: string, to: string) => j<PicnicHome>(`/api/picnic/home?${new URLSearchParams({ from, to })}`),
   picnicSlots: () => j<PicnicSlots>('/api/picnic/slots'),
   picnicSetSlot: (slotId: string) => post('/api/picnic/slot', { slotId }, 'PUT') as Promise<PicnicCart>,

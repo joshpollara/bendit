@@ -5,7 +5,7 @@ import { useData } from '../lib/useData';
 import { DAY, shiftDay, todayStr } from '../lib/dates';
 import { unavailableOf } from '../lib/picnicUnavailable';
 import { euros } from './PicnicBits';
-import { SparkleIcon } from './Icons';
+import { ChevronRightIcon, SparkleIcon, TagIcon } from './Icons';
 
 const clock = (iso: string) => format(parseISO(iso), 'HH:mm');
 
@@ -142,6 +142,17 @@ export default function PicnicHome({
       >
         <SparkleIcon className="h-4 w-4" />
         Make me an order
+      </Link>
+
+      <Link
+        to="/prices"
+        className="mx-4 mt-3 flex items-center justify-between rounded-2xl border border-line bg-card px-4 py-3 text-sm shadow-sm lg:mx-0"
+      >
+        <span className="flex items-center gap-2 font-medium">
+          <TagIcon className="h-4 w-4 text-accent" />
+          Prices and spending
+        </span>
+        <ChevronRightIcon className="h-4 w-4 text-ink-muted" />
       </Link>
     </>
   );
