@@ -18,6 +18,7 @@ import { euros, Thumb, useSettled } from '../components/PicnicBits';
 import CheckoutSheet from '../components/PicnicCheckout';
 import GradeBadge from '../components/GradeBadge';
 import PicnicReminder from '../components/PicnicReminder';
+import PicnicHome from '../components/PicnicHome';
 import { unavailableOf } from '../lib/picnicUnavailable';
 
 const quantityOf = (article: PicnicCartArticle) =>
@@ -591,8 +592,8 @@ export default function Picnic() {
   const navigate = useNavigate();
   const status = useData(() => api.picnicStatus(), []);
   const [params] = useSearchParams();
-  const [tab, setTab] = useState<'search' | 'cart' | 'orders'>(() =>
-    params.get('tab') === 'cart' ? 'cart' : params.get('tab') === 'orders' ? 'orders' : 'search',
+  const [tab, setTab] = useState<'home' | 'cart' | 'orders'>(() =>
+    params.get('tab') === 'cart' ? 'cart' : params.get('tab') === 'orders' ? 'orders' : 'home',
   );
   const [checkingOut, setCheckingOut] = useState(false);
   const [query, setQuery] = useState('');
@@ -671,77 +672,73 @@ export default function Picnic() {
         </p>
       ) : (
         <>
+          <div className="mx-4 mb-3 flex items-center gap-2 rounded-xl border border-line bg-card px-3 lg:mx-0">
+            <SearchIcon className="h-4 w-4 shrink-0 text-ink-muted" />
+            <input
+              type="search"
+              placeholder="Search Picnic"
+              value={query}
+              onChange={(e) => setQuery(e.target.value)}
+              className="w-full bg-transparent py-2.5 text-sm outline-none"
+            />
+          </div>
           <div className="mx-4 grid grid-cols-3 rounded-xl bg-card p-1 text-center text-xs font-semibold lg:mx-0">
-            {(['search', 'cart', 'orders'] as const).map((t) => (
+            {(['home', 'cart', 'orders'] as const).map((t) => (
               <button
                 key={t}
                 type="button"
-                onClick={() => setTab(t)}
+                onClick={() => {
+                  setTab(t);
+                  setQuery('');
+                }}
                 className={`rounded-lg py-2 ${tab === t ? 'bg-accent text-white' : 'text-ink-secondary'}`}
               >
-                {t === 'search' ? 'Search' : t === 'orders' ? 'Orders' : `Cart${cart ? ` ${cart.total_count}` : ''}`}
+                {t === 'home' ? 'Home' : t === 'orders' ? 'Orders' : `Cart${cart ? ` ${cart.total_count}` : ''}`}
               </button>
             ))}
           </div>
 
           {error && <p className="mx-4 mt-3 text-sm text-over lg:mx-0">{error}</p>}
-
-          {tab === 'search' ? (
-            <>
-              <div className="mx-4 mt-3 flex items-center gap-2 rounded-xl border border-line bg-card px-3 lg:mx-0">
-                <SearchIcon className="h-4 w-4 shrink-0 text-ink-muted" />
-                <input
-                  type="search"
-                  placeholder="Search Picnic"
-                  value={query}
-                  onChange={(e) => setQuery(e.target.value)}
-                  className="w-full bg-transparent py-2.5 text-sm outline-none"
-                />
-              </div>
-              {q && (
-                <div className="mx-4 mt-3 overflow-hidden rounded-2xl border border-line bg-card shadow-sm lg:mx-0">
-                  {results === undefined ? (
-                    <p className="px-4 py-6 text-center text-sm text-ink-muted">Searching…</p>
-                  ) : results.length === 0 ? (
-                    <p className="px-4 py-6 text-center text-sm text-ink-muted">Nothing found.</p>
-                  ) : (
-                    <ul>
-                      {results.map((product) => (
-                        <li
-                          key={product.id}
-                          className="flex items-center gap-3 border-b border-line px-4 py-2.5 last:border-b-0"
-                        >
-                          <button
-                            type="button"
-                            onClick={() => setOpen({ id: product.id, name: product.name })}
-                            className="flex min-w-0 flex-1 items-center gap-3 text-left"
-                          >
-                            <Thumb id={product.image_id} />
-                            <span className="min-w-0 flex-1">
-                              <span className="block truncate text-sm font-medium">{product.name}</span>
-                              <span className="block truncate text-xs text-ink-muted">
-                                {product.unit_quantity}
-                              </span>
-                            </span>
-                            <span className="text-sm font-medium tabular-nums">
-                              {euros(product.display_price)}
-                            </span>
-                          </button>
-                          <button
-                            type="button"
-                            aria-label={`Add ${product.name} to cart`}
-                            onClick={() => changeCart(() => api.picnicAddToCart(product.id))}
-                            className="flex h-8 w-8 shrink-0 items-center justify-center rounded-full bg-accent text-white"
-                          >
-                            <PlusIcon className="h-4 w-4" />
-                          </button>
-                        </li>
-                      ))}
-                    </ul>
-                  )}
-                </div>
+          {q ? (
+            <div className="mx-4 mt-3 overflow-hidden rounded-2xl border border-line bg-card shadow-sm lg:mx-0">
+              {results === undefined ? (
+                <p className="px-4 py-6 text-center text-sm text-ink-muted">Searching…</p>
+              ) : results.length === 0 ? (
+                <p className="px-4 py-6 text-center text-sm text-ink-muted">Nothing found.</p>
+              ) : (
+                <ul>
+                  {results.map((product) => (
+                    <li
+                      key={product.id}
+                      className="flex items-center gap-3 border-b border-line px-4 py-2.5 last:border-b-0"
+                    >
+                      <button
+                        type="button"
+                        onClick={() => setOpen({ id: product.id, name: product.name })}
+                        className="flex min-w-0 flex-1 items-center gap-3 text-left"
+                      >
+                        <Thumb id={product.image_id} />
+                        <span className="min-w-0 flex-1">
+                          <span className="block truncate text-sm font-medium">{product.name}</span>
+                          <span className="block truncate text-xs text-ink-muted">{product.unit_quantity}</span>
+                        </span>
+                        <span className="text-sm font-medium tabular-nums">{euros(product.display_price)}</span>
+                      </button>
+                      <button
+                        type="button"
+                        aria-label={`Add ${product.name} to cart`}
+                        onClick={() => changeCart(() => api.picnicAddToCart(product.id))}
+                        className="flex h-8 w-8 shrink-0 items-center justify-center rounded-full bg-accent text-white"
+                      >
+                        <PlusIcon className="h-4 w-4" />
+                      </button>
+                    </li>
+                  ))}
+                </ul>
               )}
-            </>
+            </div>
+          ) : tab === 'home' ? (
+            <PicnicHome cart={cart} onCart={() => setTab('cart')} />
           ) : tab === 'cart' ? (
             <div className="mx-4 mt-3 overflow-hidden rounded-2xl border border-line bg-card shadow-sm lg:mx-0">
               <SlotSection onChanged={() => api.picnicCart().then(setCart)} />

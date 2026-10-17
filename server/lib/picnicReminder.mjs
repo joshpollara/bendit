@@ -107,7 +107,14 @@ export function createPicnicReminders({ db, picnic, send, now = () => Date.now()
     /** The next cutoff, for showing beside the setting. */
     async next() {
       const value = await nextCutoff().catch(() => null);
-      return value ? { cutOffTime: value.slot.cutOffTime, windowStart: value.slot.windowStart, ordered: value.ordered } : null;
+      return value
+        ? {
+            cutOffTime: value.slot.cutOffTime,
+            windowStart: value.slot.windowStart,
+            windowEnd: value.slot.windowEnd ?? null,
+            ordered: value.ordered,
+          }
+        : null;
     },
   };
 }
