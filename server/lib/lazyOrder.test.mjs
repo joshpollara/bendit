@@ -6,6 +6,7 @@ import { createMealPlanTables } from './mealPlan.mjs';
 import { createPicnicShoppingTables } from './picnicShopping.mjs';
 import { createRecipeTables } from './recipeStore.mjs';
 import { createUser, createUsersTable } from './users.mjs';
+import { createRatingTables } from './ratings.mjs';
 
 const NOW = Date.parse('2026-10-17T12:00:00Z');
 const daysAgo = (n) => new Date(NOW - n * 86_400_000).toISOString();
@@ -98,6 +99,7 @@ beforeEach(() => {
   createMealPlanTables(db);
   createPicnicShoppingTables(db);
   createHistoryTables(db);
+  createRatingTables(db);
   db.exec(`
     CREATE TABLE vision_requests (id TEXT PRIMARY KEY, createdAt TEXT, task TEXT, promptVersion TEXT,
       model TEXT, imageHash TEXT, imageBytes INTEGER, status TEXT, errorCode TEXT, latencyMs INTEGER,

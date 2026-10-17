@@ -11,6 +11,7 @@ import { ChevronLeftIcon } from '../components/Icons';
 import GradeBadge from '../components/GradeBadge';
 import RecipeEditor, { draftFromRecipe } from '../components/RecipeEditor';
 import RecipeShop from '../components/RecipeShop';
+import { RateButtons, whoRated } from '../components/Ratings';
 import Sheet from '../components/Sheet';
 import { AddSheet } from './Plan';
 
@@ -288,6 +289,13 @@ export default function RecipePage() {
         >
           Log
         </button>
+      </div>
+
+      <div className="mx-4 mt-3 flex flex-wrap items-center gap-x-3 gap-y-2">
+        <RateButtons recipeId={recipe.id} yours={recipe.ratings?.yours ?? 0} />
+        {recipe.ratings?.people.length ? (
+          <span className="text-xs text-ink-muted">{whoRated(recipe.ratings)}</span>
+        ) : null}
       </div>
 
       <section className="mx-4 mt-4 rounded-2xl border border-line bg-card p-4 shadow-sm">

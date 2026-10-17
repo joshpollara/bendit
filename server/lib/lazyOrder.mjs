@@ -16,6 +16,14 @@ import { pastOrders, usuals } from './picnicHistory.mjs';
 import { mapLimited, productFrom, setChoice } from './picnicShopping.mjs';
 import { addItem, keyFor } from './mealPlan.mjs';
 import { saveRecipe } from './recipeStore.mjs';
+import { householdTaste } from './ratings.mjs';
+
+/** What they've liked and haven't, for the model, when there's any. */
+const ratedLines = (taste) =>
+  [
+    taste.liked.length ? `Recipes they liked: ${taste.liked.join(', ')}` : '',
+    taste.disliked.length ? `Recipes they didn't like (avoid ones like these): ${taste.disliked.join(', ')}` : '',
+  ].filter(Boolean);
 
 export const TASK = 'order';
 const PROMPT_VERSION = 'order-3';
@@ -163,7 +171,8 @@ export function createLazyOrder({ db, model, sites, search, fetch = fetchPage, d
     const bought = list.slice(0, 40).map((u) => u.name);
     const cooked = db.prepare('SELECT name FROM recipes ORDER BY createdAt DESC LIMIT 30').all().map((r) => r.name);
     const orders = pastOrders(db, { now: now() }).length;
-    return { list, bought, cooked, orders };
+    const { liked, disliked } = householdTaste(db);
+    return { list, bought, cooked, orders, liked, disliked };
   }
 
   /** New recipes to choose from: the sites' latest, and searches the model suggests. */
@@ -183,7 +192,11 @@ export function createLazyOrder({ db, model, sites, search, fetch = fetchPage, d
         .filter(Boolean)
         .join('\n'),
       IDEAS_SCHEMA,
-      `They often buy: ${taste.bought.join(', ') || 'unknown'}\nRecipes they have saved: ${taste.cooked.join(', ') || 'none'}`,
+      [
+        `They often buy: ${taste.bought.join(', ') || 'unknown'}`,
+        `Recipes they have saved: ${taste.cooked.join(', ') || 'none'}`,
+        ...ratedLines(taste),
+      ].join('\n'),
     );
     // With a request, only what searching for it finds; the sites' latest
     // posts would mostly be something else.
@@ -296,6 +309,7 @@ export function createLazyOrder({ db, model, sites, search, fetch = fetchPage, d
             [
               `They often buy: ${taste.bought.join(', ')}`,
               `Recipes they have saved: ${taste.cooked.join(', ') || 'none'}`,
+              ...ratedLines(taste),
               'Recipes:',
               ...pool.map((p, i) => `${i}. ${p.title} (${p.site})`),
             ].join('\n'),
