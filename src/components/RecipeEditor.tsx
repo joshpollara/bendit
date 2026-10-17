@@ -1,5 +1,12 @@
 import { useEffect, useState } from 'react';
-import { api, type NutritionFrom, type RecipeDraft, type RecipeIngredientInput, type SourceNutrition } from '../lib/api';
+import {
+  api,
+  type NutritionFrom,
+  type Recipe,
+  type RecipeDraft,
+  type RecipeIngredientInput,
+  type SourceNutrition,
+} from '../lib/api';
 import { formatCalories } from '../lib/units';
 import { SparkleIcon } from './Icons';
 
@@ -51,7 +58,7 @@ export default function RecipeEditor({
 }: {
   initial: RecipeDraft;
   recipeId?: string;
-  onSaved: () => void;
+  onSaved: (recipe: Recipe) => void;
   onClose: () => void;
 }) {
   const [name, setName] = useState(initial.name ?? '');
@@ -100,7 +107,7 @@ export default function RecipeEditor({
     setSaving(true);
     setError(null);
     try {
-      await api.saveRecipe(
+      const saved = await api.saveRecipe(
         {
           name: name.trim(),
           servings: makes,
@@ -115,7 +122,7 @@ export default function RecipeEditor({
         },
         recipeId,
       );
-      onSaved();
+      onSaved(saved);
     } catch (e) {
       setError(e instanceof Error ? e.message : 'Could not save.');
       setSaving(false);

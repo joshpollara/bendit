@@ -241,6 +241,76 @@ export const gramsOf = (ing) =>
   ing.grams ?? (ing.quantity != null && METRIC[String(ing.unit ?? '').toLowerCase()] ? ing.quantity * METRIC[ing.unit.toLowerCase()] : null);
 export const keyFor = (foodId, name) => (foodId ? `food:${foodId}` : `name:${String(name).trim().toLowerCase()}`);
 
+/** Adds amounts to the lines of a list, one line per food, in grams where known. */
+const lineAdder = (lines) => (key, name, { grams = null, written = null, usedIn }) => {
+  const line = lines.get(key) ?? { key, name, grams: 0, written: [], usedIn: [] };
+  if (grams != null) line.grams += grams;
+  if (written) line.written.push(written);
+  if (!line.usedIn.includes(usedIn)) line.usedIn.push(usedIn);
+  lines.set(key, line);
+};
+
+/** A recipe's ingredients, scaled by `factor`, onto a list. */
+function addRecipe(db, add, recipeId, factor, usedIn) {
+  const ingredients = db.prepare('SELECT * FROM recipe_ingredients WHERE recipeId = ? ORDER BY position').all(recipeId);
+  for (const ing of ingredients) {
+    const name = ing.name ?? ing.raw;
+    const grams = gramsOf(ing);
+    const written =
+      grams == null
+        ? ing.quantity != null
+          ? ing.unit
+            ? `${Math.round(ing.quantity * factor * 10) / 10} ${ing.unit}`
+            : // A count of whole things: nobody buys 0.6 of an onion.
+              `${Math.ceil(ing.quantity * factor - 1e-9)}`
+          : ing.raw
+        : null;
+    add(keyFor(ing.foodId, name), name, { grams: grams != null ? grams * factor : null, written, usedIn });
+  }
+}
+
+const finished = (line) => ({ ...line, grams: line.grams > 0 ? round(line.grams) : null });
+
+/**
+ * What one recipe needs bought for some number of servings: the same lines,
+ * with the same keys, as the plan's list, so a product picked for a line in
+ * one is picked in the other.
+ */
+export function recipeShoppingList(db, recipeId, servings) {
+  const recipe = db.prepare('SELECT id, name, servings FROM recipes WHERE id = ?').get(recipeId);
+  if (!recipe) throw new PlanError('No such recipe.', 404);
+  const makes = Number(servings) > 0 && Number(servings) <= 100 ? Number(servings) : recipe.servings;
+  const lines = new Map();
+  addRecipe(db, lineAdder(lines), recipe.id, recipe.servings > 0 ? makes / recipe.servings : 1, recipe.name);
+  const staples = staplesOf(db, recipe.id);
+  return {
+    listKey: `recipe:${recipe.id}`,
+    recipe: { id: recipe.id, name: recipe.name, servings: makes },
+    items: [...lines.values()].map((line) => ({ ...finished(line), checked: false, staple: staples.has(line.key) })),
+  };
+}
+
+const SPOONS = /^(tsp|tbsp|teaspoons?|tablespoons?|pinch(es)?|dash(es)?|sprigs?)$/i;
+const ALWAYS_IN = /^(water|salt|pepper|black pepper|salt and pepper|kosher salt|sea salt|ice|cooking spray)$/i;
+
+/**
+ * Lines that are probably already in the cupboard: only ever a spoonful or a
+ * pinch, "to taste", or water and salt. They start as "have it"; a tap buys them.
+ */
+function staplesOf(db, recipeId) {
+  const units = new Map();
+  for (const ing of db.prepare('SELECT * FROM recipe_ingredients WHERE recipeId = ?').all(recipeId)) {
+    const name = ing.name ?? ing.raw;
+    const key = keyFor(ing.foodId, name);
+    const staple =
+      ALWAYS_IN.test(String(name).trim()) ||
+      /\b(to taste|spray)\b/i.test(ing.raw) ||
+      (ing.unit != null && SPOONS.test(String(ing.unit).trim()));
+    units.set(key, (units.get(key) ?? true) && staple);
+  }
+  return new Set([...units].filter(([, staple]) => staple).map(([key]) => key));
+}
+
 /**
  * Everything the plan needs bought between two dates, for everyone eating.
  *
@@ -262,40 +332,13 @@ export function shoppingList(db, from, to) {
     .all(from, to);
 
   const lines = new Map();
-  const add = (key, name, { grams = null, written = null, usedIn }) => {
-    const line = lines.get(key) ?? { key, name, grams: 0, written: [], usedIn: [] };
-    if (grams != null) line.grams += grams;
-    if (written) line.written.push(written);
-    if (!line.usedIn.includes(usedIn)) line.usedIn.push(usedIn);
-    lines.set(key, line);
-  };
+  const add = lineAdder(lines);
 
   for (const item of items) {
     const planned = item.planned ?? 0;
     if (planned <= 0) continue;
     if (item.recipeId && item.recipeServings > 0) {
-      const factor = planned / item.recipeServings;
-      const ingredients = db
-        .prepare('SELECT * FROM recipe_ingredients WHERE recipeId = ? ORDER BY position')
-        .all(item.recipeId);
-      for (const ing of ingredients) {
-        const name = ing.name ?? ing.raw;
-        const grams = gramsOf(ing);
-        const written =
-          grams == null
-            ? ing.quantity != null
-              ? ing.unit
-                ? `${Math.round(ing.quantity * factor * 10) / 10} ${ing.unit}`
-                : // A count of whole things: nobody buys 0.6 of an onion.
-                  `${Math.ceil(ing.quantity * factor - 1e-9)}`
-              : ing.raw
-            : null;
-        add(keyFor(ing.foodId, name), name, {
-          grams: grams != null ? grams * factor : null,
-          written,
-          usedIn: item.recipeName,
-        });
-      }
+      addRecipe(db, add, item.recipeId, planned / item.recipeServings, item.recipeName);
     } else {
       add(keyFor(item.foodId, item.name), item.name, {
         grams: item.servingGrams ? item.servingGrams * planned : null,
@@ -312,11 +355,7 @@ export function shoppingList(db, from, to) {
   return {
     listKey,
     items: [...lines.values()]
-      .map((line) => ({
-        ...line,
-        grams: line.grams > 0 ? round(line.grams) : null,
-        checked: checked.has(line.key),
-      }))
+      .map((line) => ({ ...finished(line), checked: checked.has(line.key) }))
       .sort((a, b) => a.name.localeCompare(b.name)),
   };
 }

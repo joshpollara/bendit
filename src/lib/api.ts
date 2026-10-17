@@ -263,6 +263,15 @@ export interface LessWasteLine {
   recipes: { recipeId: string; name: string; servings: number; uses: number }[];
 }
 
+/** One recipe's ingredients for some servings, with a Picnic product on each line. */
+export interface RecipeShopping extends PicnicShoppingList {
+  recipe: { id: string; name: string; servings: number };
+  items: (PicnicShoppingList['items'][number] & {
+    /** Probably in the cupboard already: a spoonful, a pinch, salt, water. */
+    staple: boolean;
+  })[];
+}
+
 export interface PicnicSlot {
   slotId: string;
   windowStart: string;
@@ -826,6 +835,10 @@ export const api = {
     j<unknown>(`/api/picnic/choices/${encodeURIComponent(itemKey)}`, { method: 'DELETE' }),
   picnicLessWaste: (from: string, to: string) =>
     j<{ lines: LessWasteLine[] }>(`/api/shopping-list/picnic/less-waste?${new URLSearchParams({ from, to })}`),
+  picnicRecipeShopping: (recipeId: string, servings: number) =>
+    j<RecipeShopping>(
+      `/api/picnic/recipes/${encodeURIComponent(recipeId)}/shopping?${new URLSearchParams({ servings: String(servings) })}`,
+    ),
   picnicAddList: (from: string, to: string) =>
     post('/api/shopping-list/picnic/cart', { from, to }) as Promise<{ added: number; cart: PicnicCart }>,
   picnicSlots: () => j<PicnicSlots>('/api/picnic/slots'),

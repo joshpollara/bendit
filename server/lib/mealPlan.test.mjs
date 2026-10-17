@@ -6,6 +6,7 @@ import {
   listPlan,
   logItem,
   plannedFor,
+  recipeShoppingList,
   removeItem,
   setChecked,
   shoppingList,
@@ -159,5 +160,30 @@ describe('the shopping list', () => {
     setChecked(db, { listKey: list.listKey, itemKey: beef.key, checked: true }, { userId: ben });
     expect(shoppingList(db, '2026-10-19', '2026-10-25').items.find((i) => i.key === beef.key).checked).toBe(true);
     expect(shoppingList(db, '2026-10-19', '2026-10-26').items.find((i) => i.key === beef.key).checked).toBe(false);
+  });
+});
+
+describe('shopping for one recipe', () => {
+  it('lists its ingredients for the servings asked, keyed like the plan', () => {
+    const list = recipeShoppingList(db, 'chili', 2);
+    expect(list.recipe).toEqual({ id: 'chili', name: 'Chili', servings: 2 });
+    const byName = Object.fromEntries(list.items.map((i) => [i.name, i]));
+    expect(byName['ground beef']).toMatchObject({ key: 'food:beef', grams: 250, staple: false });
+    // Half of one onion is still one onion.
+    expect(byName.onion).toMatchObject({ written: ['1'], staple: false });
+    expect(byName.stock).toMatchObject({ grams: 200 });
+  });
+
+  it('starts a spoonful of spice as already in the cupboard', () => {
+    const cumin = recipeShoppingList(db, 'chili').items.find((i) => i.name === 'cumin');
+    expect(cumin).toMatchObject({ written: ['1 tsp'], staple: true });
+  });
+
+  it('makes what the recipe makes when no servings are given', () => {
+    expect(recipeShoppingList(db, 'chili').recipe.servings).toBe(4);
+  });
+
+  it('says so when there is no such recipe', () => {
+    expect(() => recipeShoppingList(db, 'nope', 2)).toThrow(/No such recipe/);
   });
 });
