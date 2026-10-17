@@ -104,7 +104,7 @@ export async function fetchPage(url, { fetchImpl = fetch, resolver = dns } = {})
   throw new Error('That page redirects too many times.');
 }
 
-const decodeEntities = (text) =>
+export const decodeEntities = (text) =>
   String(text ?? '')
     .replace(/&amp;/g, '&')
     .replace(/&lt;/g, '<')
