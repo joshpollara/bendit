@@ -11,6 +11,7 @@
 import crypto from 'node:crypto';
 import { buildRecipe, recipeFood } from './recipe.mjs';
 import { foodGrade, gradeMeal } from './nutriScore.mjs';
+import { MIN_GRADED, recipeTips } from './recipeTips.mjs';
 
 export function createRecipeTables(db) {
   db.exec(`
@@ -89,9 +90,6 @@ export function pageServing(source, makes) {
 
 const newId = () => crypto.randomUUID();
 
-/** Under this share of a recipe's weight graded, its grade would say little. */
-const MIN_GRADED = 0.5;
-
 /**
  * A recipe's Nutri-Score: from its own food when that has full figures (a
  * page's nutrition, fully weighed), else from its ingredients weighted by
@@ -101,21 +99,30 @@ export function recipeGrade(db, recipe, ingredients) {
   const food = recipe.foodId ? db.prepare('SELECT * FROM foods WHERE id = ?').get(recipe.foodId) : null;
   const own = foodGrade(food);
   if (own) return { grade: own, covered: 1, from: 'page' };
-  const foodOf = db.prepare('SELECT * FROM foods WHERE id = ?');
-  const items = ingredients
+  const items = withGrades(db, ingredients)
     .filter((i) => i.grams > 0)
-    .map((i) => ({ grams: i.grams, grade: i.foodId ? foodGrade(foodOf.get(i.foodId)) : null }));
+    .map((i) => ({ grams: i.grams, grade: i.grade }));
   const graded = gradeMeal(items);
   return graded && graded.covered >= MIN_GRADED ? { grade: graded.grade, covered: graded.covered, from: 'ingredients' } : null;
+}
+
+/** Each ingredient with its food's grade, or null, unless it has one already. */
+function withGrades(db, ingredients) {
+  const foodOf = db.prepare('SELECT * FROM foods WHERE id = ?');
+  return ingredients.map((i) =>
+    'grade' in i ? i : { ...i, grade: i.foodId ? foodGrade(foodOf.get(i.foodId)) : null },
+  );
 }
 
 /** A recipe with its ingredients, as the client reads it. */
 export function readRecipe(db, id) {
   const recipe = db.prepare('SELECT * FROM recipes WHERE id = ?').get(id);
   if (!recipe) return null;
-  const ingredients = db
-    .prepare('SELECT * FROM recipe_ingredients WHERE recipeId = ? ORDER BY position')
-    .all(id);
+  const ingredients = withGrades(
+    db,
+    db.prepare('SELECT * FROM recipe_ingredients WHERE recipeId = ? ORDER BY position').all(id),
+  );
+  const grade = recipeGrade(db, recipe, ingredients);
   const author = db.prepare('SELECT username FROM users WHERE id = ?').get(recipe.createdBy);
   const food = recipe.foodId
     ? db.prepare('SELECT * FROM foods WHERE id = ?').get(recipe.foodId)
@@ -144,7 +151,9 @@ export function readRecipe(db, id) {
     ingredients,
     food,
     total: { grams: Math.round(total.grams), calories: Math.round(total.calories) },
-    grade: recipeGrade(db, recipe, ingredients),
+    grade,
+    // Ways to a better grade, where the grade comes from the ingredients.
+    tips: grade?.from === 'ingredients' ? recipeTips(ingredients) : [],
     perServing: food
       ? { calories: food.caloriesPerServing, grams: food.servingGrams }
       : { calories: null, grams: null },

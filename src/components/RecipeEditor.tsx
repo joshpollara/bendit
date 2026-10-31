@@ -2,13 +2,16 @@ import { useEffect, useState } from 'react';
 import {
   api,
   type NutritionFrom,
+  type RecipeTip,
   type Recipe,
   type RecipeDraft,
   type RecipeIngredientInput,
   type SourceNutrition,
 } from '../lib/api';
 import { formatCalories } from '../lib/units';
+import { scaledLine, tipText } from '../lib/recipeLines';
 import { BasketIcon, SparkleIcon } from './Icons';
+import GradeBadge from './GradeBadge';
 
 // Checking a recipe before it becomes a food.
 //
@@ -77,9 +80,12 @@ export default function RecipeEditor({
   onSaved,
   onClose,
   onShop,
+  own = true,
 }: {
   initial: RecipeDraft;
   recipeId?: string;
+  /** Whether saving over `recipeId` is allowed; if not, it can only be saved as a copy. */
+  own?: boolean;
   onSaved: (recipe: Recipe) => void;
   onClose: () => void;
   /** Shop for the saved recipe on Picnic, when Picnic is connected. */
@@ -88,6 +94,8 @@ export default function RecipeEditor({
   const [name, setName] = useState(initial.name ?? '');
   const [servings, setServings] = useState(String(initial.servings ?? 4));
   const [lines, setLines] = useState(initial.ingredients.map((i) => i.raw).join('\n'));
+  // Lines whose food is already known, so a line halved by a tip keeps its match.
+  const [known, setKnown] = useState(initial.ingredients);
   const [instructions, setInstructions] = useState(initial.instructions ?? '');
   const [notes, setNotes] = useState(initial.notes ?? '');
   const [priced, setPriced] = useState<RecipeDraft>(initial);
@@ -108,7 +116,7 @@ export default function RecipeEditor({
   // and save from throwing away the useful half of an AI import, without
   // applying a stale match after the user edits a line.
   const ingredientInputs = (): RecipeIngredientInput[] => {
-    return recipeIngredientInputs(lines, initial.ingredients);
+    return recipeIngredientInputs(lines, known);
   };
 
   // Re-price as the lines are edited. It's a database lookup, not a model call,
@@ -127,7 +135,34 @@ export default function RecipeEditor({
     return () => clearTimeout(timer);
   }, [lines, makes]);
 
-  async function save() {
+  /** Takes one line out of the text, as written. */
+  function removeLine(raw: string) {
+    const all = lines.split('\n');
+    const at = all.findIndex((line) => line.trim() === raw);
+    if (at >= 0) setLines(all.filter((_, i) => i !== at).join('\n'));
+  }
+
+  /** Makes a tip's change to the lines: leaves them out, or halves them. */
+  function applyTip(tip: RecipeTip) {
+    if (tip.kind === 'add_veg') return;
+    const changes = tip.kind === 'together' ? tip.changes : [{ kind: tip.kind, index: tip.index }];
+    let all = lines.split('\n');
+    for (const change of changes) {
+      const ing = priced.ingredients[change.index];
+      const at = ing ? all.findIndex((line) => line.trim() === ing.raw) : -1;
+      if (at < 0) continue;
+      if (change.kind === 'leave_out') {
+        all = all.filter((_, i) => i !== at);
+      } else {
+        const halved = { ...ing, raw: scaledLine(ing, 0.5) };
+        all[at] = halved.raw;
+        setKnown((current) => [...current, halved]);
+      }
+    }
+    setLines(all.join('\n'));
+  }
+
+  async function save(asCopy = false) {
     setSaving(true);
     setError(null);
     try {
@@ -144,8 +179,9 @@ export default function RecipeEditor({
           sourceNutrition: source,
           nutritionFrom: source ? nutritionFrom : 'ingredients',
           ...(initial.imageUrl !== undefined ? { imageUrl: initial.imageUrl } : {}),
+          ...(asCopy && name.trim() === (initial.name ?? '').trim() ? { name: `${name.trim()} (copy)` } : {}),
         },
-        recipeId,
+        asCopy ? undefined : recipeId,
       );
       onSaved(saved);
     } catch (e) {
@@ -179,7 +215,7 @@ export default function RecipeEditor({
   return (
     <div className="mx-auto flex w-full max-w-3xl flex-col gap-3 px-4 py-4">
       <div className="flex items-center justify-between">
-        <h1 className="text-xl font-semibold">{recipeId ? 'Edit recipe' : 'New recipe'}</h1>
+        <h1 className="text-xl font-semibold">{!recipeId ? 'New recipe' : own ? 'Edit recipe' : 'Copy recipe'}</h1>
         <button type="button" onClick={onClose} className="text-sm font-medium text-accent">
           Cancel
         </button>
@@ -294,6 +330,15 @@ export default function RecipeEditor({
               <span className="tabular-nums text-ink-secondary">
                 {item.nutrition ? `${item.nutrition.calories} cal` : ''}
               </span>
+              <GradeBadge grade={item.food?.grade} />
+              <button
+                type="button"
+                aria-label={`Remove ${item.raw}`}
+                onClick={() => removeLine(item.raw)}
+                className="-mr-1 rounded-full px-1.5 text-base leading-none text-ink-muted hover:text-over"
+              >
+                ×
+              </button>
             </li>
           ))}
         </ul>
@@ -311,6 +356,11 @@ export default function RecipeEditor({
           {!usePage && priced.total.calories != null && (
             <p className="mt-1 text-xs text-ink-muted tabular-nums">
               whole recipe {formatCalories(priced.total.calories)} cal
+            </p>
+          )}
+          {!usePage && priced.grade && (
+            <p className="mt-1 flex items-center justify-center gap-1.5 text-xs text-ink-secondary">
+              Nutri-Score <GradeBadge grade={priced.grade} />
             </p>
           )}
           {page && (
@@ -335,6 +385,29 @@ export default function RecipeEditor({
           )}
         </div>
       </div>
+
+      {!usePage && (priced.tips?.length ?? 0) > 0 && (
+        <div className="rounded-2xl border border-line bg-card px-4 py-2">
+          <p className="py-1 text-sm font-medium">Improve the grade</p>
+          <ul className="divide-y divide-line text-xs">
+            {priced.tips!.map((tip, i) => (
+              <li key={i} className="flex items-center gap-3 py-2">
+                <span className="min-w-0 flex-1">{tipText(tip, priced.ingredients)}</span>
+                <GradeBadge grade={tip.to} />
+                {tip.kind !== 'add_veg' && (
+                  <button
+                    type="button"
+                    onClick={() => applyTip(tip)}
+                    className="shrink-0 rounded-lg border border-accent px-2.5 py-1 font-semibold text-accent"
+                  >
+                    Apply
+                  </button>
+                )}
+              </li>
+            ))}
+          </ul>
+        </div>
+      )}
 
       {(priced.unmatched?.length ?? 0) + (priced.unweighable?.length ?? 0) > 0 && (
         <p className="rounded-xl bg-warn-soft px-3 py-2 text-xs text-warn-deep">
@@ -374,14 +447,30 @@ export default function RecipeEditor({
 
       {error && <p className="rounded-xl bg-over-soft px-3 py-2 text-sm text-over">{error}</p>}
 
-      <button
-        type="button"
-        disabled={!valid || saving}
-        onClick={() => void save()}
-        className="rounded-xl bg-accent py-3 font-semibold text-white disabled:opacity-40"
-      >
-        {saving ? 'Saving…' : 'Save recipe'}
-      </button>
+      <div className="flex gap-2">
+        {recipeId && (
+          <button
+            type="button"
+            disabled={!valid || saving}
+            onClick={() => void save(true)}
+            className={`flex-1 rounded-xl py-3 font-semibold disabled:opacity-40 ${
+              own ? 'border border-accent text-accent' : 'bg-accent text-white'
+            }`}
+          >
+            {saving && !own ? 'Saving…' : 'Save as a copy'}
+          </button>
+        )}
+        {(!recipeId || own) && (
+          <button
+            type="button"
+            disabled={!valid || saving}
+            onClick={() => void save()}
+            className="flex-1 rounded-xl bg-accent py-3 font-semibold text-white disabled:opacity-40"
+          >
+            {saving ? 'Saving…' : 'Save recipe'}
+          </button>
+        )}
+      </div>
     </div>
   );
 }
