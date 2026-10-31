@@ -23,6 +23,8 @@ const card = 'rounded-2xl border border-line bg-card p-4 shadow-sm';
 /** Liked more than not: the ones to make again. */
 const liked = (r: Recipe) => (r.ratings?.likes ?? 0) > (r.ratings?.dislikes ?? 0);
 
+const MAX_PAGES = 4;
+
 const retryablePhotoCodes = new Set(['timeout', 'network_error', 'provider_error']);
 
 export function canRetryRecipePhoto(error: unknown) {
@@ -57,7 +59,9 @@ export default function Recipes() {
   const [url, setUrl] = useState('');
   const [busy, setBusy] = useState<'url' | 'photo' | null>(null);
   const [error, setError] = useState<string | null>(null);
-  const [photoToRetry, setPhotoToRetry] = useState<string | null>(null);
+  // Pages photographed so far, waiting to be read together.
+  const [pages, setPages] = useState<string[]>([]);
+  const [photoToRetry, setPhotoToRetry] = useState<string[] | null>(null);
   const [shooting, setShooting] = useState(false);
   const fileInput = useRef<HTMLInputElement>(null);
   const picnic = useData(() => api.picnicStatus(), []);
@@ -90,27 +94,29 @@ export default function Recipes() {
     }
   }
 
-  async function fromPhoto(photo: Blob | string) {
-    if (busy !== null) return;
+  async function addPages(photos: Blob[]) {
     setShooting(false);
+    setError(null);
+    setPhotoToRetry(null);
+    try {
+      const added = await Promise.all(photos.map((photo) => resizeForModel(photo)));
+      setPages((current) => [...current, ...added].slice(0, MAX_PAGES));
+    } catch {
+      setError("That image couldn't be prepared. Choose another photo.");
+    }
+  }
+
+  async function readPages(images = pages) {
+    if (busy !== null || !images.length) return;
     setBusy('photo');
     setError(null);
     setPhotoToRetry(null);
-    let image: string | null = typeof photo === 'string' ? photo : null;
-    if (!image) {
-      try {
-        image = await resizeForModel(photo as Blob);
-      } catch {
-        setError("That image couldn't be prepared. Choose another photo.");
-        setBusy(null);
-        return;
-      }
-    }
     try {
-      setDraft({ draft: await api.recipeFromPhoto(image) });
+      setDraft({ draft: await api.recipeFromPhoto(images) });
+      setPages([]);
     } catch (e) {
       setError(recipePhotoErrorMessage(e));
-      if (image && canRetryRecipePhoto(e)) setPhotoToRetry(image);
+      if (canRetryRecipePhoto(e)) setPhotoToRetry(images);
     } finally {
       setBusy(null);
     }
@@ -196,7 +202,7 @@ export default function Recipes() {
           <div>
             <h2 className="font-semibold">Import a recipe with AI</h2>
             <p className="mt-0.5 text-sm text-ink-secondary">
-              Paste a link or photograph a cookbook page. AI will pull out the full recipe for you to check.
+              Paste a link or photograph a cookbook page, or a few. AI will pull out the full recipe for you to check.
             </p>
           </div>
         </div>
@@ -253,39 +259,88 @@ export default function Recipes() {
           )}
         </form>
 
-        <div className="flex gap-2 border-t border-line px-4 py-3">
-          <button
-            type="button"
-            disabled={busy !== null}
-            onClick={() => {
-              setError(null);
-              setPhotoToRetry(null);
-              setShooting(true);
-            }}
-            className="flex flex-1 items-center justify-center gap-2 rounded-xl border border-accent py-2.5 text-sm font-semibold text-accent disabled:opacity-50"
-          >
-            <CameraIcon className="h-4 w-4" />
-            {busy === 'photo' ? 'AI is reading…' : 'Photograph a page'}
-          </button>
-          <button
-            type="button"
-            disabled={busy !== null}
-            onClick={blank}
-            className="rounded-xl border border-line px-4 py-2.5 text-sm font-semibold text-ink-secondary disabled:opacity-50"
-          >
-            Type it in
-          </button>
-        </div>
+        {pages.length > 0 ? (
+          <div className="border-t border-line px-4 py-3">
+            <ul className="mb-3 flex gap-2">
+              {pages.map((page, index) => (
+                <li key={index} className="relative">
+                  <img
+                    src={`data:image/jpeg;base64,${page}`}
+                    alt={`Page ${index + 1}`}
+                    className="h-20 w-16 rounded-lg border border-line object-cover"
+                  />
+                  <button
+                    type="button"
+                    disabled={busy !== null}
+                    aria-label={`Remove page ${index + 1}`}
+                    onClick={() => setPages((current) => current.filter((_, i) => i !== index))}
+                    className="absolute -top-1.5 -right-1.5 h-5 w-5 rounded-full bg-ink text-xs leading-5 text-white disabled:opacity-50"
+                  >
+                    ×
+                  </button>
+                </li>
+              ))}
+            </ul>
+            <div className="flex gap-2">
+              <button
+                type="button"
+                disabled={busy !== null || pages.length >= MAX_PAGES}
+                onClick={() => {
+                  setError(null);
+                  setShooting(true);
+                }}
+                className="flex flex-1 items-center justify-center gap-2 rounded-xl border border-accent py-2.5 text-sm font-semibold text-accent disabled:opacity-50"
+              >
+                <CameraIcon className="h-4 w-4" />
+                Add a page
+              </button>
+              <button
+                type="button"
+                disabled={busy !== null}
+                onClick={() => void readPages()}
+                className="flex flex-1 items-center justify-center gap-2 rounded-xl bg-accent py-2.5 text-sm font-semibold text-white disabled:opacity-50"
+              >
+                <SparkleIcon className="h-4 w-4" />
+                {busy === 'photo' ? 'AI is reading…' : pages.length > 1 ? `Read ${pages.length} pages` : 'Read recipe'}
+              </button>
+            </div>
+          </div>
+        ) : (
+          <div className="flex gap-2 border-t border-line px-4 py-3">
+            <button
+              type="button"
+              disabled={busy !== null}
+              onClick={() => {
+                setError(null);
+                setPhotoToRetry(null);
+                setShooting(true);
+              }}
+              className="flex flex-1 items-center justify-center gap-2 rounded-xl border border-accent py-2.5 text-sm font-semibold text-accent disabled:opacity-50"
+            >
+              <CameraIcon className="h-4 w-4" />
+              Photograph a page
+            </button>
+            <button
+              type="button"
+              disabled={busy !== null}
+              onClick={blank}
+              className="rounded-xl border border-line px-4 py-2.5 text-sm font-semibold text-ink-secondary disabled:opacity-50"
+            >
+              Type it in
+            </button>
+          </div>
+        )}
 
         <input
           ref={fileInput}
           type="file"
           accept="image/*"
+          multiple
           className="hidden"
           onChange={(e) => {
-            const file = e.target.files?.[0];
+            const files = [...(e.target.files ?? [])];
             e.target.value = '';
-            if (file) void fromPhoto(file);
+            if (files.length) void addPages(files);
           }}
         />
 
@@ -299,7 +354,7 @@ export default function Recipes() {
               <button
                 type="button"
                 disabled={busy !== null}
-                onClick={() => void fromPhoto(photoToRetry)}
+                onClick={() => void readPages(photoToRetry)}
                 className="shrink-0 rounded-lg border border-over/30 px-2.5 py-1.5 font-semibold disabled:opacity-50"
               >
                 Try AI again
@@ -338,64 +393,64 @@ export default function Recipes() {
       )}
 
       <ul className="flex flex-col gap-2">
-        {recipes?.filter((r) => show === 'all' || liked(r)).map((recipe) => (
-          <li key={recipe.id} className={card}>
-            <div className="flex items-start gap-3">
-              <button
-                type="button"
-                disabled={busy !== null}
-                onClick={() => navigate(`/recipes/${recipe.id}`)}
-                className="min-w-0 flex-1 text-left disabled:opacity-50"
-              >
-                <p className="truncate font-medium">
-                  <GradeBadge grade={recipe.grade?.grade} className="mr-1.5" />
-                  {recipe.name}
-                </p>
-                <p className="truncate text-xs text-ink-muted">
-                  {recipe.servings} servings · {recipe.ingredients.length} ingredients
-                  {recipe.author ? ` · ${recipe.author}` : ''}
-                  {recipe.ratings?.likes ? ` · liked by ${recipe.ratings.likes}` : ''}
-                  {recipe.cost?.perServing != null ? ` · ≈ ${euros(recipe.cost.perServing)}` : ''}
-                </p>
-              </button>
-              <div className="text-right">
-                <p className="text-sm font-semibold tabular-nums">
-                  {recipe.perServing.calories == null
-                    ? '—'
-                    : `${formatCalories(recipe.perServing.calories)} cal`}
-                </p>
-                <p className="text-[11px] text-ink-muted">per serving</p>
-              </div>
-              {viaPicnic && (
+        {recipes
+          ?.filter((r) => show === 'all' || liked(r))
+          .map((recipe) => (
+            <li key={recipe.id} className={card}>
+              <div className="flex items-start gap-3">
                 <button
                   type="button"
-                  aria-label={`Shop for ${recipe.name} on Picnic`}
-                  onClick={() => setShopping(recipe)}
-                  className="rounded-full p-1.5 text-ink-muted hover:bg-surface hover:text-accent"
+                  disabled={busy !== null}
+                  onClick={() => navigate(`/recipes/${recipe.id}`)}
+                  className="min-w-0 flex-1 text-left disabled:opacity-50"
                 >
-                  <BasketIcon className="h-4 w-4" />
+                  <p className="truncate font-medium">
+                    <GradeBadge grade={recipe.grade?.grade} className="mr-1.5" />
+                    {recipe.name}
+                  </p>
+                  <p className="truncate text-xs text-ink-muted">
+                    {recipe.servings} servings · {recipe.ingredients.length} ingredients
+                    {recipe.author ? ` · ${recipe.author}` : ''}
+                    {recipe.ratings?.likes ? ` · liked by ${recipe.ratings.likes}` : ''}
+                    {recipe.cost?.perServing != null ? ` · ≈ ${euros(recipe.cost.perServing)}` : ''}
+                  </p>
                 </button>
-              )}
-              <button
-                type="button"
-                aria-label={`Delete ${recipe.name}`}
-                onClick={() => void remove(recipe)}
-                className="rounded-full p-1.5 text-ink-muted hover:bg-surface hover:text-over"
-              >
-                <TrashIcon className="h-4 w-4" />
-              </button>
-            </div>
-          </li>
-        ))}
+                <div className="text-right">
+                  <p className="text-sm font-semibold tabular-nums">
+                    {recipe.perServing.calories == null ? '—' : `${formatCalories(recipe.perServing.calories)} cal`}
+                  </p>
+                  <p className="text-[11px] text-ink-muted">per serving</p>
+                </div>
+                {viaPicnic && (
+                  <button
+                    type="button"
+                    aria-label={`Shop for ${recipe.name} on Picnic`}
+                    onClick={() => setShopping(recipe)}
+                    className="rounded-full p-1.5 text-ink-muted hover:bg-surface hover:text-accent"
+                  >
+                    <BasketIcon className="h-4 w-4" />
+                  </button>
+                )}
+                <button
+                  type="button"
+                  aria-label={`Delete ${recipe.name}`}
+                  onClick={() => void remove(recipe)}
+                  className="rounded-full p-1.5 text-ink-muted hover:bg-surface hover:text-over"
+                >
+                  <TrashIcon className="h-4 w-4" />
+                </button>
+              </div>
+            </li>
+          ))}
       </ul>
 
       {shooting && (
         <Suspense fallback={null}>
           <CameraCapture
             facing="environment"
-            title="Photograph the recipe"
-            hint="Keep the entire readable recipe page in frame, straight and close."
-            onCapture={(photo) => void fromPhoto(photo)}
+            title={pages.length ? `Page ${pages.length + 1}` : 'Photograph the recipe'}
+            hint="Keep the page straight and close."
+            onCapture={(photo) => void addPages([photo])}
             onClose={() => setShooting(false)}
             onPickFile={() => {
               setShooting(false);

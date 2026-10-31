@@ -926,13 +926,14 @@ const post = (path: string, body: unknown, method = 'POST') =>
 // forever, without cutting off a response the server is still producing.
 const RECIPE_PHOTO_DEADLINE_MS = 75_000;
 
-async function recipeFromPhoto(image: string): Promise<RecipeDraft> {
+/** One page or a few, in order, read together as one recipe. */
+async function recipeFromPhoto(pages: string | string[]): Promise<RecipeDraft> {
   const controller = new AbortController();
   const timer = setTimeout(() => controller.abort(), RECIPE_PHOTO_DEADLINE_MS);
   try {
     return await j<RecipeDraft>('/api/recipes/from-photo', {
       method: 'POST',
-      body: JSON.stringify({ image, mimeType: 'image/jpeg' }),
+      body: JSON.stringify({ images: [pages].flat(), mimeType: 'image/jpeg' }),
       signal: controller.signal,
     });
   } catch (error) {

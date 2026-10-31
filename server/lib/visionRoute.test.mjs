@@ -408,6 +408,17 @@ describe('POST /api/vision/extract', () => {
     expect(provider.extract.mock.calls[0][0].imageBase64).toBe(image);
   });
 
+  it('reads the pages of a recipe together, but no more than four, and only for a recipe', async () => {
+    const provider = okProvider({ ingredients: ['2 eggs'] });
+    const handler = createVisionExtractHandler({ db, provider });
+    const res = await post(handler, { task: 'recipePhoto', images: [image, `data:image/jpeg;base64,${image}`] });
+    expect(res.statusCode).toBe(200);
+    expect(provider.extract.mock.calls[0][0].images).toEqual([image, image]);
+
+    expect((await post(handler, { task: 'recipePhoto', images: Array(5).fill(image) })).statusCode).toBe(400);
+    expect((await post(handler, { task: 'label', images: [image, image] })).statusCode).toBe(400);
+  });
+
   it('rejects a request with nothing to read', async () => {
     const res = await post(createVisionExtractHandler({ db, provider: okProvider() }), {
       task: 'label',

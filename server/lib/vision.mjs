@@ -160,7 +160,7 @@ export function createVisionProvider({
   // models that do not support thinking reject the entire request for it.
   const normalizedThinkingLevel = String(thinkingLevel ?? '').trim().toUpperCase();
 
-  async function callOnce({ imageBase64, mimeType, prompt, schema, text, attemptMs, attemptModel }) {
+  async function callOnce({ images, mimeType, prompt, schema, text, attemptMs, attemptModel }) {
     const controller = new AbortController();
     const timer = setTimeout(() => controller.abort(), attemptMs);
     try {
@@ -174,9 +174,10 @@ export function createVisionProvider({
               role: 'user',
               // A page that published no structured data is read as text; a
               // photograph of a page is read as an image. Same task either way.
+              // A recipe over several pages is several images, in order.
               parts: [
                 { text: prompt },
-                imageBase64 ? { inlineData: { mimeType, data: imageBase64 } } : { text },
+                ...(images.length ? images.map((data) => ({ inlineData: { mimeType, data } })) : [{ text }]),
               ],
             },
           ],
@@ -243,14 +244,15 @@ export function createVisionProvider({
     configured,
 
     /**
-     * One image in, parsed JSON out. Throws VisionError; never returns half a
+     * An image (or a few, read together) in, parsed JSON out. Throws VisionError; never returns half a
      * result, and never returns unparsed text.
      */
-    async extract({ imageBase64, mimeType = 'image/jpeg', prompt, schema, text }) {
+    async extract({ imageBase64, images: pages, mimeType = 'image/jpeg', prompt, schema, text }) {
+      const images = pages?.length ? pages : imageBase64 ? [imageBase64] : [];
       if (!configured) {
         throw new VisionError('unconfigured', 'No vision provider is configured.');
       }
-      if (!imageBase64 && !text) {
+      if (!images.length && !text) {
         throw new VisionError('bad_request', 'Nothing was sent to read.');
       }
       const deadline = Date.now() + deadlineMs;
@@ -270,7 +272,7 @@ export function createVisionProvider({
         try {
           const started = Date.now();
           const body = await callOnce({
-            imageBase64,
+            images,
             mimeType,
             prompt,
             schema,

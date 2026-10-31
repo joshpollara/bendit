@@ -14,6 +14,9 @@ import { getTask, normalizeHint, promptFor, promptVersionFor } from './visionTas
 /** Images arrive already resized on-device; this fits a detailed 1536px JPEG. */
 export const MAX_IMAGE_BYTES = Math.floor(2.75 * 1024 * 1024);
 
+/** A recipe can run over a few pages; these are read together in one call. */
+export const MAX_PAGES = 4;
+
 /**
  * A page's text is stripped of markup before it gets here and truncated to
  * ~12,000 characters. This is the ceiling on what any caller may send, so a
@@ -75,7 +78,7 @@ export function createVisionExtractHandler({ db, provider, providers = {}, daily
     const fail = (code, message, extra = {}) =>
       res.status(HTTP_STATUS[code] ?? 500).json({ error: { code, message, ...extra } });
 
-    const { task: taskName, image, text, hint, mimeType = 'image/jpeg' } = req.body ?? {};
+    const { task: taskName, image, images, text, hint, mimeType = 'image/jpeg' } = req.body ?? {};
     const task = getTask(taskName);
     if (!task) return fail('unknown_task', `There is no vision task called "${taskName}".`);
     const taskProvider = providers[taskName] ?? provider;
@@ -88,8 +91,11 @@ export function createVisionExtractHandler({ db, provider, providers = {}, daily
     const promptVersion = promptVersionFor(task, userHint);
 
     // Either a bare base64 string or a data: URL — both are one line of client
-    // code away from each other.
-    const base64 = String(image ?? '').replace(/^data:[^;]+;base64,/, '');
+    // code away from each other. A task that reads pages may take several.
+    const bare = (photo) => String(photo ?? '').replace(/^data:[^;]+;base64,/, '');
+    const pages = (task.pages && Array.isArray(images) ? images : [image]).map(bare).filter(Boolean);
+    if (pages.length > MAX_PAGES) return fail('bad_request', `At most ${MAX_PAGES} pages can be read at once.`);
+    const base64 = pages.join('');
     // A page that published no structured data arrives as text rather than as a
     // photograph of itself. Same task, same prompt, same quota, same log row —
     // only the part handed to the model differs.
@@ -99,7 +105,7 @@ export function createVisionExtractHandler({ db, provider, providers = {}, daily
     const inputBytes = base64
       ? Math.floor((base64.length * 3) / 4)
       : Buffer.byteLength(pageText, 'utf8');
-    if (base64 && inputBytes > MAX_IMAGE_BYTES) {
+    if (pages.some((page) => Math.floor((page.length * 3) / 4) > MAX_IMAGE_BYTES)) {
       return fail('image_too_large', 'That photo is too large — it should be resized first.');
     }
     if (!base64 && inputBytes > MAX_TEXT_BYTES) {
@@ -154,7 +160,8 @@ export function createVisionExtractHandler({ db, provider, providers = {}, daily
 
     try {
       const result = await taskProvider.extract({
-        imageBase64: base64,
+        imageBase64: pages[0] ?? '',
+        images: pages,
         text: pageText,
         mimeType,
         prompt,

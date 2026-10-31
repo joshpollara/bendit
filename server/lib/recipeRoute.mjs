@@ -117,7 +117,7 @@ export function createRecipeFromUrlHandler({ db, visionHandler, fetch = fetchPag
   };
 }
 
-/** POST /api/recipes/from-photo — a photographed page. */
+/** POST /api/recipes/from-photo — a photographed page, or a few. */
 export function createRecipeFromPhotoHandler({ db, visionHandler }) {
   return async function fromPhoto(req, res) {
     const captured = { statusCode: 200, body: null };
@@ -149,13 +149,13 @@ export function createRecipeFromPhotoHandler({ db, visionHandler }) {
     return res.json({
       ...asDraft(db, read, req.userId),
       // Keep a readable fragment editable, but never let it masquerade as a
-      // verified whole recipe. This is especially important for cookbook
-      // recipes that continue on a second page the one-photo UI cannot accept.
+      // verified whole recipe. Only the ingredients count: they are what the
+      // calories come from, and a method can be added later or left out.
       sourceComplete,
       sourceWarnings:
         sourceComplete || sourceWarnings.length
           ? sourceWarnings
-          : ['AI could not verify that the entire recipe is visible.'],
+          : ['AI could not verify that every ingredient is visible.'],
       sourceType: 'photo',
       readBy: 'model',
       meta: captured.body.meta,
