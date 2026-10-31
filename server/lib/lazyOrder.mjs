@@ -115,7 +115,7 @@ const NOT_A_RECIPE = /\b(meal plan|recipes for|\d+\s+(easy|best|healthy|quick)\b
 export function createLazyOrder({ db, model, sites, search, fetch = fetchPage, dailyLimit = 20, now = () => Date.now() }) {
   const builtToday = db.prepare(
     `SELECT COUNT(DISTINCT imageHash) AS n FROM vision_requests
-     WHERE task = ? AND promptVersion = ? AND createdAt >= datetime('now', 'start of day')`,
+     WHERE task = ? AND promptVersion = ? AND createdAt >= ?`,
   );
   const logCall = db.prepare(
     `INSERT INTO vision_requests
@@ -278,7 +278,9 @@ export function createLazyOrder({ db, model, sites, search, fetch = fetchPage, d
      */
     async build({ dinners = 3, servings = 2, wish = '', userId, abTarget = null }) {
       if (!model.configured) throw new OrderError('AI is not switched on for this server.', 503);
-      if (builtToday.get(TASK, PROMPT_VERSION).n >= dailyLimit) {
+      // The day by the same clock the calls are logged with (UTC, as SQLite's own).
+      const dayStart = `${new Date(now()).toISOString().slice(0, 10)} 00:00:00`;
+      if (builtToday.get(TASK, PROMPT_VERSION, dayStart).n >= dailyLimit) {
         throw new OrderError("That's today's limit for AI orders. Try again tomorrow.", 429);
       }
       const build = { id: crypto.randomUUID(), userId };
