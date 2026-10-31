@@ -11,6 +11,7 @@
 import { buildRecipe } from './recipe.mjs';
 import { fetchPage, pageText, recipeFromJsonLd } from './recipeImport.mjs';
 import { parseIngredients } from './recipeParse.mjs';
+import { gradeLines, recipeTips } from './recipeTips.mjs';
 import { deleteRecipe, listRecipes, readRecipe, saveRecipe } from './recipeStore.mjs';
 import { getTask } from './visionTasks.mjs';
 
@@ -167,7 +168,10 @@ export function createRecipeFromPhotoHandler({ db, visionHandler }) {
 export function createRecipePriceHandler({ db }) {
   return function price(req, res) {
     const { ingredients = [], servings = 1 } = req.body ?? {};
-    res.json(buildRecipe(db, { ingredients, servings, ownerId: req.userId }));
+    const built = buildRecipe(db, { ingredients, servings, ownerId: req.userId });
+    // The grade the saved recipe would get from these ingredients, and how to better it.
+    const lines = built.ingredients.map((i) => ({ grams: i.nutrition ? i.grams : null, grade: i.food?.grade ?? null }));
+    res.json({ ...built, grade: gradeLines(lines), tips: recipeTips(lines) });
   };
 }
 

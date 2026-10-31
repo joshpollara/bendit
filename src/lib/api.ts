@@ -629,10 +629,28 @@ export interface RecipeIngredient {
   weighedBy?: string | null;
   reason?: string | null;
   foodId?: string | null;
-  food?: { id: string; name: string; brand: string | null; source: string; kcal100: number | null } | null;
+  food?: {
+    id: string;
+    name: string;
+    brand: string | null;
+    source: string;
+    kcal100: number | null;
+    grade?: NutriGrade | null;
+  } | null;
+  /** Its food's Nutri-Score, on a saved recipe. */
+  grade?: NutriGrade | null;
   calories?: number | null;
   nutrition?: { calories: number; protein: number | null; carbs: number | null; fat: number | null } | null;
 }
+
+/**
+ * A way to a better grade: change one line (by its index in the ingredients),
+ * several, or add vegetables (grams for the whole recipe). `to` is the grade after.
+ */
+export type RecipeTip =
+  | { kind: 'leave_out' | 'halve'; index: number; to: NutriGrade }
+  | { kind: 'together'; changes: { kind: 'leave_out'; index: number }[]; to: NutriGrade }
+  | { kind: 'add_veg'; grams: number; to: NutriGrade };
 
 export interface RecipeIngredientInput {
   raw: string;
@@ -701,6 +719,9 @@ export interface RecipeDraft {
   amountMissing?: string[];
   complete?: boolean;
   approximate: string[];
+  /** From the ingredients by weight, when repriced. */
+  grade?: NutriGrade | null;
+  tips?: RecipeTip[];
 }
 
 export interface Recipe {
@@ -714,6 +735,8 @@ export interface Recipe {
   nutritionFrom: NutritionFrom;
   /** Its Nutri-Score: from the page's figures, or its ingredients by weight. */
   grade: { grade: NutriGrade; covered: number; from: 'page' | 'ingredients' } | null;
+  /** Ways to a better grade, when it comes from the ingredients. */
+  tips?: RecipeTip[];
   /** The recipe page's photo. */
   imageUrl: string | null;
   /** What the household thought of it; `yours` is 1, -1 or 0. */

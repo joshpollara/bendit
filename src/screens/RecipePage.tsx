@@ -1,7 +1,7 @@
 import { useEffect, useState } from 'react';
 import { useNavigate, useParams } from 'react-router-dom';
 import { format, parseISO } from 'date-fns';
-import { api, type Recipe, type RecipeIngredient } from '../lib/api';
+import { api, type Recipe, type RecipeDraft, type RecipeTip } from '../lib/api';
 import { useData } from '../lib/useData';
 import { useUI } from '../store/ui';
 import { shiftDay, todayStr } from '../lib/dates';
@@ -13,52 +13,14 @@ import RecipeEditor, { draftFromRecipe } from '../components/RecipeEditor';
 import RecipeShop from '../components/RecipeShop';
 import { RateButtons, whoRated } from '../components/Ratings';
 import { euros } from '../components/PicnicBits';
+import { amount, scaledLine, tipText, withTip } from '../lib/recipeLines';
+
+export { amount, scaledLine };
 import Sheet from '../components/Sheet';
 import { AddSheet } from './Plan';
 
 // A recipe to read and cook from: its photo, ingredients for any number of
 // servings, and the method — and from here, shop for it, plan it or log it.
-
-const FRACTIONS: [number, string][] = [
-  [0.25, '¼'],
-  [1 / 3, '⅓'],
-  [0.5, '½'],
-  [2 / 3, '⅔'],
-  [0.75, '¾'],
-];
-
-/** 1.5 → "1½", 0.333 → "⅓", 2.4 → "2.4", 250 → "250". */
-export function amount(n: number) {
-  const whole = Math.floor(n);
-  const part = n - whole;
-  if (part < 0.05) return String(whole);
-  if (part > 0.95) return String(whole + 1);
-  const fraction = FRACTIONS.find(([value]) => Math.abs(part - value) < 0.05);
-  if (fraction && n < 10) return `${whole || ''}${fraction[1]}`;
-  return n >= 10 ? String(Math.round(n)) : String(Math.round(n * 10) / 10);
-}
-
-/** The amount a line starts with: "1 1/2 ", "1-1/2 ", "½ ", "1.3 ". */
-const LEADING_AMOUNT = /^\s*(?:\d+\s*-\s*\d+\/\d+|\d+(?:[.,]\d+)?(?:\s+\d+\/\d+)?|\d+\/\d+|[¼½¾⅓⅔])(?:\s*[¼½¾⅓⅔])?\s+/;
-/** A range a line starts with: "2-3 ", "1 or 2 ", "2 to 3 ". */
-const LEADING_RANGE = /^\s*(\d+(?:[.,]\d+)?)\s*(-|–|to|or)\s*(\d+(?:[.,]\d+)?)(?!\s*\/)\s+/;
-
-/**
- * An ingredient line for `factor` times the recipe: the line as written with
- * its amount scaled, so "2 onions, sliced" stays itself. As written when it
- * has no amount.
- */
-export function scaledLine(ing: RecipeIngredient, factor: number) {
-  if (factor === 1 || ing.quantity == null) return ing.raw;
-  const range = LEADING_RANGE.exec(ing.raw);
-  if (range) {
-    const [from, to] = [range[1], range[3]].map((n) => amount(Number(n.replace(',', '.')) * factor));
-    return ing.raw.replace(LEADING_RANGE, `${from}–${to} `);
-  }
-  const scaled = amount(ing.quantity * factor);
-  if (LEADING_AMOUNT.test(ing.raw)) return ing.raw.replace(LEADING_AMOUNT, `${scaled} `);
-  return [scaled, ing.unit, ing.name ?? ing.raw].filter(Boolean).join(' ');
-}
 
 /** Keeps the screen on while `on`, where the browser can. */
 function useWakeLock(on: boolean) {
@@ -201,7 +163,9 @@ export default function RecipePage() {
   );
   const [servings, setServings] = useState<number | null>(null);
   const [awake, setAwake] = useState(false);
-  const [editing, setEditing] = useState(false);
+  // The editor, open on the recipe as it is or with a tip's change made; `own`
+  // when saving over it is allowed, else it can only be saved as a copy.
+  const [editing, setEditing] = useState<{ draft: RecipeDraft; own: boolean } | null>(null);
   const [sheet, setSheet] = useState<'shop' | 'log' | 'day' | null>(null);
   const [planDate, setPlanDate] = useState<string | null>(null);
   useWakeLock(awake);
@@ -212,12 +176,14 @@ export default function RecipePage() {
   if (editing) {
     return (
       <RecipeEditor
-        initial={draftFromRecipe(recipe)}
+        initial={editing.draft}
         recipeId={recipe.id}
-        onClose={() => setEditing(false)}
-        onSaved={() => {
-          setEditing(false);
+        own={editing.own}
+        onClose={() => setEditing(null)}
+        onSaved={(saved) => {
+          setEditing(null);
           bump();
+          if (saved.id !== recipe.id) navigate(`/recipes/${saved.id}`, { replace: true });
         }}
       />
     );
@@ -231,6 +197,12 @@ export default function RecipePage() {
     .filter(Boolean);
   const me = members.find((m) => m.username === session?.username)?.id;
   const mine = session?.username != null && recipe.author === session.username;
+  const edit = (tip?: RecipeTip) => {
+    const draft = draftFromRecipe(recipe);
+    const changed = tip ? withTip(tip, recipe.ingredients) : null;
+    setEditing({ draft: changed ? { ...draft, ingredients: changed } : draft, own: mine });
+  };
+  const tips = recipe.tips ?? [];
   let site: string | null = null;
   try {
     site = recipe.sourceUrl ? new URL(recipe.sourceUrl).hostname.replace(/^www\./, '') : null;
@@ -251,10 +223,17 @@ export default function RecipePage() {
         </button>
         <h1 className="min-w-0 flex-1 truncate text-lg font-semibold">{recipe.name}</h1>
         {mine && (
-          <button type="button" onClick={() => setEditing(true)} className="px-3 text-sm font-medium text-accent">
+          <button type="button" onClick={() => edit()} className="px-3 text-sm font-medium text-accent">
             Edit
           </button>
         )}
+        <button
+          type="button"
+          onClick={() => setEditing({ draft: draftFromRecipe(recipe), own: false })}
+          className="px-3 text-sm font-medium text-accent"
+        >
+          Copy
+        </button>
       </header>
 
       {recipe.imageUrl && (
@@ -342,11 +321,33 @@ export default function RecipePage() {
           {recipe.ingredients.map((ing, i) => (
             <li key={ing.id ?? i} className="flex gap-2">
               <span className="text-ink-muted">•</span>
-              <span>{scaledLine(ing, factor)}</span>
+              <span className="min-w-0 flex-1">{scaledLine(ing, factor)}</span>
+              <GradeBadge grade={ing.grade} className="mt-0.5" />
             </li>
           ))}
         </ul>
       </section>
+
+      {tips.length > 0 && (
+        <section className="mx-4 mt-3 rounded-2xl border border-line bg-card p-4 shadow-sm">
+          <h2 className="font-semibold">Improve the grade</h2>
+          <ul className="mt-2 divide-y divide-line text-sm">
+            {tips.map((tip, i) => (
+              <li key={i} className="flex items-center gap-3 py-2">
+                <span className="min-w-0 flex-1">{tipText(tip, recipe.ingredients)}</span>
+                <GradeBadge grade={tip.to} />
+                <button
+                  type="button"
+                  onClick={() => edit(tip)}
+                  className="shrink-0 rounded-lg border border-accent px-2.5 py-1 text-xs font-semibold text-accent"
+                >
+                  {tip.kind === 'add_veg' ? 'Add' : 'Try'}
+                </button>
+              </li>
+            ))}
+          </ul>
+        </section>
+      )}
 
       {steps.length > 0 && (
         <section className="mx-4 mt-3 rounded-2xl border border-line bg-card p-4 shadow-sm">

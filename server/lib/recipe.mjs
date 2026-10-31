@@ -8,6 +8,7 @@
 // recipe makes four portions; you eat one.
 
 import { nutritionForGrams } from './foodSchema.mjs';
+import { foodGrade } from './nutriScore.mjs';
 import { matchCandidates } from './foodSearch.mjs';
 import { parseIngredient, parseIngredients } from './recipeParse.mjs';
 import { SOURCES, weighIngredient } from './recipeMeasure.mjs';
@@ -107,6 +108,7 @@ export function resolveIngredient(db, parsed, { ownerId } = {}) {
           brand: food.brand ?? null,
           source: food.source,
           kcal100: food.kcal100,
+          grade: foodGrade(food),
         }
       : null,
     nutrition: nutrition
