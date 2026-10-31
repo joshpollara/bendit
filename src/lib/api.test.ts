@@ -23,7 +23,7 @@ describe('recipe photo API', () => {
     );
     vi.stubGlobal('fetch', fetchImpl);
 
-    await expect(api.recipeFromPhoto('AAAA')).rejects.toMatchObject({
+    await expect(api.recipeFromPhoto(['AAAA'])).rejects.toMatchObject({
       name: 'ApiError',
       code: 'timeout',
       status: 504,
@@ -46,7 +46,7 @@ describe('recipe photo API', () => {
     );
     vi.stubGlobal('fetch', fetchImpl);
 
-    const rejection = expect(api.recipeFromPhoto('AAAA')).rejects.toMatchObject({
+    const rejection = expect(api.recipeFromPhoto(['AAAA'])).rejects.toMatchObject({
       code: 'timeout',
       status: 504,
     });

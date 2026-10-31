@@ -89,11 +89,11 @@ async function call(handler) {
   return res;
 }
 
-async function callPhoto(handler) {
+async function callPhoto(handler, body = { image: 'a photo' }) {
   const res = { statusCode: 200, body: null };
   res.status = (code) => ((res.statusCode = code), res);
   res.json = (payload) => ((res.body = payload), res);
-  await handler({ body: { image: 'a photo' }, userId: 'u1' }, res);
+  await handler({ body, userId: 'u1' }, res);
   return res;
 }
 
@@ -185,6 +185,17 @@ describe('POST /api/recipes/from-photo', () => {
       expect.arrayContaining(['sourceComplete', 'sourceWarnings']),
     );
     expect(db.prepare('SELECT task FROM vision_requests').get().task).toBe('recipePhoto');
+  });
+
+  it('reads a recipe over two pages in one go', async () => {
+    const handler = createRecipeFromPhotoHandler({
+      db,
+      visionHandler: createVisionExtractHandler({ db, provider }),
+    });
+    const res = await callPhoto(handler, { images: ['page one', 'page two'] });
+    expect(res.statusCode).toBe(200);
+    expect(provider.extract).toHaveBeenCalledOnce();
+    expect(provider.extract.mock.calls[0][0].images).toEqual(['page one', 'page two']);
   });
 
   it('keeps a readable fragment editable but marks it incomplete', async () => {

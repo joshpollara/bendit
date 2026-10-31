@@ -48,6 +48,15 @@ describe('vision provider', () => {
     expect(typeof result.latencyMs).toBe('number');
   });
 
+  it('sends the pages of a recipe as images, in order', async () => {
+    let sent;
+    await provider(async (url, init) => ((sent = JSON.parse(init.body)), geminiResponse({}))).extract({
+      ...call,
+      images: ['PAGE1', 'PAGE2'],
+    });
+    expect(sent.contents[0].parts.map((p) => p.inlineData?.data ?? 'prompt')).toEqual(['prompt', 'PAGE1', 'PAGE2']);
+  });
+
   it('counts thinking as output, because that is how it is billed', async () => {
     // A model that thinks reports those tokens separately. Counting only the
     // visible answer would report a call at a fraction of what it cost.

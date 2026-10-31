@@ -1943,7 +1943,12 @@ app.delete('/api/recipes/:id', recipes.remove);
 
 app.post('/api/recipes/price', createRecipePriceHandler({ db }));
 app.post('/api/recipes/from-url', createRecipeFromUrlHandler({ db, visionHandler }));
-app.post('/api/recipes/from-photo', bigJson, createRecipeFromPhotoHandler({ db, visionHandler }));
+// Up to four pages of a recipe, each its own photo.
+app.post(
+  '/api/recipes/from-photo',
+  express.json({ limit: '12mb' }),
+  createRecipeFromPhotoHandler({ db, visionHandler }),
+);
 
 // The household's favourite recipe sites: what's new on them, and searching
 // them. Shared, like recipes.

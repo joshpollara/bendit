@@ -350,10 +350,11 @@ TASKS.meal = {
  * database as they do everywhere else.
  */
 TASKS.recipe = {
-  version: '4',
+  version: '5',
   prompt: [
-    'You are producing the complete import payload for a recipe, from either a photographed page',
-    'or a URL and the content fetched from it.',
+    'You are producing the complete import payload for a recipe, from either photographs of its',
+    'page or pages, or a URL and the content fetched from it. Several photographs are pages of one',
+    'recipe, in order: read them together as one recipe, and list nothing twice.',
     '',
     'Return:',
     '  • name — what the recipe is called.',
@@ -374,13 +375,14 @@ TASKS.recipe = {
     '  • servingsStated — true only if the recipe actually says. If it does not,',
     '    estimate from the quantities and set this false.',
     '  • servingsReasoning — one short sentence on where the number came from.',
-    '  • sourceComplete — true only when the supplied source appears to contain the whole recipe.',
-    '    Set it false when an ingredient or instruction is cropped, blurred, illegible, continued',
-    '    outside the supplied source, or when a photographed page refers to another page that is',
-    '    not present. Do not invent missing text to make the source seem complete.',
-    '  • sourceWarnings — short, concrete descriptions of anything missing or unreadable, such as',
-    '    "The instructions continue on the next page." Return an empty array when sourceComplete',
-    '    is true.',
+    '  • sourceComplete — true when every ingredient line is present and readable. The',
+    '    ingredients are what matters: a method that is missing, cut off or continued elsewhere',
+    '    does not make it incomplete. Set it false when an ingredient line is cropped, blurred,',
+    '    illegible, or continued outside the supplied source, or when the ingredients refer to a',
+    '    part of the recipe that is not present. Do not invent missing text to make it seem complete.',
+    '  • sourceWarnings — short, concrete descriptions of missing or unreadable ingredients, such',
+    '    as "The ingredient list continues on the next page." Return an empty array when',
+    '    sourceComplete is true.',
     '',
     'Do not give calories or any other nutrition figure. Those are looked up from the',
     'ingredients, not taken from you.',
@@ -409,11 +411,11 @@ TASKS.recipe = {
       servingsReasoning: { type: 'string', nullable: true },
       sourceComplete: {
         type: 'boolean',
-        description: 'Whether the supplied source contains the complete readable recipe',
+        description: 'Whether every ingredient line is present and readable',
       },
       sourceWarnings: {
         type: 'array',
-        description: 'Missing, cropped or unreadable recipe sections',
+        description: 'Missing, cropped or unreadable ingredients',
         items: { type: 'string' },
       },
     },
@@ -430,7 +432,7 @@ TASKS.recipe = {
 
 // The prompt and contract are shared, while the distinct task name lets a
 // photographed page use a longer, image-specific provider budget without
-// making URL imports wait for it too.
-TASKS.recipePhoto = TASKS.recipe;
+// making URL imports wait for it too. A photographed recipe may be a few pages.
+TASKS.recipePhoto = { ...TASKS.recipe, pages: true };
 
 export const getTask = (name) => TASKS[name] ?? null;
