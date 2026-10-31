@@ -10,6 +10,7 @@ import crypto from 'node:crypto';
 import { searchFoodsTiered } from './foodSearch.mjs';
 import { addItem, listPlan, MEALS, plannedFor, removeItem, shoppingList } from './mealPlan.mjs';
 import { cartAdditions, withProducts } from './picnicShopping.mjs';
+import { NOVA_LABEL, nutriScore } from './nutriScore.mjs';
 import { listRecipes } from './recipeStore.mjs';
 import { listUsers } from './users.mjs';
 import { ratingsOf } from './ratings.mjs';
@@ -36,6 +37,12 @@ export function createAssistantTools({ db, picnic, userId, finder = null }) {
     return found.id;
   };
   const food = (id) => db.prepare('SELECT * FROM foods WHERE id = ?').get(id);
+  // A food's grade as the Foods section gives it: the published one, else worked
+  // out from its per-100 figures. `computed` has the points, when it was.
+  const scoreOf = (f) => {
+    const computed = nutriScore(f);
+    return { grade: f?.nutriGrade ?? computed?.grade ?? null, computed: f?.nutriGrade ? null : computed };
+  };
   // What a recipe costs a serving, when it's been worked out.
   const costFor = (recipeId) => {
     try {
@@ -99,7 +106,8 @@ export function createAssistantTools({ db, picnic, userId, finder = null }) {
         })),
     },
     search_foods: {
-      description: 'Search the food database. Returns ids to use with plan_meal and log_food.',
+      description:
+        'Search the food database. Returns ids to use with plan_meal and log_food, and each food\'s Nutri-Score (A best to E) where it has one.',
       parameters: obj({ query: { type: 'string' } }, ['query']),
       run: ({ query }) =>
         searchFoodsTiered(db, String(query), { limit: 10, ownerId: userId }).map((f) => ({
@@ -111,7 +119,52 @@ export function createAssistantTools({ db, picnic, userId, finder = null }) {
           protein: f.protein,
           carbs: f.carbs,
           fat: f.fat,
+          nutriScore: scoreOf(food(f.id) ?? f).grade ?? undefined,
         })),
+    },
+    food_score: {
+      description:
+        "One food's Nutri-Score, as the Foods section shows it: the grade, whether its maker publishes it or it's worked out from the nutrients, the points for and against it, and how processed it is.",
+      parameters: obj({ foodId: { type: 'string' } }, ['foodId']),
+      run: ({ foodId }) => {
+        const f = food(String(foodId));
+        if (!f) throw new ToolError('There is no food with that id. Find one with search_foods.');
+        const { grade, computed } = scoreOf(f);
+        const per100 = f.basis === 'ml' ? 'per100ml' : 'per100g';
+        return {
+          name: f.name,
+          brand: f.brand ?? undefined,
+          nutriScore: grade ?? null,
+          ...(grade
+            ? { from: f.nutriGrade ? 'published by the maker' : 'worked out from its nutrients' }
+            : { why: 'Too little is known about it: a grade needs energy, sugars, saturated fat and salt.' }),
+          ...(computed
+            ? {
+                score: computed.score,
+                pointsAgainst: {
+                  energy: computed.breakdown.energy,
+                  sugars: computed.breakdown.sugars,
+                  saturatedFat: computed.breakdown.satFat,
+                  salt: computed.breakdown.sodium,
+                },
+                pointsFor: {
+                  fibre: computed.breakdown.fibre,
+                  protein: computed.breakdown.proteinCounted ? computed.breakdown.protein : 0,
+                  fruitVegNuts: computed.breakdown.fruitVeg,
+                },
+              }
+            : {}),
+          [per100]: {
+            calories: f.kcal100,
+            sugar: f.sugar100,
+            saturatedFat: f.satFat100,
+            saltG: f.sodiumMg100 == null ? null : round1((f.sodiumMg100 * 2.5) / 1000),
+            fibre: f.fiber100,
+            protein: f.protein100,
+          },
+          processing: f.nova ? `NOVA ${f.nova}, ${NOVA_LABEL[f.nova]}` : undefined,
+        };
+      },
     },
     list_recipes: {
       description: "The household's recipes, optionally filtered by name, with per-serving nutrition.",
