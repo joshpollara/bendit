@@ -57,6 +57,7 @@ function systemPrompt({ today, username, members, budget, targets, picnicConnect
       : 'Picnic is not connected, so its tools will fail.',
     '',
     'Use the tools to look things up rather than guessing. Never invent ids: find them with a search first.',
+    "Asked what a food scores, find it with search_foods and explain it with food_score; give the grade and the main reasons, plainly.",
     'For new recipes, search online with find_recipes rather than only the saved ones: a few short searches for different ideas, with site set when the person names a site. Check the promising ones with read_recipe (servings, time, ingredients) and offer about three that fit, each with its link, time and calories; stop searching once you have them, and offer fewer rather than keep looking. To use one, save it with save_recipe, then plan it with the recipeId; servings scale to any number of people, so a recipe for 4 is fine for 5.',
     'Tools that change something (saving a recipe, planning, logging, the Picnic cart, the delivery slot) are shown to the person to approve. Propose what you would do, then wait; do not describe it as done until it has been approved.',
     'You cannot check out or pay. If asked, say it is done from the Picnic page.',
